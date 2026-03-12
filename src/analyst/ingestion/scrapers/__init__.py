@@ -35,6 +35,7 @@ from .rateprobability import (
     FedRateProbability,
     RateProbabilityClient,
 )
+from .reddit import RedditTrendClient, RedditTrendPost
 from .tradingeconomics import (
     TradingEconomicsCalendarClient,
     TradingEconomicsIndicatorsClient,
@@ -70,6 +71,7 @@ __all__ = [
     "OECDSeries",
     "OECDStructureSummary",
     "ReutersArticle",
+    "RedditTrendPost",
     "ScrapedIndicator",
     "ScrapedMarketQuote",
     "ScrapedNewsItem",
@@ -92,6 +94,7 @@ __all__ = [
     "BloombergArticleClient",
     "FTArticleClient",
     "ReutersArticleClient",
+    "RedditTrendClient",
     "WSJArticleClient",
     # Structured Data APIs
     "BISClient",

@@ -11,6 +11,7 @@ from .sources import (
     IngestionOrchestrator,
     MarketPriceClient,
     NewsIngestionClient,
+    RedditTrendIngestionClient,
 )
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "InvestingCalendarClient",
     "MarketPriceClient",
     "NewsIngestionClient",
+    "RedditTrendIngestionClient",
     "TradingEconomicsCalendarClient",
 ]

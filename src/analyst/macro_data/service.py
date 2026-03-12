@@ -344,6 +344,23 @@ class LocalMacroDataService:
         )
         return {"articles": articles}
 
+    def _op_get_trends(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        limit = min(max(int(arguments.get("limit", 10)), 1), 20)
+        hours = min(max(int(arguments.get("hours", 48)), 1), 168)
+        category = (arguments.get("category") or "").strip() or None
+        region = (arguments.get("region") or "").strip() or None
+        topics = self._store.list_active_trends(
+            limit=limit,
+            hours=hours,
+            category=category,
+            region=region,
+        )
+        return {
+            "timestamp": format_epoch_iso(int(datetime.now(timezone.utc).timestamp())),
+            "total": len(topics),
+            "topics": [self._trend_to_dict(topic) for topic in topics],
+        }
+
     def _op_search_news(self, arguments: dict[str, Any]) -> dict[str, Any]:
         query = (arguments.get("query") or "").strip() or None
         days = min(int(arguments.get("days", 7)), 30)
@@ -898,4 +915,16 @@ class LocalMacroDataService:
             "speaker": communication.speaker,
             "content_type": communication.content_type,
             "summary": summary,
+        }
+
+    def _trend_to_dict(self, trend: Any) -> dict[str, Any]:
+        return {
+            "topic": trend.topic,
+            "summary": trend.summary,
+            "keywords": list(trend.keywords),
+            "category": trend.category,
+            "region": trend.region,
+            "popularity_score": round(float(trend.popularity_score), 2),
+            "observed_at": format_epoch_iso(int(trend.observed_at)),
+            "expires_at": format_epoch_iso(int(trend.expires_at)),
         }

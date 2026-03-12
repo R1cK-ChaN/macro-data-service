@@ -120,6 +120,31 @@ class MacroDataCLITest(unittest.TestCase):
         self.assertEqual(payload["stored"], 4)
         fake_service.invoke.assert_called_once_with("refresh_source", {"source": "news"})
 
+    def test_refresh_source_command_supports_reddit_trends(self) -> None:
+        output = io.StringIO()
+        fake_service = Mock()
+        fake_service.invoke.return_value = {
+            "source": "reddit_trends",
+            "stored": 3,
+            "fetched": 12,
+            "normalized": 12,
+            "validated": 9,
+            "deduplicated": 3,
+            "duration_ms": 88,
+            "retries": 0,
+            "error": "",
+            "ok": True,
+        }
+        with patch("analyst.macro_data.factory.build_local_macro_data_service", return_value=fake_service):
+            with redirect_stdout(output):
+                rc = main(["refresh-source", "--source", "reddit_trends"])
+
+        self.assertEqual(rc, 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["source"], "reddit_trends")
+        self.assertEqual(payload["stored"], 3)
+        fake_service.invoke.assert_called_once_with("refresh_source", {"source": "reddit_trends"})
+
     def test_default_engine_db_path_is_service_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = default_engine_db_path(Path(temp_dir))

@@ -70,6 +70,7 @@ Ontology-oriented operations:
 - `get_indicator_ontology`
 - `list_indicators_by_topic`
 - `list_release_families_for_indicator`
+- `get_trends`
 
 Example:
 
@@ -78,6 +79,9 @@ curl -s http://127.0.0.1:8765/health
 curl -s -X POST http://127.0.0.1:8765/v1/ops/get_recent_releases \
   -H 'Content-Type: application/json' \
   -d '{"arguments":{"limit":5,"days":7}}'
+curl -s -X POST http://127.0.0.1:8765/v1/ops/get_trends \
+  -H 'Content-Type: application/json' \
+  -d '{"arguments":{"limit":5,"hours":48}}'
 ```
 
 ## Verification
