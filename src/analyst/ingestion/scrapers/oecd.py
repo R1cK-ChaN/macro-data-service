@@ -461,6 +461,7 @@ class OECDClient:
         series_id: str | None = None,
         start_period: str | None = None,
         end_period: str | None = None,
+        updated_after: str | None = None,
         limit: int | None = 100,
         dimension_at_observation: str | None = None,
     ) -> list[OECDObservation]:
@@ -479,6 +480,7 @@ class OECDClient:
             key=resolved_key,
             start_period=start_period,
             end_period=end_period,
+            updated_after=updated_after,
             limit=limit,
             dimension_at_observation=dimension_at_observation,
         )
@@ -643,6 +645,7 @@ class OECDClient:
         key: str,
         start_period: str | None = None,
         end_period: str | None = None,
+        updated_after: str | None = None,
         limit: int | None = None,
         dimension_at_observation: str | None = None,
     ) -> dict:
@@ -651,6 +654,8 @@ class OECDClient:
             params["startPeriod"] = start_period
         if end_period:
             params["endPeriod"] = end_period
+        if updated_after:
+            params["updatedAfter"] = updated_after
         if limit:
             params["lastNObservations"] = str(limit)
         if dimension_at_observation:

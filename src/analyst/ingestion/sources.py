@@ -873,20 +873,47 @@ class ECBIngestionClient:
 
 
 class _OECDRateLimiter:
-    """Thread-safe rate limiter for OECD API requests."""
+    """Thread-safe rate limiter for OECD API requests.
 
-    def __init__(self, min_interval: float = 0.3) -> None:
+    OECD enforces a hard cap of 60 data downloads per hour (per IP).
+    This limiter enforces both a minimum interval between requests and
+    an hourly budget to stay under that cap.
+    """
+
+    HOURLY_BUDGET = 60
+
+    def __init__(self, min_interval: float = 2.0) -> None:
         self._lock = threading.Lock()
         self._last_request = 0.0
         self._min_interval = min_interval
+        self._hour_start = time.monotonic()
+        self._hour_count = 0
 
     def wait(self) -> None:
         with self._lock:
             now = time.monotonic()
+            # Reset hourly window if >3600s elapsed
+            if now - self._hour_start >= 3600.0:
+                self._hour_start = now
+                self._hour_count = 0
+            # If we've hit the hourly budget, sleep until the window resets
+            if self._hour_count >= self.HOURLY_BUDGET:
+                sleep_for = 3600.0 - (now - self._hour_start)
+                if sleep_for > 0:
+                    logger.warning(
+                        "OECD hourly budget (%d/%d) exhausted, sleeping %.0fs",
+                        self._hour_count, self.HOURLY_BUDGET, sleep_for,
+                    )
+                    time.sleep(sleep_for)
+                self._hour_start = time.monotonic()
+                self._hour_count = 0
+                now = time.monotonic()
+            # Enforce minimum interval
             elapsed = now - self._last_request
             if elapsed < self._min_interval:
                 time.sleep(self._min_interval - elapsed)
             self._last_request = time.monotonic()
+            self._hour_count += 1
 
     def backoff(self, seconds: float) -> None:
         """Push the next allowed request time forward (called on 429)."""
@@ -969,7 +996,7 @@ class OECDIngestionClient:
                     count += 1
             except Exception:
                 logger.warning("OECD refresh failed for %s", key, exc_info=True)
-            time.sleep(1.0)
+            time.sleep(2.0)
         return RefreshStats(source="oecd", count=count)
 
     def list_catalog_dataflows(
@@ -1101,7 +1128,7 @@ class OECDIngestionClient:
         agency_prefix: str = "OECD",
         dataflow_limit: int | None = 5,
         latest_observations: int = 1,
-        sleep_seconds: float = 1.2,
+        sleep_seconds: float = 3.0,
         family_lookup: dict[tuple[str, str], str] | None = None,
     ) -> RefreshStats:
         count = 0
@@ -1153,10 +1180,15 @@ class OECDIngestionClient:
         store: SQLiteEngineStore,
         *,
         family_lookup: dict[tuple[str, str], str] | None = None,
-        max_workers: int = 4,
-        request_delay: float = 0.3,
+        max_workers: int = 3,
+        request_delay: float = 2.0,
     ) -> RefreshStats:
-        """Fetch all configured series using a thread pool."""
+        """Fetch all configured series using a thread pool.
+
+        OECD enforces 60 data downloads/hour per IP.  The rate limiter
+        enforces both ``request_delay`` spacing and the hourly budget.
+        Defaults are conservative: 3 workers, 2 s between requests.
+        """
         limiter = _OECDRateLimiter(min_interval=request_delay)
         results: list[list[IndicatorObservationRecord]] = []
         errors: list[str] = []
@@ -1178,7 +1210,7 @@ class OECDIngestionClient:
                     break
                 except OECDRateLimitError:
                     if attempt < max_retries - 1:
-                        backoff = max(5.0, request_delay) * (2 ** attempt)
+                        backoff = max(10.0, request_delay) * (2 ** attempt)
                         logger.warning("OECD 429 for %s, retry %d backing off %.1fs", key, attempt + 1, backoff)
                         limiter.backoff(backoff)
                         continue
@@ -1230,12 +1262,23 @@ class OECDIngestionClient:
         dataflow_ids: list[str] | None = None,
         agency_prefix: str = "OECD",
         dataflow_limit: int | None = None,
-        max_workers: int = 3,
-        request_delay: float = 0.5,
+        max_workers: int = 2,
+        request_delay: float = 3.0,
         latest_observations: int = 1,
+        updated_after: str | None = None,
         family_lookup: dict[tuple[str, str], str] | None = None,
     ) -> RefreshStats:
-        """Fetch catalog data from multiple dataflows in parallel."""
+        """Fetch catalog data from multiple dataflows in parallel.
+
+        OECD enforces 60 data downloads/hour per IP.  Catalog fetches
+        are heavier so defaults are more conservative: 2 workers, 3 s
+        between requests.
+
+        Pass ``updated_after`` (ISO-8601 datetime, e.g. '2026-03-01T00:00:00Z')
+        to only fetch data that changed since your last sync.  Most OECD
+        datasets update annually or monthly, so this dramatically reduces
+        request volume for recurring ingestion.
+        """
         dataflows = self.resolve_catalog_dataflows(
             dataflow_ids=dataflow_ids,
             agency_prefix=agency_prefix,
@@ -1255,12 +1298,13 @@ class OECDIngestionClient:
                         version=dataflow.version,
                         key="all",
                         series_id=None,
+                        updated_after=updated_after,
                         limit=latest_observations,
                     )
                     break
                 except OECDRateLimitError:
                     if attempt < max_retries - 1:
-                        backoff = max(5.0, request_delay) * (2 ** attempt)
+                        backoff = max(10.0, request_delay) * (2 ** attempt)
                         logger.warning(
                             "OECD 429 for %s/%s, retry %d backing off %.1fs",
                             dataflow.agency_id, dataflow.id, attempt + 1, backoff,
