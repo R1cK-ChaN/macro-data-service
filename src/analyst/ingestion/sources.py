@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import concurrent.futures
 import dataclasses
 import hashlib
 import math
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
@@ -34,7 +36,7 @@ from analyst.ingestion.scrapers.eia import EIAClient
 from analyst.ingestion.scrapers.eurostat import EurostatClient
 from analyst.ingestion.scrapers.fred import FredClient
 from analyst.ingestion.scrapers.imf import IMFClient
-from analyst.ingestion.scrapers.oecd import OECDClient
+from analyst.ingestion.scrapers.oecd import OECDClient, OECDRateLimitError
 from analyst.ingestion.scrapers.reddit import RedditTrendClient, RedditTrendPost
 from analyst.ingestion.scrapers.weibo import WeiboTrendClient, WeiboTrendItem
 from analyst.ingestion.scrapers.worldbank import WorldBankClient
@@ -870,6 +872,28 @@ class ECBIngestionClient:
         return RefreshStats(source="ecb", count=count)
 
 
+class _OECDRateLimiter:
+    """Thread-safe rate limiter for OECD API requests."""
+
+    def __init__(self, min_interval: float = 0.3) -> None:
+        self._lock = threading.Lock()
+        self._last_request = 0.0
+        self._min_interval = min_interval
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_request
+            if elapsed < self._min_interval:
+                time.sleep(self._min_interval - elapsed)
+            self._last_request = time.monotonic()
+
+    def backoff(self, seconds: float) -> None:
+        """Push the next allowed request time forward (called on 429)."""
+        with self._lock:
+            self._last_request = time.monotonic() + seconds - self._min_interval
+
+
 class OECDIngestionClient:
     def __init__(
         self,
@@ -1122,6 +1146,170 @@ class OECDIngestionClient:
             except Exception:
                 logger.warning("OECD catalog refresh failed for %s/%s", dataflow.agency_id, dataflow.id, exc_info=True)
             time.sleep(max(sleep_seconds, 0.0))
+        return RefreshStats(source="oecd_catalog", count=count)
+
+    def refresh_parallel(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+        max_workers: int = 4,
+        request_delay: float = 0.3,
+    ) -> RefreshStats:
+        """Fetch all configured series using a thread pool."""
+        limiter = _OECDRateLimiter(min_interval=request_delay)
+        results: list[list[IndicatorObservationRecord]] = []
+        errors: list[str] = []
+
+        def _fetch_one(key: str, cfg: OECDSeriesConfig) -> list[IndicatorObservationRecord]:
+            max_retries = 5
+            for attempt in range(max_retries):
+                limiter.wait()
+                try:
+                    resolved_version, resolved_key = self._resolve_request(cfg)
+                    observations = self.client.fetch_data(
+                        cfg.dataflow,
+                        agency_id=cfg.agency_id,
+                        version=resolved_version,
+                        key=resolved_key,
+                        series_id=cfg.series_id,
+                        limit=30,
+                    )
+                    break
+                except OECDRateLimitError:
+                    if attempt < max_retries - 1:
+                        backoff = max(5.0, request_delay) * (2 ** attempt)
+                        logger.warning("OECD 429 for %s, retry %d backing off %.1fs", key, attempt + 1, backoff)
+                        limiter.backoff(backoff)
+                        continue
+                    raise
+            fam_id = family_lookup.get(("oecd", cfg.series_id)) if family_lookup else None
+            return [
+                IndicatorObservationRecord(
+                    series_id=obs.series_id,
+                    source="oecd",
+                    date=obs.date,
+                    value=obs.value,
+                    metadata={
+                        "category": cfg.category,
+                        "dataflow": obs.dataflow,
+                        "agency_id": obs.agency_id,
+                        "series_key": obs.series_key or resolved_key,
+                        "dimensions": obs.dimensions,
+                    },
+                    obs_family_id=fam_id,
+                )
+                for obs in observations
+            ]
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_key: dict[concurrent.futures.Future[list[IndicatorObservationRecord]], str] = {}
+            for key, cfg in self.series_configs.items():
+                future = executor.submit(_fetch_one, key, cfg)
+                future_to_key[future] = key
+
+            for future in concurrent.futures.as_completed(future_to_key):
+                key = future_to_key[future]
+                try:
+                    results.append(future.result())
+                except Exception:
+                    errors.append(key)
+                    logger.warning("OECD parallel refresh failed for %s", key, exc_info=True)
+
+        count = 0
+        for records in results:
+            for record in records:
+                store.upsert_indicator_observation(record)
+                count += 1
+        return RefreshStats(source="oecd", count=count)
+
+    def refresh_catalog_parallel(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        dataflow_ids: list[str] | None = None,
+        agency_prefix: str = "OECD",
+        dataflow_limit: int | None = None,
+        max_workers: int = 3,
+        request_delay: float = 0.5,
+        latest_observations: int = 1,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        """Fetch catalog data from multiple dataflows in parallel."""
+        dataflows = self.resolve_catalog_dataflows(
+            dataflow_ids=dataflow_ids,
+            agency_prefix=agency_prefix,
+            limit=dataflow_limit,
+        )
+        limiter = _OECDRateLimiter(min_interval=request_delay)
+        results: list[list[IndicatorObservationRecord]] = []
+
+        def _fetch_dataflow(dataflow: Any) -> list[IndicatorObservationRecord]:
+            max_retries = 5
+            for attempt in range(max_retries):
+                limiter.wait()
+                try:
+                    observations = self.client.fetch_data(
+                        dataflow.id,
+                        agency_id=dataflow.agency_id,
+                        version=dataflow.version,
+                        key="all",
+                        series_id=None,
+                        limit=latest_observations,
+                    )
+                    break
+                except OECDRateLimitError:
+                    if attempt < max_retries - 1:
+                        backoff = max(5.0, request_delay) * (2 ** attempt)
+                        logger.warning(
+                            "OECD 429 for %s/%s, retry %d backing off %.1fs",
+                            dataflow.agency_id, dataflow.id, attempt + 1, backoff,
+                        )
+                        limiter.backoff(backoff)
+                        continue
+                    raise
+            records: list[IndicatorObservationRecord] = []
+            for obs in observations:
+                fam_id = family_lookup.get(("oecd", obs.series_id)) if family_lookup else None
+                records.append(
+                    IndicatorObservationRecord(
+                        series_id=obs.series_id,
+                        source="oecd",
+                        date=obs.date,
+                        value=obs.value,
+                        metadata={
+                            "category": "catalog",
+                            "dataflow": obs.dataflow,
+                            "dataflow_name": dataflow.name,
+                            "dataflow_description": dataflow.description,
+                            "agency_id": obs.agency_id or dataflow.agency_id,
+                            "series_key": obs.series_key,
+                            "raw_series_key": obs.raw_series_key,
+                            "dimensions": obs.dimensions,
+                        },
+                        obs_family_id=fam_id,
+                    )
+                )
+            return records
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_id: dict[concurrent.futures.Future[list[IndicatorObservationRecord]], str] = {}
+            for dataflow in dataflows:
+                future = executor.submit(_fetch_dataflow, dataflow)
+                future_to_id[future] = f"{dataflow.agency_id}/{dataflow.id}"
+
+            for future in concurrent.futures.as_completed(future_to_id):
+                label = future_to_id[future]
+                try:
+                    results.append(future.result())
+                except Exception:
+                    logger.warning("OECD catalog parallel refresh failed for %s", label, exc_info=True)
+
+        count = 0
+        for records in results:
+            for record in records:
+                store.upsert_indicator_observation(record)
+                count += 1
         return RefreshStats(source="oecd_catalog", count=count)
 
 
@@ -2722,14 +2910,21 @@ class IngestionOrchestrator:
         )
 
     def _build_oecd_source(self) -> IngestionSourceDefinition:
+        def _execute_oecd() -> int:
+            lookup = self._family_lookup or None
+            if len(self.oecd.series_configs) > 20:
+                return self.oecd.refresh_parallel(
+                    self.store, family_lookup=lookup,
+                ).count
+            return self.oecd.refresh(
+                self.store, family_lookup=lookup,
+            ).count
+
         return IngestionSourceDefinition(
             name="oecd",
             interval_seconds=86_400,
             prepare=self._ensure_obs_seed,
-            execute=lambda: self.oecd.refresh(
-                self.store,
-                family_lookup=self._family_lookup or None,
-            ).count,
+            execute=_execute_oecd,
         )
 
     def _build_worldbank_source(self) -> IngestionSourceDefinition:
