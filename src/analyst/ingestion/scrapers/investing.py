@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from datetime import datetime, timedelta
 from typing import Any
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 from analyst.ingestion.http_transport import create_cf_session
 from analyst.storage import StoredEventRecord
@@ -21,6 +22,14 @@ from ._common import (
     parse_numeric_value,
     to_epoch,
 )
+from ._selector_versioning import (
+    SelectorBuildContext,
+    SelectorVersion,
+    extract_with_selector_versions,
+    selector_field,
+)
+
+logger = logging.getLogger(__name__)
 
 INVESTING_NEWS_CATEGORIES = (
     "latest-news",
@@ -32,6 +41,59 @@ INVESTING_NEWS_CATEGORIES = (
     "economic-indicators",
     "world-news",
     "most-popular-news",
+)
+
+INVESTING_NEWS_SELECTOR_VERSIONS = (
+    SelectorVersion(
+        name="data-test-v1",
+        item_selectors=("article[data-test='article-item']",),
+        fields={
+            "title": selector_field("a[data-test='article-title-link']"),
+            "url": selector_field("a[data-test='article-title-link']", attr="href"),
+            "description": selector_field("p[data-test='article-description']"),
+            "published_at": selector_field("time[data-test='article-publish-date']", attr="datetime"),
+            "author": selector_field("span[data-test='news-provider-name']"),
+            "comments": selector_field("span[data-test='article-comments']"),
+        },
+        min_confidence=0.75,
+    ),
+    SelectorVersion(
+        name="legacy-js-article-item",
+        item_selectors=("article.js-article-item",),
+        fields={
+            "title": selector_field("a.title", "a[href*='/news/']"),
+            "url": selector_field("a.title", "a[href*='/news/']", attr="href"),
+        },
+        min_confidence=0.60,
+    ),
+    SelectorVersion(
+        name="generic-article-headings",
+        item_selectors=("article",),
+        fields={
+            "title": selector_field(
+                "a[data-test='article-title-link']",
+                "a.title",
+                "h1 a",
+                "h2 a",
+                "h3 a",
+                "a[href*='/news/']",
+            ),
+            "url": selector_field(
+                "a[data-test='article-title-link']",
+                "a.title",
+                "h1 a",
+                "h2 a",
+                "h3 a",
+                "a[href*='/news/']",
+                attr="href",
+            ),
+            "description": selector_field("p[data-test='article-description']", "p"),
+            "published_at": selector_field("time[data-test='article-publish-date']", "time", attr="datetime"),
+            "author": selector_field("span[data-test='news-provider-name']", "span[class*='provider']"),
+            "comments": selector_field("span[data-test='article-comments']", "span[class*='comment']"),
+        },
+        min_confidence=0.35,
+    ),
 )
 
 
@@ -221,86 +283,59 @@ class InvestingNewsClient:
         return all_items
 
     def _parse_news_html(self, html: str, category: str) -> list[ScrapedNewsItem]:
-        soup = BeautifulSoup(html, "html.parser")
-        items: list[ScrapedNewsItem] = []
         seen_urls: set[str] = set()
 
-        # Rich format: articles with data-test="article-item"
-        for art in soup.find_all("article", {"data-test": "article-item"}):
-            try:
-                link = art.find("a", {"data-test": "article-title-link"})
-                if not link:
-                    continue
-                title = link.get_text(strip=True)
-                href = link.get("href", "")
-                if not title or href in seen_urls:
-                    continue
-                seen_urls.add(href)
+        def build_item(
+            fields: dict[str, str],
+            article: Tag,
+            context: SelectorBuildContext,
+        ) -> ScrapedNewsItem | None:
+            title = fields.get("title", "").strip()
+            href = fields.get("url", "").strip()
+            if not title or len(title) < 10 or not href or href in seen_urls:
+                return None
+            if "/news/" not in href and not href.startswith("http"):
+                return None
+            seen_urls.add(href)
 
-                desc_p = art.find("p", {"data-test": "article-description"})
-                description = desc_p.get_text(strip=True) if desc_p else ""
+            comment_count = 0
+            comment_text = fields.get("comments", "")
+            if comment_text:
+                match = re.search(r"(\d+)", comment_text)
+                if match:
+                    comment_count = int(match.group(1))
 
-                time_el = art.find("time", {"data-test": "article-publish-date"})
-                published_at = time_el.get("datetime", "") if time_el else ""
+            raw: dict[str, object] = {
+                "selector_version": context.version.name,
+                "dom_fingerprint": context.fingerprint,
+            }
+            data_id = article.get("data-id", "")
+            if data_id:
+                raw["data_id"] = data_id
+            if comment_count:
+                raw["comments"] = comment_count
 
-                provider = art.find("span", {"data-test": "news-provider-name"})
-                author = provider.get_text(strip=True) if provider else ""
+            url_category = self._category_from_url(href)
+            return ScrapedNewsItem(
+                source="investing",
+                title=title,
+                url=href,
+                published_at=fields.get("published_at", "").strip(),
+                description=fields.get("description", "").strip(),
+                author=fields.get("author", "").strip(),
+                category=url_category or category,
+                raw_json=raw,
+            )
 
-                # Extract comment count if visible
-                comment_count = 0
-                comment_el = art.find("span", {"data-test": "article-comments"})
-                if comment_el:
-                    m = re.search(r"(\d+)", comment_el.get_text())
-                    if m:
-                        comment_count = int(m.group(1))
-
-                # Extract category from URL path
-                url_category = self._category_from_url(href)
-
-                raw: dict[str, object] = {}
-                if comment_count:
-                    raw["comments"] = comment_count
-
-                items.append(ScrapedNewsItem(
-                    source="investing",
-                    title=title,
-                    url=href,
-                    published_at=published_at,
-                    description=description,
-                    author=author,
-                    category=url_category or category,
-                    raw_json=raw,
-                ))
-            except Exception:
-                continue
-
-        # Fallback: simpler article format (articleItem)
-        if not items:
-            for art in soup.find_all("article", {"class": "js-article-item"}):
-                try:
-                    link = art.find("a", {"class": "title"}) or art.find("a")
-                    if not link:
-                        continue
-                    title = link.get_text(strip=True)
-                    href = link.get("href", "")
-                    if not title or href in seen_urls:
-                        continue
-                    seen_urls.add(href)
-
-                    data_id = art.get("data-id", "")
-                    url_category = self._category_from_url(href)
-
-                    items.append(ScrapedNewsItem(
-                        source="investing",
-                        title=title,
-                        url=href,
-                        category=url_category or category,
-                        raw_json={"data_id": data_id} if data_id else {},
-                    ))
-                except Exception:
-                    continue
-
-        return items
+        result = extract_with_selector_versions(
+            html,
+            source="investing",
+            context=f"news:{category}",
+            versions=INVESTING_NEWS_SELECTOR_VERSIONS,
+            build_item=build_item,
+            logger=logger,
+        )
+        return list(result.items)
 
     @staticmethod
     def _category_from_url(url: str) -> str:

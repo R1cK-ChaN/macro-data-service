@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 from analyst.ingestion.http_transport import create_cf_session
 from analyst.storage import StoredEventRecord
@@ -19,6 +20,38 @@ from ._common import (
     generate_event_id,
     parse_numeric_value,
     to_epoch,
+)
+from ._selector_versioning import (
+    SelectorBuildContext,
+    SelectorVersion,
+    extract_with_selector_versions,
+    selector_field,
+)
+
+logger = logging.getLogger(__name__)
+
+FOREXFACTORY_NEWS_SELECTOR_VERSIONS = (
+    SelectorVersion(
+        name="news-block-v1",
+        item_selectors=("div.news-block__title",),
+        fields={
+            "title": selector_field("a"),
+            "url": selector_field("a", attr="href"),
+        },
+        min_confidence=0.80,
+        success_items=10,
+    ),
+    SelectorVersion(
+        name="generic-article-v2",
+        item_selectors=("article", "div[class*='news-block']", "li[class*='news']"),
+        fields={
+            "title": selector_field("h1 a", "h2 a", "h3 a", "a[href*='/news/']"),
+            "url": selector_field("h1 a", "h2 a", "h3 a", "a[href*='/news/']", attr="href"),
+            "details": selector_field("time", "div[class*='details']", "span[class*='details']"),
+            "preview": selector_field("p", "div[class*='preview']"),
+        },
+        min_confidence=0.35,
+    ),
 )
 
 
@@ -145,73 +178,83 @@ class ForexFactoryNewsClient:
         return all_items
 
     def _parse_news_html(self, html: str) -> list[ScrapedNewsItem]:
-        soup = BeautifulSoup(html, "html.parser")
-        items: list[ScrapedNewsItem] = []
         seen: set[str] = set()
 
-        for title_div in soup.find_all("div", {"class": "news-block__title"}):
-            try:
-                link = title_div.find("a")
-                if not link:
-                    continue
-                title = link.get_text(strip=True)
-                href = link.get("href", "")
-                if not title or href in seen:
-                    continue
-                seen.add(href)
+        def build_item(
+            fields: dict[str, str],
+            node: Tag,
+            context: SelectorBuildContext,
+        ) -> ScrapedNewsItem | None:
+            title = fields.get("title", "").strip()
+            href = fields.get("url", "").strip()
+            if not title or len(title) < 10 or not href:
+                return None
 
-                full_url = f"https://www.forexfactory.com{href}" if href.startswith("/") else href
-                parent = title_div.parent
+            full_url = f"https://www.forexfactory.com{href}" if href.startswith("/") else href
+            if full_url in seen or "/news/" not in full_url:
+                return None
+            seen.add(full_url)
 
-                # Extract source and time from details block
-                details_div = parent.find("div", {"class": "news-block__details"}) if parent else None
-                source = ""
-                time_ago = ""
-                comments = 0
+            card = node.parent if context.version.name == "news-block-v1" and node.parent else node
+
+            details_text = fields.get("details", "")
+            if context.version.name == "news-block-v1":
+                details_div = card.find("div", {"class": "news-block__details"})
                 if details_div:
-                    source, time_ago, comments = self._parse_details(details_div.get_text("|", strip=True))
+                    details_text = details_div.get_text("|", strip=True)
+            source = ""
+            time_ago = ""
+            comments = 0
+            if details_text:
+                source, time_ago, comments = self._parse_details(details_text)
 
-                # Extract preview text
-                preview_div = parent.find("div", {"class": "news-block__preview"}) if parent else None
-                preview = preview_div.get_text(strip=True) if preview_div else ""
+            preview = fields.get("preview", "").strip()
+            if context.version.name == "news-block-v1" and not preview:
+                preview_div = card.find("div", {"class": "news-block__preview"})
+                if preview_div:
+                    preview = preview_div.get_text(strip=True)
 
-                # Extract thumbnail
-                thumbnail = ""
-                if parent:
-                    img = parent.find("img")
-                    if img:
-                        thumbnail = img.get("src", "") or img.get("data-src", "")
+            thumbnail = ""
+            img = card.find("img")
+            if img:
+                thumbnail = img.get("src", "") or img.get("data-src", "")
 
-                # Extract impact level
-                importance = ""
-                if parent:
-                    impact_span = parent.find("span", {"class": lambda c: c and "universal-impact" in str(c)})
-                    if impact_span:
-                        cls = " ".join(impact_span.get("class", []))
-                        if "high" in cls:
-                            importance = "high"
-                        elif "medium" in cls:
-                            importance = "medium"
-                        elif "low" in cls:
-                            importance = "low"
+            importance = ""
+            impact_span = card.find("span", {"class": lambda c: c and "universal-impact" in str(c)})
+            if impact_span:
+                cls = " ".join(impact_span.get("class", []))
+                if "high" in cls:
+                    importance = "high"
+                elif "medium" in cls:
+                    importance = "medium"
+                elif "low" in cls:
+                    importance = "low"
 
-                items.append(ScrapedNewsItem(
-                    source="forexfactory",
-                    title=title,
-                    url=full_url,
-                    description=preview,
-                    author=source,
-                    importance=importance,
-                    image_url=thumbnail,
-                    raw_json={
-                        "time_ago": time_ago,
-                        "comments": comments,
-                    },
-                ))
-            except Exception:
-                continue
+            return ScrapedNewsItem(
+                source="forexfactory",
+                title=title,
+                url=full_url,
+                description=preview,
+                author=source,
+                importance=importance,
+                image_url=thumbnail,
+                raw_json={
+                    "selector_version": context.version.name,
+                    "dom_fingerprint": context.fingerprint,
+                    "time_ago": time_ago,
+                    "comments": comments,
+                },
+            )
 
-        return items
+        result = extract_with_selector_versions(
+            html,
+            source="forexfactory",
+            context="news",
+            versions=FOREXFACTORY_NEWS_SELECTOR_VERSIONS,
+            build_item=build_item,
+            logger=logger,
+        )
+        return list(result.items)
 
     @staticmethod
     def _parse_details(text: str) -> tuple[str, str, int]:
