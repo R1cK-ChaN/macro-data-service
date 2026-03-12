@@ -12,6 +12,7 @@ from .sources import (
     MarketPriceClient,
     NewsIngestionClient,
     RedditTrendIngestionClient,
+    WeiboTrendIngestionClient,
 )
 
 __all__ = [
@@ -25,5 +26,6 @@ __all__ = [
     "MarketPriceClient",
     "NewsIngestionClient",
     "RedditTrendIngestionClient",
+    "WeiboTrendIngestionClient",
     "TradingEconomicsCalendarClient",
 ]

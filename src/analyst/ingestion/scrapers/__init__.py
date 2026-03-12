@@ -42,6 +42,7 @@ from .tradingeconomics import (
     TradingEconomicsMarketsClient,
     TradingEconomicsNewsClient,
 )
+from .weibo import WeiboTrendClient, WeiboTrendItem
 
 __all__ = [
     # Data classes
@@ -95,6 +96,8 @@ __all__ = [
     "FTArticleClient",
     "ReutersArticleClient",
     "RedditTrendClient",
+    "WeiboTrendClient",
+    "WeiboTrendItem",
     "WSJArticleClient",
     # Structured Data APIs
     "BISClient",

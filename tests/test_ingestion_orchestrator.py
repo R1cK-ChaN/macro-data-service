@@ -23,6 +23,7 @@ class IngestionOrchestratorTest(unittest.TestCase):
             market=Mock(),
             news=Mock(),
             reddit_trends=Mock(),
+            weibo_trends=Mock(),
             rate_probability=Mock(),
             nyfed=Mock(),
             gov_report=Mock(),
@@ -108,6 +109,7 @@ class IngestionOrchestratorTest(unittest.TestCase):
             market=Mock(),
             news=Mock(),
             reddit_trends=fake_reddit_trends,
+            weibo_trends=Mock(),
             rate_probability=Mock(),
             nyfed=Mock(),
             gov_report=Mock(),
@@ -132,6 +134,52 @@ class IngestionOrchestratorTest(unittest.TestCase):
         self.assertEqual(report.fetched, 3)
         self.assertEqual(report.normalized, 2)
         self.assertEqual(report.validated, 1)
+        self.assertEqual(report.deduplicated, 1)
+        self.assertEqual(report.stored, 1)
+
+    def test_weibo_trends_source_runs_pipeline(self) -> None:
+        fake_weibo_trends = Mock()
+        fake_weibo_trends.fetch_entries.return_value = ["raw-a", "raw-b"]
+        fake_weibo_trends.normalize_entries.return_value = ["norm-a", "norm-b"]
+        fake_weibo_trends.validate_entries.return_value = ["valid-a", "valid-b"]
+        fake_weibo_trends.deduplicate_entries.return_value = ["dedup-a"]
+        fake_weibo_trends.store_topics.return_value = 1
+
+        orchestrator = IngestionOrchestrator(
+            store=Mock(),
+            fred=Mock(),
+            investing=Mock(),
+            forexfactory=Mock(),
+            tradingeconomics=Mock(),
+            fed=Mock(),
+            market=Mock(),
+            news=Mock(),
+            reddit_trends=Mock(),
+            weibo_trends=fake_weibo_trends,
+            rate_probability=Mock(),
+            nyfed=Mock(),
+            gov_report=Mock(),
+            eia=Mock(),
+            treasury_fiscal=Mock(),
+            imf=Mock(),
+            eurostat=Mock(),
+            bis=Mock(),
+            ecb=Mock(),
+            oecd=Mock(),
+            worldbank=Mock(),
+        )
+
+        report = orchestrator.run_source("weibo_trends")
+
+        fake_weibo_trends.fetch_entries.assert_called_once_with()
+        fake_weibo_trends.normalize_entries.assert_called_once_with(["raw-a", "raw-b"])
+        fake_weibo_trends.validate_entries.assert_called_once_with(["norm-a", "norm-b"])
+        fake_weibo_trends.deduplicate_entries.assert_called_once_with(["valid-a", "valid-b"])
+        fake_weibo_trends.store_topics.assert_called_once_with(orchestrator.store, ["dedup-a"])
+        self.assertEqual(report.source, "weibo_trends")
+        self.assertEqual(report.fetched, 2)
+        self.assertEqual(report.normalized, 2)
+        self.assertEqual(report.validated, 2)
         self.assertEqual(report.deduplicated, 1)
         self.assertEqual(report.stored, 1)
 

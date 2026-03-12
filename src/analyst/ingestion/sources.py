@@ -36,6 +36,7 @@ from analyst.ingestion.scrapers.fred import FredClient
 from analyst.ingestion.scrapers.imf import IMFClient
 from analyst.ingestion.scrapers.oecd import OECDClient
 from analyst.ingestion.scrapers.reddit import RedditTrendClient, RedditTrendPost
+from analyst.ingestion.scrapers.weibo import WeiboTrendClient, WeiboTrendItem
 from analyst.ingestion.scrapers.worldbank import WorldBankClient
 from analyst.ingestion.scrapers.nyfed import NYFedRatesClient
 from analyst.ingestion.scrapers.rateprobability import RateProbabilityClient
@@ -1419,6 +1420,24 @@ _TREND_KEYWORD_STOPWORDS = {
     "would",
 }
 
+_WEIBO_CATEGORY_MAP = {
+    "互联网": "technology",
+    "体育": "sports",
+    "作品衍生": "entertainment",
+    "剧集": "entertainment",
+    "国内时政": "news",
+    "国际时政": "news",
+    "幽默": "culture",
+    "情感": "lifestyle",
+    "民生新闻": "news",
+    "汽车": "business",
+    "突发/灾害": "news",
+    "综艺": "entertainment",
+    "美食": "lifestyle",
+    "财经": "business",
+    "音乐": "entertainment",
+}
+
 
 class RedditTrendIngestionClient:
     def __init__(
@@ -1638,6 +1657,178 @@ class RedditTrendIngestionClient:
             entry.observed_at,
             -entry.provider_rank,
             entry.topic.lower(),
+        )
+
+
+class WeiboTrendIngestionClient:
+    def __init__(
+        self,
+        *,
+        client: WeiboTrendClient | None = None,
+        ttl_hours: int = 48,
+    ) -> None:
+        self._client = client or WeiboTrendClient()
+        self._ttl_hours = ttl_hours
+
+    def refresh(self, store: SQLiteEngineStore) -> RefreshStats:
+        items = self.fetch_entries()
+        normalized = self.normalize_entries(items)
+        valid = self.validate_entries(normalized)
+        deduplicated = self.deduplicate_entries(valid)
+        return RefreshStats(source="weibo_trends", count=self.store_topics(store, deduplicated))
+
+    def fetch_entries(self) -> list[WeiboTrendItem]:
+        return [item for item in self._client.fetch_hot_band() if item.topic_flag != 0]
+
+    def normalize_entries(self, items: list[WeiboTrendItem]) -> list[PreparedTrendRecord]:
+        normalized: list[PreparedTrendRecord] = []
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        ttl_seconds = max(self._ttl_hours, 1) * 3600
+        for item in items:
+            topic = self._clean_title(item.note or item.word)
+            normalized_topic = self._normalize_topic_text(topic)
+            if not normalized_topic:
+                continue
+            normalized_hash = hashlib.sha256(normalized_topic.encode("utf-8")).hexdigest()
+            observed_at = item.onboard_time if item.onboard_time > 0 else now_ts
+            popularity_score = self._popularity_score(item, now_ts=now_ts)
+            normalized.append(
+                PreparedTrendRecord(
+                    trend_id=f"weibo:{normalized_hash}",
+                    provider="weibo",
+                    provider_topic_id=item.word_scheme or item.word,
+                    title_raw=item.note or item.word,
+                    topic=topic,
+                    summary=self._build_summary(topic, category=self._map_category(item.category)),
+                    keywords=self._extract_keywords(topic),
+                    category=self._map_category(item.category),
+                    region="china",
+                    popularity_score=round(popularity_score, 2),
+                    provider_rank=max(item.realpos, 0),
+                    engagement_score=round(self._engagement_score(item), 2),
+                    comment_count=0,
+                    observed_at=observed_at,
+                    expires_at=observed_at + ttl_seconds,
+                    raw_json=item.raw_json,
+                    normalized_topic_hash=normalized_hash,
+                )
+            )
+        return normalized
+
+    def validate_entries(self, entries: list[PreparedTrendRecord]) -> list[PreparedTrendRecord]:
+        valid: list[PreparedTrendRecord] = []
+        for entry in entries:
+            if len(entry.topic.strip()) < 2:
+                continue
+            if not entry.provider_topic_id.strip():
+                continue
+            if not entry.normalized_topic_hash.strip():
+                continue
+            valid.append(entry)
+        return valid
+
+    def deduplicate_entries(self, entries: list[PreparedTrendRecord]) -> list[PreparedTrendRecord]:
+        best_by_topic: dict[str, PreparedTrendRecord] = {}
+        for entry in entries:
+            existing = best_by_topic.get(entry.normalized_topic_hash)
+            if existing is None or self._sort_key(entry) > self._sort_key(existing):
+                best_by_topic[entry.normalized_topic_hash] = entry
+        return sorted(best_by_topic.values(), key=self._sort_key, reverse=True)
+
+    def store_topics(self, store: SQLiteEngineStore, entries: list[PreparedTrendRecord]) -> int:
+        for entry in entries:
+            store.upsert_trend_topic(
+                TrendTopicRecord(
+                    trend_id=entry.trend_id,
+                    provider=entry.provider,
+                    provider_topic_id=entry.provider_topic_id,
+                    title_raw=entry.title_raw,
+                    topic=entry.topic,
+                    summary=entry.summary,
+                    keywords=entry.keywords,
+                    category=entry.category,
+                    region=entry.region,
+                    popularity_score=entry.popularity_score,
+                    provider_rank=entry.provider_rank,
+                    engagement_score=entry.engagement_score,
+                    comment_count=entry.comment_count,
+                    observed_at=entry.observed_at,
+                    expires_at=entry.expires_at,
+                    raw_json=entry.raw_json,
+                    normalized_topic_hash=entry.normalized_topic_hash,
+                )
+            )
+        return len(entries)
+
+    def close(self) -> None:
+        self._client.close()
+
+    @staticmethod
+    def _clean_title(title: str) -> str:
+        cleaned = title.strip()
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        cleaned = re.sub(r"[#]+", "", cleaned)
+        return cleaned.strip(" -|:")
+
+    @staticmethod
+    def _normalize_topic_text(title: str) -> str:
+        normalized = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", " ", title)
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized.casefold().strip()
+
+    @staticmethod
+    def _extract_keywords(title: str) -> list[str]:
+        keywords: list[str] = []
+        for token in re.findall(r"[A-Za-z0-9]+|[\u4e00-\u9fff]{2,}", title):
+            normalized = token.casefold()
+            if normalized.isascii():
+                if len(normalized) < 3 or normalized.isdigit():
+                    continue
+                if normalized in _TREND_KEYWORD_STOPWORDS:
+                    continue
+                value = normalized
+            else:
+                value = token.strip()
+                if len(value) < 2:
+                    continue
+            if value in keywords:
+                continue
+            keywords.append(value)
+            if len(keywords) == 5:
+                break
+        return keywords or [title[:16]]
+
+    @staticmethod
+    def _map_category(category: str) -> str:
+        mapped = _WEIBO_CATEGORY_MAP.get(category.strip(), "")
+        return mapped or "news"
+
+    @staticmethod
+    def _build_summary(topic: str, *, category: str) -> str:
+        return f"{topic} is trending on Weibo in China's {category} conversations."
+
+    @staticmethod
+    def _engagement_score(item: WeiboTrendItem) -> float:
+        hot_component = math.log1p(max(item.num, 0)) * 10.0
+        raw_hot_component = math.log1p(max(item.raw_hot, 0)) * 6.0
+        label_bonus = 4.0 if item.label_name in {"新", "热", "沸", "爆"} else 0.0
+        return min(70.0, hot_component + raw_hot_component + label_bonus)
+
+    @classmethod
+    def _popularity_score(cls, item: WeiboTrendItem, *, now_ts: int) -> float:
+        engagement_score = cls._engagement_score(item)
+        rank_bonus = max(0.0, 28.0 - max(item.realpos - 1, 0) * 1.0)
+        age_hours = max((now_ts - max(item.onboard_time, 0)) / 3600.0, 0.0) if item.onboard_time else 0.0
+        recency_bonus = max(0.0, 12.0 - min(age_hours, 12.0))
+        return min(100.0, engagement_score + rank_bonus + recency_bonus)
+
+    @staticmethod
+    def _sort_key(entry: PreparedTrendRecord) -> tuple[float, int, int, str]:
+        return (
+            entry.popularity_score,
+            entry.observed_at,
+            -entry.provider_rank,
+            entry.topic.casefold(),
         )
 
 
@@ -1998,6 +2189,7 @@ class IngestionOrchestrator:
         market: MarketPriceClient | None = None,
         news: NewsIngestionClient | None = None,
         reddit_trends: RedditTrendIngestionClient | None = None,
+        weibo_trends: WeiboTrendIngestionClient | None = None,
         rate_probability: RateProbabilityClient | None = None,
         nyfed: NYFedRatesClient | None = None,
         gov_report: GovReportIngestionClient | None = None,
@@ -2019,6 +2211,7 @@ class IngestionOrchestrator:
         self.market = market or MarketPriceClient()
         self.news = news or NewsIngestionClient()
         self.reddit_trends = reddit_trends or RedditTrendIngestionClient()
+        self.weibo_trends = weibo_trends or WeiboTrendIngestionClient()
         self.rate_probability = rate_probability or RateProbabilityClient()
         self.nyfed = nyfed or NYFedRatesClient()
         self.gov_report = gov_report or GovReportIngestionClient()
@@ -2085,6 +2278,7 @@ class IngestionOrchestrator:
             self._build_fred_full_source(),
             self._build_news_source(),
             self._build_reddit_trends_source(),
+            self._build_weibo_trends_source(),
             self._build_rate_probability_source(),
             self._build_fred_vintages_source(),
             self._build_nyfed_rates_source(),
@@ -2108,6 +2302,7 @@ class IngestionOrchestrator:
             "fred_daily",
             "news",
             "reddit_trends",
+            "weibo_trends",
             "rate_probability",
             "nyfed_rates",
             "gov_reports",
@@ -2315,6 +2510,17 @@ class IngestionOrchestrator:
             validate=self.reddit_trends.validate_entries,
             deduplicate=self.reddit_trends.deduplicate_entries,
             store=lambda items: self.reddit_trends.store_topics(self.store, items),
+        )
+
+    def _build_weibo_trends_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="weibo_trends",
+            interval_seconds=3600,
+            fetch=self.weibo_trends.fetch_entries,
+            normalize=self.weibo_trends.normalize_entries,
+            validate=self.weibo_trends.validate_entries,
+            deduplicate=self.weibo_trends.deduplicate_entries,
+            store=lambda items: self.weibo_trends.store_topics(self.store, items),
         )
 
     def _build_rate_probability_source(self) -> IngestionSourceDefinition:

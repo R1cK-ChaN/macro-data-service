@@ -10,7 +10,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from analyst.ingestion.scrapers.reddit import RedditTrendPost
-from analyst.ingestion.sources import RawTrendEntry, RedditTrendIngestionClient, RedditTrendSourceConfig
+from analyst.ingestion.scrapers.weibo import WeiboTrendItem
+from analyst.ingestion.sources import (
+    RawTrendEntry,
+    RedditTrendIngestionClient,
+    RedditTrendSourceConfig,
+    WeiboTrendIngestionClient,
+)
 from analyst.macro_data.service import LocalMacroDataService
 from analyst.storage import SQLiteEngineStore, TrendTopicRecord
 
@@ -22,6 +28,17 @@ class _FakeRedditClient:
     def fetch_hot_posts(self, subreddit: str, *, limit: int = 25) -> list[RedditTrendPost]:
         del limit
         return list(self._posts_by_subreddit.get(subreddit, []))
+
+    def close(self) -> None:
+        return None
+
+
+class _FakeWeiboClient:
+    def __init__(self, items: list[WeiboTrendItem]) -> None:
+        self._items = items
+
+    def fetch_hot_band(self) -> list[WeiboTrendItem]:
+        return list(self._items)
 
     def close(self) -> None:
         return None
@@ -226,6 +243,86 @@ class TrendDataTest(unittest.TestCase):
         self.assertNotIn("reddit", topic.summary.lower())
         self.assertEqual(topic.provider_topic_id, "topic-b")
         self.assertGreater(topic.popularity_score, 0.0)
+
+    def test_weibo_trend_normalization_preserves_cjk_and_maps_category(self) -> None:
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        client = WeiboTrendIngestionClient(
+            client=_FakeWeiboClient(
+                [
+                    WeiboTrendItem(
+                        word="中方回应特朗普计划访华",
+                        note="中方回应特朗普计划访华",
+                        word_scheme="#中方回应特朗普计划访华#",
+                        category="国内时政",
+                        realpos=2,
+                        num=711440,
+                        raw_hot=209692,
+                        onboard_time=now_ts - 900,
+                        label_name="",
+                        topic_flag=1,
+                    ),
+                    WeiboTrendItem(
+                        word="中国109项硬核项目来了",
+                        note="中国109项硬核项目来了",
+                        word_scheme="#中国109项硬核项目来了#",
+                        category="互联网",
+                        realpos=3,
+                        num=582134,
+                        raw_hot=56164,
+                        onboard_time=now_ts - 300,
+                        label_name="新",
+                        topic_flag=1,
+                    ),
+                ]
+            )
+        )
+
+        normalized = client.normalize_entries(client.fetch_entries())
+        valid = client.validate_entries(normalized)
+        deduplicated = client.deduplicate_entries(valid)
+
+        self.assertEqual(len(deduplicated), 2)
+        first = deduplicated[0]
+        self.assertTrue(first.normalized_topic_hash)
+        self.assertEqual(first.region, "china")
+        self.assertIn(first.category, {"news", "technology"})
+        self.assertTrue(any(keyword for keyword in first.keywords))
+        self.assertTrue(any("\u4e00" <= char <= "\u9fff" for char in first.topic))
+
+    def test_weibo_fetch_entries_filters_non_topics(self) -> None:
+        client = WeiboTrendIngestionClient(
+            client=_FakeWeiboClient(
+                [
+                    WeiboTrendItem(
+                        word="有效热搜",
+                        note="有效热搜",
+                        word_scheme="#有效热搜#",
+                        category="民生新闻",
+                        realpos=1,
+                        num=1000,
+                        raw_hot=100,
+                        onboard_time=1_773_200_000,
+                        topic_flag=1,
+                    ),
+                    WeiboTrendItem(
+                        word="忽略项",
+                        note="忽略项",
+                        word_scheme="#忽略项#",
+                        category="民生新闻",
+                        realpos=2,
+                        num=900,
+                        raw_hot=80,
+                        onboard_time=1_773_200_100,
+                        topic_flag=0,
+                    ),
+                ]
+            )
+        )
+
+        entries = client.fetch_entries()
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].word, "有效热搜")
 
 
 if __name__ == "__main__":
