@@ -13,7 +13,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import timezone
-from urllib.parse import urljoin
+from urllib.parse import quote_plus, urljoin
 from zoneinfo import ZoneInfo
 
 import feedparser
@@ -61,6 +61,11 @@ _STRUCTURED_DATE_KEYS = (
     "citation_publication_date",
     "citation_online_date",
 )
+
+
+def _gnews_rss(query: str, when: str = "30d", *, hl: str = "en-US", gl: str = "US", ceid: str = "US:en") -> str:
+    encoded_query = quote_plus(query)
+    return f"https://news.google.com/rss/search?q={encoded_query}+when:{when}&hl={hl}&gl={gl}&ceid={ceid}"
 
 # ---------------------------------------------------------------------------
 # Data class
@@ -249,7 +254,7 @@ _US_SOURCES: dict[str, dict] = {
         "strategy": "listing_regex",
         "url": "https://www.federalreserve.gov/monetarypolicy/beige-book-default.htm",
         "base_url": "https://www.federalreserve.gov",
-        "link_pattern": r"/monetarypolicy/beigebook\d{6}\.htm",
+        "link_pattern": r"/monetarypolicy/beigebook20\d{4}(?:-summary)?\.htm",
         "institution": "Federal Reserve",
         "country": "US",
         "language": "en",
@@ -281,10 +286,9 @@ _US_SOURCES: dict[str, dict] = {
     },
     # -- Census: listing + keywords --------------------------------------
     "us_census_retail": {
-        "strategy": "listing_keywords",
-        "url": "https://www.census.gov/retail/index.html",
-        "base_url": "https://www.census.gov",
-        "keywords": ["retail", "advance monthly sales"],
+        "strategy": "asset_url",
+        "url": "https://www.census.gov/retail/marts/www/marts_current.pdf",
+        "asset_title": "Advance Monthly Sales for Retail and Food Services",
         "institution": "Census Bureau",
         "country": "US",
         "language": "en",
@@ -298,10 +302,8 @@ _US_SOURCES: dict[str, dict] = {
         ],
     },
     "us_census_housing": {
-        "strategy": "listing_keywords",
-        "url": "https://www.census.gov/construction/nrc/index.html",
-        "base_url": "https://www.census.gov",
-        "keywords": ["housing", "new residential", "building permits"],
+        "strategy": "fixed_url",
+        "url": "https://www.census.gov/construction/nrc/current/index.html",
         "institution": "Census Bureau",
         "country": "US",
         "language": "en",
@@ -316,10 +318,10 @@ _US_SOURCES: dict[str, dict] = {
     },
     # -- Treasury: listing + keywords ------------------------------------
     "us_treasury_tic": {
-        "strategy": "listing_keywords",
-        "url": "https://home.treasury.gov/data/treasury-international-capital-tic-system",
+        "strategy": "listing_regex",
+        "url": "https://home.treasury.gov/data/treasury-international-capital-tic-system/tic-press-releases-by-topic",
         "base_url": "https://home.treasury.gov",
-        "keywords": ["TIC", "treasury international capital", "capital flow"],
+        "link_pattern": r"/news/press-releases/[a-z0-9-]+$",
         "institution": "Treasury",
         "country": "US",
         "language": "en",
@@ -333,16 +335,14 @@ _US_SOURCES: dict[str, dict] = {
         ],
     },
     "us_treasury_debt": {
-        "strategy": "listing_keywords",
-        "url": "https://home.treasury.gov/news/press-releases",
-        "base_url": "https://home.treasury.gov",
-        "keywords": ["debt", "deficit", "fiscal", "budget"],
+        "strategy": "fixed_url",
+        "url": "https://fiscaldata.treasury.gov/datasets/monthly-statement-public-debt/summary-of-treasury-securities-outstanding",
         "institution": "Treasury",
         "country": "US",
         "language": "en",
         "data_category": "fiscal_policy",
         "importance": "medium",
-        "content_selectors": ["div.field--name-body", "div.field--type-text-with-summary", "article", "main#content"],
+        "content_selectors": ["main", "article", "#__next", "body"],
         "title_selectors": ["h1", "h2", "title"],
         "date_patterns": [
             r"(\w+ \d{1,2},?\s*\d{4})",
@@ -446,10 +446,8 @@ _CN_SOURCES: dict[str, dict] = {
         ],
     },
     "cn_nbs_industrial": {
-        "strategy": "listing_keywords",
-        "url": "https://www.stats.gov.cn/sj/zxfb/",
-        "base_url": "https://www.stats.gov.cn/sj/zxfb",
-        "keywords": ["规模以上工业增加值", "工业增加值"],
+        "strategy": "rss",
+        "url": _gnews_rss("site:stats.gov.cn 月度数据 规模以上工业增加值", "90d", hl="zh-CN", gl="CN", ceid="CN:zh-Hans"),
         "institution": "国家统计局",
         "country": "CN",
         "language": "zh",
@@ -465,10 +463,8 @@ _CN_SOURCES: dict[str, dict] = {
         ],
     },
     "cn_nbs_retail": {
-        "strategy": "listing_keywords",
-        "url": "https://www.stats.gov.cn/sj/zxfb/",
-        "base_url": "https://www.stats.gov.cn/sj/zxfb",
-        "keywords": ["社会消费品零售总额", "消费品零售"],
+        "strategy": "rss",
+        "url": _gnews_rss("site:stats.gov.cn 月度数据 社会消费品零售总额", "90d", hl="zh-CN", gl="CN", ceid="CN:zh-Hans"),
         "institution": "国家统计局",
         "country": "CN",
         "language": "zh",
@@ -484,10 +480,8 @@ _CN_SOURCES: dict[str, dict] = {
         ],
     },
     "cn_nbs_fai": {
-        "strategy": "listing_keywords",
-        "url": "https://www.stats.gov.cn/sj/zxfb/",
-        "base_url": "https://www.stats.gov.cn/sj/zxfb",
-        "keywords": ["固定资产投资", "投资"],
+        "strategy": "rss",
+        "url": _gnews_rss("site:stats.gov.cn 月度数据 固定资产投资", "90d", hl="zh-CN", gl="CN", ceid="CN:zh-Hans"),
         "institution": "国家统计局",
         "country": "CN",
         "language": "zh",
@@ -541,10 +535,8 @@ _CN_SOURCES: dict[str, dict] = {
     },
     # -- Customs: listing + keywords -------------------------------------
     "cn_customs_trade": {
-        "strategy": "listing_keywords",
-        "url": "http://www.customs.gov.cn/customs/302249/zfxxgk/2799825/302274/302275/index.html",
-        "base_url": "http://www.customs.gov.cn",
-        "keywords": ["进出口", "外贸", "贸易"],
+        "strategy": "rss",
+        "url": _gnews_rss("site:gov.cn 海关总署 进出口 总值", "90d", hl="zh-CN", gl="CN", ceid="CN:zh-Hans"),
         "institution": "海关总署",
         "country": "CN",
         "language": "zh",
@@ -560,10 +552,8 @@ _CN_SOURCES: dict[str, dict] = {
     },
     # -- MOF: listing + keywords -----------------------------------------
     "cn_mof_fiscal": {
-        "strategy": "listing_keywords",
-        "url": "https://www.mof.gov.cn/zhengwuxinxi/caizhengshuju/",
-        "base_url": "https://www.mof.gov.cn",
-        "keywords": ["财政收入", "财政支出", "财政数据", "一般公共预算"],
+        "strategy": "rss",
+        "url": _gnews_rss("site:mof.gov.cn 财政收支情况", "90d", hl="zh-CN", gl="CN", ceid="CN:zh-Hans"),
         "institution": "财政部",
         "country": "CN",
         "language": "zh",
@@ -578,10 +568,8 @@ _CN_SOURCES: dict[str, dict] = {
         ],
     },
     "cn_mof_bonds": {
-        "strategy": "listing_keywords",
-        "url": "https://gks.mof.gov.cn/ztztz/guozaiguanli/",
-        "base_url": "https://gks.mof.gov.cn/ztztz/guozaiguanli",
-        "keywords": ["国债", "地方政府债", "债券", "发行"],
+        "strategy": "rss",
+        "url": _gnews_rss("site:zwgls.mof.gov.cn 国债 发行", "90d", hl="zh-CN", gl="CN", ceid="CN:zh-Hans"),
         "institution": "财政部",
         "country": "CN",
         "language": "zh",
@@ -616,11 +604,8 @@ _CN_SOURCES: dict[str, dict] = {
     },
     # -- Caixin / S&P Global: listing + keywords -------------------------
     "cn_caixin_pmi": {
-        "strategy": "listing_keywords",
-        "url": "https://www.pmi.spglobal.com/Public/Home/PressRelease",
-        "base_url": "https://www.pmi.spglobal.com",
-        "keywords": ["caixin"],
-        "extra_keywords": ["pmi", "china"],
+        "strategy": "rss",
+        "url": _gnews_rss("site:caixinglobal.com China Factory Activity PMI", "60d"),
         "institution": "Caixin/S&P Global",
         "country": "CN",
         "language": "en",
@@ -722,9 +707,9 @@ _EU_SOURCES: dict[str, dict] = {
     # -- ECB: listing + regex --------------------------------------------
     "eu_ecb_statement": {
         "strategy": "listing_regex",
-        "url": "https://www.ecb.europa.eu/press/pr/html/index.en.html",
+        "url": "https://www.ecb.europa.eu/press/press_conference/monetary-policy-statement/html/index.en.html",
         "base_url": "https://www.ecb.europa.eu",
-        "link_pattern": r"/press/pr/date/\d{4}/html/.*\.en\.html",
+        "link_pattern": r"/press/press_conference/monetary-policy-statement/\d{4}/html/.*\.en\.html",
         "institution": "ECB",
         "country": "EU",
         "language": "en",
@@ -746,7 +731,7 @@ _EU_SOURCES: dict[str, dict] = {
         "strategy": "listing_regex",
         "url": "https://www.ecb.europa.eu/press/accounts/html/index.en.html",
         "base_url": "https://www.ecb.europa.eu",
-        "link_pattern": r"/press/accounts/\d{4}/html/.*\.en\.html",
+        "link_pattern": r"/press/accounts/\d{4}/html/ecb\.mg.*\.en\.html",
         "institution": "ECB",
         "country": "EU",
         "language": "en",
@@ -766,9 +751,9 @@ _EU_SOURCES: dict[str, dict] = {
     },
     "eu_ecb_bulletin": {
         "strategy": "listing_regex",
-        "url": "https://www.ecb.europa.eu/pub/economic-bulletin/html/index.en.html",
+        "url": "https://www.ecb.europa.eu/press/economic-bulletin/html/index.en.html",
         "base_url": "https://www.ecb.europa.eu",
-        "link_pattern": r"/pub/economic-bulletin/html/eb\d+\.en\.html",
+        "link_pattern": r"/press/economic-bulletin/html/eb\d+\.en\.html",
         "institution": "ECB",
         "country": "EU",
         "language": "en",
@@ -790,6 +775,7 @@ _EU_SOURCES: dict[str, dict] = {
         "strategy": "rss",
         "url": "https://www.ecb.europa.eu/rss/press.html",
         "base_url": "https://www.ecb.europa.eu",
+        "rss_link_pattern": r"/press/pr/date/\d{4}/html/.*\.en\.html",
         "institution": "ECB",
         "country": "EU",
         "language": "en",
@@ -808,8 +794,9 @@ _EU_SOURCES: dict[str, dict] = {
     },
     "eu_ecb_speeches": {
         "strategy": "rss",
-        "url": "https://www.ecb.europa.eu/rss/speeches.html",
+        "url": "https://www.ecb.europa.eu/rss/press.html",
         "base_url": "https://www.ecb.europa.eu",
+        "rss_link_pattern": r"/press/key/date/\d{4}/html/.*\.en\.html",
         "institution": "ECB",
         "country": "EU",
         "language": "en",
@@ -906,6 +893,7 @@ _NOISE_CLASSES = [
     ".breadcrumb", ".pagination", ".social-share", ".sidebar",
     "#sidebar", ".nav", ".menu", ".footer", ".header",
 ]
+_GENERIC_TITLE_VALUES = {"navigation", "search by keyword"}
 
 
 def _get_html(
@@ -946,15 +934,82 @@ def _extract_content(html: str, selectors: list[str]) -> str:
 
 def _extract_title(html: str, selectors: list[str]) -> str:
     """Extract the page title using a selector priority list."""
+    def _normalize_title(text: str) -> str:
+        cleaned = re.sub(r"\s+", " ", text).strip()
+        cleaned = re.sub(r"\s+-\s+News articles\s+-\s+Eurostat$", "", cleaned)
+        cleaned = re.sub(r"\s+\|\s+U\.S\. Department of the Treasury$", "", cleaned)
+        cleaned = re.sub(r"\s+\|\s+U\.S\. Treasury Fiscal Data$", "", cleaned)
+        return cleaned.strip()
+
     soup = BeautifulSoup(html, "html.parser")
     for selector in selectors:
         match = soup.select_one(selector)
         if match:
-            text = match.get_text(strip=True)
-            if text:
+            text = _normalize_title(match.get_text(strip=True))
+            if text and text.lower() not in _GENERIC_TITLE_VALUES:
+                return text
+    for attrs in (
+        {"property": "og:title"},
+        {"name": "twitter:title"},
+        {"name": "citation_title"},
+    ):
+        meta = soup.find("meta", attrs=attrs)
+        if meta and meta.get("content"):
+            text = _normalize_title(meta["content"])
+            if text and text.lower() not in _GENERIC_TITLE_VALUES:
                 return text
     title_tag = soup.find("title")
-    return title_tag.get_text(strip=True) if title_tag else ""
+    return _normalize_title(title_tag.get_text(strip=True)) if title_tag else ""
+
+
+def _parse_http_last_modified(
+    response: requests.Response,
+    *,
+    default_timezone: str = "UTC",
+) -> tuple[str | None, str]:
+    raw = response.headers.get("last-modified", "").strip()
+    if not raw:
+        return None, "estimated"
+    try:
+        dt = dateutil_parser.parse(raw, fuzzy=True)
+    except (ValueError, OverflowError):
+        return None, "estimated"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo(default_timezone))
+    return dt.astimezone(timezone.utc).isoformat(), "exact"
+
+
+def _choose_published_value(
+    *,
+    exact_published_at: str | None,
+    extracted_date: str | None,
+    header_published_at: str | None,
+    header_precision: str,
+) -> tuple[str, str]:
+    def _days_between(left: str, right: str) -> int | None:
+        try:
+            left_dt = dateutil_parser.parse(left, fuzzy=True)
+            right_dt = dateutil_parser.parse(right, fuzzy=True)
+        except (ValueError, OverflowError):
+            return None
+        return abs((right_dt.date() - left_dt.date()).days)
+
+    chosen_exact = exact_published_at or ""
+    for candidate in (extracted_date or "", header_published_at or ""):
+        if not chosen_exact or not candidate:
+            continue
+        gap = _days_between(chosen_exact, candidate)
+        if gap is not None and gap > 180:
+            chosen_exact = ""
+            break
+
+    if chosen_exact:
+        return chosen_exact, "exact"
+    if header_published_at:
+        return header_published_at, header_precision
+    if extracted_date:
+        return extracted_date, "date_only"
+    return "", "estimated"
 
 
 def _extract_date_en(html: str, patterns: list[str]) -> str | None:
@@ -1116,6 +1171,33 @@ def _select_latest_matching_anchor(
     return best_tag
 
 
+def _select_matching_anchor_from_snippets(
+    session: requests.Session,
+    page_url: str,
+    pattern: re.Pattern[str],
+    cfg: dict,
+) -> tuple[BeautifulSoup | None, str]:
+    html = _get_html(session, page_url)
+    soup = BeautifulSoup(html, "html.parser")
+    direct = _select_latest_matching_anchor(soup, pattern, cfg)
+    if direct is not None:
+        return direct, page_url
+
+    for holder in soup.select("[data-snippets]"):
+        snippet_targets = [
+            urljoin(page_url, snippet.strip())
+            for snippet in holder.get("data-snippets", "").split(",")
+            if snippet.strip()
+        ]
+        for snippet_url in snippet_targets:
+            snippet_html = _get_html(session, snippet_url)
+            snippet_soup = BeautifulSoup(snippet_html, "html.parser")
+            nested = _select_latest_matching_anchor(snippet_soup, pattern, cfg)
+            if nested is not None:
+                return nested, snippet_url
+    return None, page_url
+
+
 def _extract_datetime_cn(
     html: str,
     *,
@@ -1248,9 +1330,14 @@ def _link_matches_keywords(
     tag: BeautifulSoup,
     keywords: list[str],
     extra_keywords: list[str] | None = None,
+    *,
+    use_context: bool = False,
 ) -> bool:
     """Check if an <a> tag's text (+ href) matches keyword criteria."""
-    text = (tag.get_text(" ", strip=True) + " " + tag.get("href", "")).lower()
+    parts = [tag.get_text(" ", strip=True), tag.get("href", "")]
+    if use_context:
+        parts.append(_anchor_context_text(tag))
+    text = " ".join(parts).lower()
     primary_match = any(kw.lower() in text for kw in keywords)
     if not primary_match:
         return False
@@ -1368,6 +1455,8 @@ class USGovReportClient:
         strategy = cfg["strategy"]
         if strategy == "fixed_url":
             return self._fetch_fixed_url(source_id, cfg)
+        if strategy == "asset_url":
+            return self._fetch_asset_url(source_id, cfg)
         if strategy == "listing_keywords":
             return self._fetch_listing_keywords(source_id, cfg)
         if strategy == "listing_regex":
@@ -1375,7 +1464,9 @@ class USGovReportClient:
         return None
 
     def _fetch_fixed_url(self, source_id: str, cfg: dict) -> GovReportItem | None:
-        html = _get_html(self.session, cfg["url"])
+        response = self.session.get(cfg["url"], timeout=30)
+        response.raise_for_status()
+        html = response.text
         title = _extract_title(html, cfg["title_selectors"])
         exact_published_at = _extract_structured_datetime(
             html,
@@ -1385,8 +1476,17 @@ class USGovReportClient:
             cfg.get("datetime_patterns", []),
             default_timezone=cfg.get("default_timezone", "UTC"),
         )
-        published_at = exact_published_at or _extract_date_en(html, cfg["date_patterns"])
-        published_precision = "exact" if exact_published_at else ("date_only" if published_at else "estimated")
+        extracted_date = _extract_date_en(html, cfg["date_patterns"])
+        header_published_at, header_precision = _parse_http_last_modified(
+            response,
+            default_timezone=cfg.get("default_timezone", "UTC"),
+        )
+        published_at, published_precision = _choose_published_value(
+            exact_published_at=exact_published_at,
+            extracted_date=extracted_date,
+            header_published_at=header_published_at,
+            header_precision=header_precision,
+        )
         content_html = _extract_content(html, cfg["content_selectors"])
         content_md = _html_to_markdown(content_html)
         if not title:
@@ -1406,6 +1506,27 @@ class USGovReportClient:
             content_markdown=content_md,
         )
 
+    def _fetch_asset_url(self, source_id: str, cfg: dict) -> GovReportItem | None:
+        response = self.session.get(cfg["url"], timeout=30)
+        response.raise_for_status()
+        published_at, published_precision = _parse_http_last_modified(
+            response,
+            default_timezone=cfg.get("default_timezone", "UTC"),
+        )
+        return GovReportItem(
+            source=f"gov_{cfg['institution'].lower().replace(' ', '_')}",
+            source_id=source_id,
+            title=cfg.get("asset_title", cfg["url"].rsplit("/", 1)[-1]),
+            url=response.url,
+            published_at=published_at or "",
+            published_precision=published_precision,
+            institution=cfg["institution"],
+            country=cfg["country"],
+            language=cfg["language"],
+            data_category=cfg["data_category"],
+            importance=cfg.get("importance", ""),
+        )
+
     def _fetch_listing_keywords(self, source_id: str, cfg: dict) -> GovReportItem | None:
         html = _get_html(self.session, cfg["url"])
         soup = BeautifulSoup(html, "html.parser")
@@ -1418,7 +1539,12 @@ class USGovReportClient:
             href = a_tag["href"]
             if link_must_contain and link_must_contain not in href:
                 continue
-            if _link_matches_keywords(a_tag, keywords, extra_keywords):
+            if _link_matches_keywords(
+                a_tag,
+                keywords,
+                extra_keywords,
+                use_context=bool(cfg.get("use_context_keywords", False)),
+            ):
                 if href.endswith(".pdf"):
                     continue
                 detail_url = _resolve_url(href, base_url)
@@ -1480,7 +1606,9 @@ class USGovReportClient:
         return None
 
     def _fetch_detail_page(self, source_id: str, cfg: dict, url: str) -> GovReportItem | None:
-        html = _get_html(self.session, url)
+        response = self.session.get(url, timeout=30)
+        response.raise_for_status()
+        html = response.text
         title = _extract_title(html, cfg["title_selectors"])
         exact_published_at = _extract_structured_datetime(
             html,
@@ -1490,8 +1618,17 @@ class USGovReportClient:
             cfg.get("datetime_patterns", []),
             default_timezone=cfg.get("default_timezone", "UTC"),
         )
-        published_at = exact_published_at or _extract_date_en(html, cfg["date_patterns"])
-        published_precision = "exact" if exact_published_at else ("date_only" if published_at else "estimated")
+        extracted_date = _extract_date_en(html, cfg["date_patterns"])
+        header_published_at, header_precision = _parse_http_last_modified(
+            response,
+            default_timezone=cfg.get("default_timezone", "UTC"),
+        )
+        published_at, published_precision = _choose_published_value(
+            exact_published_at=exact_published_at,
+            extracted_date=extracted_date,
+            header_published_at=header_published_at,
+            header_precision=header_precision,
+        )
         content_html = _extract_content(html, cfg["content_selectors"])
         content_md = _html_to_markdown(content_html)
         if not title:
@@ -1535,6 +1672,8 @@ class CNGovReportClient:
         strategy = cfg["strategy"]
         if strategy == "listing_keywords":
             return self._fetch_listing_keywords(source_id, cfg)
+        if strategy == "rss":
+            return self._fetch_rss(source_id, cfg)
         return None
 
     def _fetch_listing_keywords(self, source_id: str, cfg: dict) -> GovReportItem | None:
@@ -1551,7 +1690,12 @@ class CNGovReportClient:
             href = a_tag["href"]
             if link_must_contain and link_must_contain not in href:
                 continue
-            if _link_matches_keywords(a_tag, keywords, extra_keywords):
+            if _link_matches_keywords(
+                a_tag,
+                keywords,
+                extra_keywords,
+                use_context=bool(cfg.get("use_context_keywords", False)),
+            ):
                 if href.endswith(".pdf"):
                     continue
                 detail_url = _resolve_url(href, base_url)
@@ -1585,6 +1729,35 @@ class CNGovReportClient:
             data_category=cfg["data_category"],
             importance=cfg.get("importance", ""),
             content_markdown=content_md,
+        )
+
+    def _fetch_rss(self, source_id: str, cfg: dict) -> GovReportItem | None:
+        parsed = feedparser.parse(cfg["url"])
+        if not parsed.entries:
+            return None
+        entry = parsed.entries[0]
+        title = entry.get("title", "")
+        link = entry.get("link", "")
+        published_at, published_precision = _parse_rss_published(
+            entry.get("published", ""),
+            default_timezone=cfg.get("default_timezone", "UTC"),
+        )
+        summary = BeautifulSoup(
+            entry.get("summary", ""), "html.parser"
+        ).get_text(" ", strip=True)
+        return GovReportItem(
+            source=f"gov_{cfg['institution'].lower().replace(' ', '_')}",
+            source_id=source_id,
+            title=title,
+            url=link,
+            published_at=published_at or "",
+            published_precision=published_precision,
+            institution=cfg["institution"],
+            country=cfg["country"],
+            language=cfg["language"],
+            data_category=cfg["data_category"],
+            importance=cfg.get("importance", ""),
+            description=summary,
         )
 
 
@@ -1821,16 +1994,16 @@ class EUGovReportClient:
         return None
 
     def _fetch_listing_regex(self, source_id: str, cfg: dict) -> GovReportItem | None:
-        html = _get_html(self.session, cfg["url"])
-        soup = BeautifulSoup(html, "html.parser")
-        base_url = cfg.get("base_url", cfg["url"])
         pattern = re.compile(cfg["link_pattern"])
-
-        for a_tag in soup.find_all("a", href=True):
-            href = a_tag["href"]
-            if pattern.search(href):
-                detail_url = _resolve_url(href, base_url)
-                return self._fetch_detail_page(source_id, cfg, detail_url)
+        a_tag, base_url = _select_matching_anchor_from_snippets(
+            self.session,
+            cfg["url"],
+            pattern,
+            cfg,
+        )
+        if a_tag is not None:
+            detail_url = _resolve_url(a_tag["href"], base_url)
+            return self._fetch_detail_page(source_id, cfg, detail_url)
         return None
 
     def _fetch_listing_keywords(self, source_id: str, cfg: dict) -> GovReportItem | None:
@@ -1840,7 +2013,11 @@ class EUGovReportClient:
         keywords = cfg["keywords"]
 
         for a_tag in soup.find_all("a", href=True):
-            if _link_matches_keywords(a_tag, keywords):
+            if _link_matches_keywords(
+                a_tag,
+                keywords,
+                use_context=bool(cfg.get("use_context_keywords", False)),
+            ):
                 href = a_tag["href"]
                 detail_url = _resolve_url(href, base_url)
                 return self._fetch_detail_page(source_id, cfg, detail_url)
@@ -1848,9 +2025,17 @@ class EUGovReportClient:
 
     def _fetch_rss(self, source_id: str, cfg: dict) -> GovReportItem | None:
         parsed = feedparser.parse(cfg["url"])
-        if not parsed.entries:
+        entries = list(parsed.entries)
+        link_pattern = cfg.get("rss_link_pattern")
+        if link_pattern:
+            pattern = re.compile(link_pattern)
+            entries = [
+                entry for entry in entries
+                if pattern.search(entry.get("link", ""))
+            ]
+        if not entries:
             return None
-        entry = parsed.entries[0]
+        entry = entries[0]
         link = entry.get("link", "")
         if not link:
             return None
