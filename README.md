@@ -17,6 +17,17 @@ Standalone macro-data service extracted from `analyst-project`.
 - `src/analyst/storage`: SQLite schema and query layer
 - `src/analyst/rag`: local RAG index and retrieval
 
+## Data model layers
+
+The service keeps structural macro knowledge separate from observations and market data:
+
+- Structural ontology: normalized indicator, source, release-family, and observation-family tables
+- Event and observation data: calendar events, indicator histories, vintages, and stored documents
+- Market data: latest market prices and live market fetches
+
+Structural ontology responses are deterministic and do not encode market-reaction edges such as `indicator -> affects -> asset`.
+Market behavior stays in separate analytics and market endpoints.
+
 ## Local run
 
 ```bash
@@ -53,6 +64,12 @@ Because `analyst-project` now prefers the remote macro-data endpoint when that e
 
 - `GET /health`
 - `POST /v1/ops/<operation>`
+
+Ontology-oriented operations:
+
+- `get_indicator_ontology`
+- `list_indicators_by_topic`
+- `list_release_families_for_indicator`
 
 Example:
 

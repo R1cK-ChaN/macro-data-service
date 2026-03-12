@@ -44,12 +44,21 @@ class LocalMacroDataService:
         self._store = store
         self._ingestion = ingestion
         self._retriever = retriever
+        self._ontology_seeded = False
 
     def invoke(self, operation: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         handler = getattr(self, f"_op_{operation}", None)
         if handler is None:
             raise KeyError(f"unknown macro-data operation: {operation}")
         return handler(arguments or {})
+
+    def _ensure_structural_ontology(self) -> None:
+        if self._ontology_seeded:
+            return
+        seed = getattr(self._store, "seed_structural_ontology", None)
+        if callable(seed):
+            seed()
+        self._ontology_seeded = True
 
     def _op_refresh_all_sources(self, arguments: dict[str, Any]) -> dict[str, Any]:
         del arguments
@@ -158,6 +167,131 @@ class LocalMacroDataService:
             for observation in observations
         ]
         return {"series_id": series_id, "total": len(items), "observations": items}
+
+    def _op_get_indicator_ontology(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_structural_ontology()
+        indicator_id = (arguments.get("indicator_id") or "").strip()
+        if not indicator_id:
+            return {"error": "indicator_id is required", "indicator": None}
+
+        indicator = self._store.get_calendar_indicator(indicator_id)
+        if indicator is None:
+            return {"error": f"unknown indicator_id: {indicator_id}", "indicator": None}
+
+        aliases = self._store.list_aliases_for_indicator(indicator_id)
+        release_families = self._store.list_release_families_for_indicator(indicator_id)
+        release_sources: dict[str, Any | None] = {}
+        release_items: list[dict[str, Any]] = []
+        institutions: dict[str, dict[str, Any]] = {}
+        release_family_ids: list[str] = []
+        produced_by_ids: list[str] = []
+
+        obs_family = None
+        obs_source = None
+        if indicator.obs_family_id:
+            obs_family = self._store.get_obs_family(indicator.obs_family_id)
+            if obs_family is not None:
+                obs_source = self._store.get_obs_source(obs_family.source_id)
+                if obs_source is not None:
+                    self._merge_ontology_institution(
+                        institutions,
+                        institution_id=obs_source.source_id,
+                        name=obs_source.source_name,
+                        source_type=obs_source.source_type,
+                        country_code=obs_source.country_code,
+                        homepage_url=obs_source.homepage_url,
+                        role="series_provider",
+                    )
+
+        for release_family in release_families:
+            release_family_ids.append(release_family.release_family_id)
+            produced_by_ids.append(release_family.source_id)
+            release_source = release_sources.get(release_family.source_id)
+            if release_family.source_id not in release_sources:
+                release_source = self._store.get_doc_source(release_family.source_id)
+                release_sources[release_family.source_id] = release_source
+            if release_source is not None:
+                self._merge_ontology_institution(
+                    institutions,
+                    institution_id=release_source.source_id,
+                    name=release_source.source_name,
+                    source_type=release_source.source_type,
+                    country_code=release_source.country_code,
+                    homepage_url=release_source.homepage_url,
+                    role="release_producer",
+                )
+            release_items.append(self._release_family_to_dict(release_family, release_source=release_source))
+
+        return {
+            "indicator": self._calendar_indicator_to_dict(
+                indicator,
+                produced_by_institution_ids=sorted(set(produced_by_ids)),
+                release_family_ids=sorted(release_family_ids),
+            ),
+            "topic": {
+                "code": indicator.topic,
+                "country_code": indicator.country_code,
+            },
+            "aliases": [self._calendar_alias_to_dict(alias) for alias in aliases],
+            "time_series": self._obs_family_to_dict(obs_family, obs_source=obs_source) if obs_family is not None else None,
+            "release_families": release_items,
+            "institutions": sorted(institutions.values(), key=lambda item: item["institution_id"]),
+        }
+
+    def _op_list_indicators_by_topic(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_structural_ontology()
+        topic = (arguments.get("topic_code") or arguments.get("topic") or "").strip().lower()
+        if not topic:
+            return {"error": "topic is required", "indicators": []}
+        country_code = (arguments.get("country_code") or arguments.get("country") or "").strip().upper()
+        indicators = self._store.list_calendar_indicators(
+            country_code=country_code or None,
+            topic=topic,
+        )
+        items = []
+        for indicator in indicators:
+            release_family_ids = [
+                release.release_family_id
+                for release in self._store.list_release_families_for_indicator(indicator.indicator_id)
+            ]
+            items.append(
+                self._calendar_indicator_to_dict(
+                    indicator,
+                    release_family_ids=sorted(release_family_ids),
+                )
+                | {"has_time_series": bool(indicator.obs_family_id)}
+            )
+        return {
+            "topic": topic,
+            "country_code": country_code,
+            "total": len(items),
+            "indicators": items,
+        }
+
+    def _op_list_release_families_for_indicator(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_structural_ontology()
+        indicator_id = (arguments.get("indicator_id") or "").strip()
+        if not indicator_id:
+            return {"error": "indicator_id is required", "release_families": []}
+
+        indicator = self._store.get_calendar_indicator(indicator_id)
+        if indicator is None:
+            return {"error": f"unknown indicator_id: {indicator_id}", "release_families": []}
+
+        release_families = self._store.list_release_families_for_indicator(indicator_id)
+        items = []
+        for release_family in release_families:
+            release_source = self._store.get_doc_source(release_family.source_id)
+            items.append(self._release_family_to_dict(release_family, release_source=release_source))
+        return {
+            "indicator": self._calendar_indicator_to_dict(
+                indicator,
+                produced_by_institution_ids=sorted({release.source_id for release in release_families}),
+                release_family_ids=sorted(release.release_family_id for release in release_families),
+            ),
+            "total": len(items),
+            "release_families": items,
+        }
 
     def _op_get_today_calendar(self, arguments: dict[str, Any]) -> dict[str, Any]:
         events = self._store.list_today_events(
@@ -626,6 +760,99 @@ class LocalMacroDataService:
             "fetched": True,
         }
         payload.update(extra)
+        return payload
+
+    def _merge_ontology_institution(
+        self,
+        institutions: dict[str, dict[str, Any]],
+        *,
+        institution_id: str,
+        name: str,
+        source_type: str,
+        country_code: str,
+        homepage_url: str,
+        role: str,
+    ) -> None:
+        if not institution_id:
+            return
+        record = institutions.setdefault(
+            institution_id,
+            {
+                "institution_id": institution_id,
+                "name": name,
+                "source_type": source_type,
+                "country_code": country_code,
+                "homepage_url": homepage_url,
+                "roles": [],
+            },
+        )
+        if role not in record["roles"]:
+            record["roles"].append(role)
+            record["roles"].sort()
+
+    def _calendar_indicator_to_dict(
+        self,
+        indicator: Any,
+        *,
+        produced_by_institution_ids: list[str] | None = None,
+        release_family_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "indicator_id": indicator.indicator_id,
+            "canonical_name": indicator.canonical_name,
+            "topic": indicator.topic,
+            "country_code": indicator.country_code,
+            "frequency": indicator.frequency,
+            "unit": indicator.unit,
+            "obs_family_id": indicator.obs_family_id,
+        }
+        if produced_by_institution_ids is not None:
+            payload["produced_by_institution_ids"] = produced_by_institution_ids
+        if release_family_ids is not None:
+            payload["release_family_ids"] = release_family_ids
+        return payload
+
+    def _calendar_alias_to_dict(self, alias: Any) -> dict[str, Any]:
+        return {
+            "alias": alias.alias_original or alias.alias_normalized,
+            "normalized_alias": alias.alias_normalized,
+            "source": alias.source,
+            "country_code": alias.country_code,
+        }
+
+    def _obs_family_to_dict(self, obs_family: Any, *, obs_source: Any | None = None) -> dict[str, Any]:
+        payload = {
+            "family_id": obs_family.family_id,
+            "provider_series_id": obs_family.provider_series_id,
+            "canonical_name": obs_family.canonical_name,
+            "source_id": obs_family.source_id,
+            "country_code": obs_family.country_code,
+            "topic_code": obs_family.topic_code,
+            "category": obs_family.category,
+            "frequency": obs_family.frequency,
+            "unit": obs_family.unit,
+            "seasonal_adjustment": obs_family.seasonal_adjustment,
+            "has_vintages": obs_family.has_vintages,
+        }
+        if obs_source is not None:
+            payload["source_name"] = obs_source.source_name
+            payload["source_type"] = obs_source.source_type
+        return payload
+
+    def _release_family_to_dict(self, release_family: Any, *, release_source: Any | None = None) -> dict[str, Any]:
+        payload = {
+            "release_family_id": release_family.release_family_id,
+            "release_code": release_family.release_code,
+            "release_name": release_family.release_name,
+            "topic_code": release_family.topic_code,
+            "country_code": release_family.country_code,
+            "frequency": release_family.frequency,
+            "produced_by_institution_id": release_family.source_id,
+        }
+        if release_source is not None:
+            payload["institution_name"] = release_source.source_name
+            payload["institution_type"] = release_source.source_type
+            payload["homepage_url"] = release_source.homepage_url
         return payload
 
     def _event_to_dict(self, event: Any) -> dict[str, Any]:

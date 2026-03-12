@@ -5142,6 +5142,14 @@ class SQLiteEngineStore:
             ).fetchall()
         return [self._row_to_doc_release_family(row) for row in rows]
 
+    def list_release_families_for_indicator(
+        self, indicator_id: str,
+    ) -> list[DocReleaseFamilyRecord]:
+        indicator = self.get_calendar_indicator(indicator_id)
+        if indicator is None or not indicator.obs_family_id:
+            return []
+        return self.list_releases_for_obs_family(indicator.obs_family_id)
+
     # ── Observation family seed & backfill ─────────────────────────────
 
     def seed_obs_sources_and_families(self) -> None:
@@ -5209,6 +5217,24 @@ class SQLiteEngineStore:
                     relationship=relationship,
                     created_at=now,
                 ))
+
+    def seed_structural_ontology(self) -> None:
+        """Populate deterministic macro structure tables needed for ontology queries."""
+        from analyst.ingestion.scrapers.gov_report import (
+            _CN_SOURCES,
+            _EU_SOURCES,
+            _JP_SOURCES,
+            _US_SOURCES,
+        )
+
+        self.seed_doc_sources_and_families({
+            "us": _US_SOURCES,
+            "cn": _CN_SOURCES,
+            "jp": _JP_SOURCES,
+            "eu": _EU_SOURCES,
+        })
+        self.seed_obs_sources_and_families()
+        self.seed_calendar_indicators()
 
     def backfill_obs_family_ids(self) -> int:
         """Set obs_family_id on existing indicators/vintages rows from obs_family table.

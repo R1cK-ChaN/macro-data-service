@@ -3,6 +3,10 @@
 SQLite-based persistence with WAL mode and foreign keys enabled.
 All tables live in a single `engine.db` file (`~/.analyst/engine.db` by default).
 
+The structural ontology lives in the normalized `doc_*`, `obs_*`, and
+`calendar_indicator*` tables. `market_prices` remains a separate market-data
+store and is not linked through deterministic ontology edges.
+
 ---
 
 ## Document Storage (5-table normalized schema)
@@ -227,9 +231,11 @@ Seed data: 26 FRED series + 5 EIA + 3 Treasury Fiscal + 3 NY Fed = 37 families.
 | `upsert_obs_family_document()` | Insert/update a link |
 | `list_obs_families_for_release()` | Obs families linked to a doc release family |
 | `list_releases_for_obs_family()` | Doc releases linked to an obs family |
+| `list_release_families_for_indicator()` | Doc releases linked to a normalized calendar indicator |
 | `seed_obs_sources_and_families()` | Populate all seed data |
 | `backfill_obs_family_ids()` | Set obs_family_id on existing indicator rows |
 | `build_obs_family_lookup()` | Build (source, series) -> family_id dict |
+| `seed_structural_ontology()` | Seed doc sources, release families, obs families, and calendar indicators for ontology queries |
 
 ---
 
