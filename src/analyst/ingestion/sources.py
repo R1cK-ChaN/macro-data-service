@@ -6,7 +6,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable, Iterable
 
 import feedparser
 import logging
@@ -173,6 +173,42 @@ def extract_speaker(title: str) -> str:
 class RefreshStats:
     source: str
     count: int
+
+
+@dataclass(frozen=True)
+class IngestionRunReport:
+    source: str
+    stored: int
+    fetched: int | None = None
+    normalized: int | None = None
+    validated: int | None = None
+    deduplicated: int | None = None
+    duration_ms: int = 0
+    retries: int = 0
+    error: str = ""
+
+    def to_counts(self) -> dict[str, int]:
+        return {self.source: self.stored}
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = dataclasses.asdict(self)
+        payload["ok"] = not self.error
+        return payload
+
+
+@dataclass(frozen=True)
+class IngestionSourceDefinition:
+    name: str
+    interval_seconds: int | None = None
+    prepare: Callable[[], None] | None = None
+    fetch: Callable[[], Iterable[Any]] | None = None
+    normalize: Callable[[list[Any]], Iterable[Any]] | None = None
+    validate: Callable[[list[Any]], Iterable[Any]] | None = None
+    deduplicate: Callable[[list[Any]], Iterable[Any]] | None = None
+    store: Callable[[list[Any]], int | None] | None = None
+    execute: Callable[[], int] | None = None
+    max_retries: int = 0
+    retry_backoff_seconds: float = 0.0
 
 
 VINTAGE_SERIES = ["GDP", "GDPC1", "CPIAUCSL", "PAYEMS", "UNRATE", "INDPRO", "RSAFS"]
@@ -1129,13 +1165,26 @@ class FedIngestionClient:
         self.session.headers.update({"User-Agent": "AnalystEngine/1.0"})
 
     def refresh(self, store: SQLiteEngineStore, *, fetch_full_text: bool = False) -> RefreshStats:
-        count = 0
+        communications = self.fetch_communications(fetch_full_text=fetch_full_text)
+        return RefreshStats(source="fed", count=self.store_communications(store, communications))
+
+    def fetch_communications(self, *, fetch_full_text: bool = False) -> list[CentralBankCommunicationRecord]:
+        communications: list[CentralBankCommunicationRecord] = []
         for feed in FED_FEEDS.values():
-            for communication in self._parse_feed(feed["url"], feed["content_type"], fetch_full_text=fetch_full_text):
-                store.upsert_central_bank_comm(communication)
-                count += 1
+            communications.extend(
+                self._parse_feed(feed["url"], feed["content_type"], fetch_full_text=fetch_full_text)
+            )
             time.sleep(0.5)
-        return RefreshStats(source="fed", count=count)
+        return communications
+
+    def store_communications(
+        self,
+        store: SQLiteEngineStore,
+        communications: list[CentralBankCommunicationRecord],
+    ) -> int:
+        for communication in communications:
+            store.upsert_central_bank_comm(communication)
+        return len(communications)
 
     def _parse_feed(
         self,
@@ -1201,7 +1250,11 @@ class FedIngestionClient:
 
 class MarketPriceClient:
     def refresh(self, store: SQLiteEngineStore) -> RefreshStats:
-        count = 0
+        prices = self.fetch_prices()
+        return RefreshStats(source="market", count=self.store_prices(store, prices))
+
+    def fetch_prices(self) -> list[MarketPriceRecord]:
+        prices: list[MarketPriceRecord] = []
         now_epoch = int(datetime.now(UTC).timestamp())
         for asset_class, symbols in MACRO_WATCHLIST.items():
             for symbol, name in symbols.items():
@@ -1219,7 +1272,7 @@ class MarketPriceClient:
                     change_pct = None
                     if previous_close not in {None, 0}:
                         change_pct = round((float(price) - float(previous_close)) / float(previous_close) * 100, 2)
-                    store.insert_market_price(
+                    prices.append(
                         MarketPriceRecord(
                             symbol=symbol,
                             asset_class=asset_class,
@@ -1229,11 +1282,38 @@ class MarketPriceClient:
                             timestamp=now_epoch,
                         )
                     )
-                    count += 1
                 except Exception:
                     continue
                 time.sleep(0.1)
-        return RefreshStats(source="market", count=count)
+        return prices
+
+    def store_prices(self, store: SQLiteEngineStore, prices: list[MarketPriceRecord]) -> int:
+        for price in prices:
+            store.insert_market_price(price)
+        return len(prices)
+
+
+@dataclass(frozen=True)
+class RawNewsEntry:
+    source_feed: str
+    feed_category: str
+    title: str
+    url: str
+    description: str
+    timestamp: int
+
+
+@dataclass(frozen=True)
+class PreparedNewsRecord:
+    source_feed: str
+    feed_category: str
+    description: str
+    timestamp: int
+    canonical_url: str
+    raw_url: str
+    raw_title: str
+    url_hash: str
+    title_hash: str
 
 
 class NewsIngestionClient:
@@ -1265,16 +1345,15 @@ class NewsIngestionClient:
         *,
         category: str | None = None,
     ) -> RefreshStats:
-        """Fetch -> extract articles -> LLM/keyword metadata -> store."""
-        feeds = get_feeds(category)
+        entries = self.fetch_entries(category=category)
+        normalized = self.normalize_entries(entries)
+        valid = self.validate_entries(normalized)
+        deduplicated = self.deduplicate_entries(store, valid)
+        return RefreshStats(source="news", count=self.store_articles(store, deduplicated))
 
-        # Seed fuzzy deduplicator with recent titles
-        deduplicator = Deduplicator(threshold=0.6)
-        recent_titles = store.get_recent_news_titles(hours=24)
-        deduplicator.seed(recent_titles)
-
-        stored_count = 0
-        for feed in feeds:
+    def fetch_entries(self, *, category: str | None = None) -> list[RawNewsEntry]:
+        entries: list[RawNewsEntry] = []
+        for feed in get_feeds(category):
             try:
                 resp = self._session.get(feed.url, timeout=self._timeout)
                 resp.raise_for_status()
@@ -1282,97 +1361,136 @@ class NewsIngestionClient:
             except Exception:
                 continue
 
-            entries = parsed.entries[: self._max_items_per_feed]
-            for entry in entries:
-                try:
-                    title = entry.get("title", "").strip()
-                    if not title:
-                        continue
-
-                    link = entry.get("link", "")
-                    if not link:
-                        continue
-
-                    # Compute timestamp early — needed for content_hash
-                    ts = 0
-                    if hasattr(entry, "published_parsed") and entry.published_parsed:
-                        ts = int(datetime(
-                            *entry.published_parsed[:6], tzinfo=timezone.utc
-                        ).timestamp())
-                    if not ts:
-                        ts = int(datetime.now(timezone.utc).timestamp())
-
-                    # Layer 1+2: fingerprint check (cheap, before HTTP fetch)
-                    canonical = canonicalize_url(link)
-                    url_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-                    title_hash = content_hash(title, ts)
-                    if store.fingerprint_exists(url_hash=url_hash, title_hash=title_hash):
-                        continue
-
-                    # Layer 3: fuzzy title check
-                    if deduplicator.is_duplicate(title):
-                        continue
-
-                    raw_desc = entry.get("summary", "") or entry.get("description", "")
-                    from bs4 import BeautifulSoup as _BS
-                    description = _BS(raw_desc, "html.parser").get_text(" ", strip=True)
-
-                    article = self._article_fetcher.fetch_article(link, description)
-                    extraction = extract_news_metadata(
+            for entry in parsed.entries[: self._max_items_per_feed]:
+                title = entry.get("title", "").strip()
+                link = entry.get("link", "")
+                raw_desc = entry.get("summary", "") or entry.get("description", "")
+                description = BeautifulSoup(raw_desc, "html.parser").get_text(" ", strip=True)
+                ts = 0
+                if hasattr(entry, "published_parsed") and entry.published_parsed:
+                    ts = int(datetime(*entry.published_parsed[:6], tzinfo=timezone.utc).timestamp())
+                if not ts:
+                    ts = int(datetime.now(timezone.utc).timestamp())
+                entries.append(
+                    RawNewsEntry(
+                        source_feed=feed.name,
+                        feed_category=feed.category,
                         title=title,
-                        description=description,
-                        content_markdown=article.content,
-                        source_feed=feed.name,
-                        feed_category=feed.category,
-                        published_at=format_epoch_iso(ts),
-                    )
-
-                    record = NewsArticleRecord(
-                        url_hash=url_hash,
-                        source_feed=feed.name,
-                        feed_category=feed.category,
-                        title=extraction.title,
                         url=link,
-                        timestamp=ts,
                         description=description,
-                        content_markdown=article.content,
-                        impact_level=extraction.impact_level,
-                        finance_category=extraction.finance_category,
-                        confidence=extraction.confidence,
-                        content_fetched=article.fetched,
-                        institution=extraction.institution,
-                        country=extraction.country,
-                        market=extraction.market,
-                        asset_class=extraction.asset_class,
-                        sector=extraction.sector,
-                        document_type=extraction.document_type,
-                        event_type=extraction.event_type,
-                        subject=extraction.subject,
-                        subject_id=extraction.subject_id,
-                        data_period=extraction.data_period,
-                        contains_commentary=extraction.contains_commentary,
-                        language=extraction.language,
-                        authors=extraction.authors,
-                        extraction_provider=extraction.extraction_provider,
+                        timestamp=ts,
                     )
-                    store.upsert_news_article(record)
-                    store.insert_fingerprint(
+                )
+            time.sleep(0.3)
+        return entries
+
+    def normalize_entries(self, entries: list[RawNewsEntry]) -> list[PreparedNewsRecord]:
+        normalized: list[PreparedNewsRecord] = []
+        for entry in entries:
+            try:
+                canonical = canonicalize_url(entry.url)
+                url_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+                title_hash = content_hash(entry.title, entry.timestamp)
+                normalized.append(
+                    PreparedNewsRecord(
+                        source_feed=entry.source_feed,
+                        feed_category=entry.feed_category,
+                        description=entry.description,
+                        timestamp=entry.timestamp,
+                        canonical_url=canonical,
+                        raw_url=entry.url,
+                        raw_title=entry.title,
                         url_hash=url_hash,
                         title_hash=title_hash,
-                        canonical_url=canonical,
-                        raw_url=link,
-                        title=title,
-                        source_feed=feed.name,
                     )
-                    stored_count += 1
+                )
+            except Exception:
+                continue
+        return normalized
 
-                    time.sleep(0.5)
-                except Exception:
-                    continue
+    def validate_entries(self, entries: list[PreparedNewsRecord]) -> list[PreparedNewsRecord]:
+        valid: list[PreparedNewsRecord] = []
+        for entry in entries:
+            if not entry.raw_title.strip():
+                continue
+            if not entry.raw_url.strip():
+                continue
+            if not entry.canonical_url.strip():
+                continue
+            valid.append(entry)
+        return valid
 
-            time.sleep(0.3)
+    def deduplicate_entries(
+        self,
+        store: SQLiteEngineStore,
+        entries: list[PreparedNewsRecord],
+    ) -> list[PreparedNewsRecord]:
+        deduplicator = Deduplicator(threshold=0.6)
+        deduplicator.seed(store.get_recent_news_titles(hours=24))
+        unique: list[PreparedNewsRecord] = []
+        for entry in entries:
+            if store.fingerprint_exists(url_hash=entry.url_hash, title_hash=entry.title_hash):
+                continue
+            if deduplicator.is_duplicate(entry.raw_title):
+                continue
+            unique.append(entry)
+        return unique
 
-        return RefreshStats(source="news", count=stored_count)
+    def store_articles(self, store: SQLiteEngineStore, entries: list[PreparedNewsRecord]) -> int:
+        count = 0
+        for entry in entries:
+            try:
+                article = self._article_fetcher.fetch_article(entry.raw_url, entry.description)
+                extraction = extract_news_metadata(
+                    title=entry.raw_title,
+                    description=entry.description,
+                    content_markdown=article.content,
+                    source_feed=entry.source_feed,
+                    feed_category=entry.feed_category,
+                    published_at=format_epoch_iso(entry.timestamp),
+                )
+                record = NewsArticleRecord(
+                    url_hash=entry.url_hash,
+                    source_feed=entry.source_feed,
+                    feed_category=entry.feed_category,
+                    title=extraction.title,
+                    url=entry.raw_url,
+                    timestamp=entry.timestamp,
+                    description=entry.description,
+                    content_markdown=article.content,
+                    impact_level=extraction.impact_level,
+                    finance_category=extraction.finance_category,
+                    confidence=extraction.confidence,
+                    content_fetched=article.fetched,
+                    institution=extraction.institution,
+                    country=extraction.country,
+                    market=extraction.market,
+                    asset_class=extraction.asset_class,
+                    sector=extraction.sector,
+                    document_type=extraction.document_type,
+                    event_type=extraction.event_type,
+                    subject=extraction.subject,
+                    subject_id=extraction.subject_id,
+                    data_period=extraction.data_period,
+                    contains_commentary=extraction.contains_commentary,
+                    language=extraction.language,
+                    authors=extraction.authors,
+                    extraction_provider=extraction.extraction_provider,
+                )
+                store.upsert_news_article(record)
+                store.insert_fingerprint(
+                    url_hash=entry.url_hash,
+                    title_hash=entry.title_hash,
+                    canonical_url=entry.canonical_url,
+                    raw_url=entry.raw_url,
+                    title=entry.raw_title,
+                    source_feed=entry.source_feed,
+                )
+                count += 1
+                time.sleep(0.5)
+            except Exception:
+                continue
+        return count
 
     def close(self) -> None:
         self._article_fetcher.close()
@@ -1417,8 +1535,14 @@ class GovReportIngestionClient:
         return mapping.get(data_category, "release")
 
     def refresh(self, store: SQLiteEngineStore) -> RefreshStats:
+        items = self.fetch_items()
+        return RefreshStats(source="gov_reports", count=self.store_items(store, items))
+
+    def fetch_items(self) -> list[GovReportItem]:
+        return self._client.fetch_all()
+
+    def store_items(self, store: SQLiteEngineStore, items: list[GovReportItem]) -> int:
         self._ensure_seed(store)
-        items = self._client.fetch_all()
         count = 0
         now_dt = datetime.now(UTC)
         now_iso = now_dt.isoformat()
@@ -1533,7 +1657,7 @@ class GovReportIngestionClient:
             except Exception:
                 logger.warning("Gov report storage failed: %s", item.source_id, exc_info=True)
                 continue
-        return RefreshStats(source="gov_reports", count=count)
+        return count
 
 
 class IngestionOrchestrator:
@@ -1582,6 +1706,10 @@ class IngestionOrchestrator:
         self._obs_seeded = False
         self._cal_seeded = False
         self._family_lookup: dict[tuple[str, str], str] = {}
+        self._sources: dict[str, IngestionSourceDefinition] = {}
+        self._default_refresh_order: list[str] = []
+        self._last_run_reports: dict[str, IngestionRunReport] = {}
+        self._register_default_sources()
 
     def _ensure_obs_seed(self) -> None:
         """Seed observation sources/families once, then build lookup cache."""
@@ -1606,196 +1734,555 @@ class IngestionOrchestrator:
             return dataclasses.replace(event, indicator_id=indicator_id)
         return event
 
-    def refresh_calendar(self) -> dict[str, int]:
-        self._ensure_calendar_indicator_seed()
-        total = 0
-        for label, fetch_fn in [
-            ("Investing.com", lambda: self.investing.fetch_range(days_back=1, days_forward=3)),
-            ("ForexFactory", lambda: self.forexfactory.fetch()),
-            ("TradingEconomics", lambda: self.tradingeconomics.fetch()),
-        ]:
+    def register_source(self, definition: IngestionSourceDefinition) -> None:
+        self._sources[definition.name] = definition
+
+    def list_sources(self) -> list[str]:
+        return list(self._sources)
+
+    def last_run_report(self, source: str) -> IngestionRunReport | None:
+        return self._last_run_reports.get(source)
+
+    def run_source(self, source: str) -> IngestionRunReport:
+        definition = self._sources.get(source)
+        if definition is None:
+            raise KeyError(f"unknown ingestion source: {source}")
+        return self._run_definition(definition)
+
+    def _register_default_sources(self) -> None:
+        definitions = [
+            self._build_calendar_source(),
+            self._build_fed_source(),
+            self._build_market_source(),
+            self._build_fred_daily_source(),
+            self._build_fred_full_source(),
+            self._build_news_source(),
+            self._build_rate_probability_source(),
+            self._build_fred_vintages_source(),
+            self._build_nyfed_rates_source(),
+            self._build_gov_reports_source(),
+            self._build_eia_source(),
+            self._build_treasury_fiscal_source(),
+            self._build_imf_source(),
+            self._build_imf_vintages_source(),
+            self._build_eurostat_source(),
+            self._build_bis_source(),
+            self._build_ecb_source(),
+            self._build_oecd_source(),
+            self._build_worldbank_source(),
+        ]
+        for definition in definitions:
+            self.register_source(definition)
+        self._default_refresh_order = [
+            "calendar",
+            "fed",
+            "market",
+            "fred_daily",
+            "news",
+            "rate_probability",
+            "nyfed_rates",
+            "gov_reports",
+            "eia",
+            "treasury_fiscal",
+            "imf",
+            "imf_vintages",
+            "eurostat",
+            "bis",
+            "ecb",
+            "oecd",
+            "worldbank",
+        ]
+
+    @staticmethod
+    def _materialize_items(items: Iterable[Any] | None) -> list[Any]:
+        if items is None:
+            return []
+        if isinstance(items, list):
+            return items
+        return list(items)
+
+    def _run_stage(
+        self,
+        stage: Callable[[list[Any]], Iterable[Any]] | None,
+        items: list[Any],
+    ) -> list[Any]:
+        if stage is None:
+            return items
+        return self._materialize_items(stage(items))
+
+    def _run_definition(self, definition: IngestionSourceDefinition) -> IngestionRunReport:
+        attempt = 0
+        while True:
+            started = time.perf_counter()
             try:
-                for event in fetch_fn():
-                    event = self._resolve_calendar_indicator(event)
-                    self.store.upsert_calendar_event(event)
-                    total += 1
+                if definition.prepare is not None:
+                    definition.prepare()
+
+                if definition.execute is not None:
+                    stored = int(definition.execute())
+                    report = IngestionRunReport(
+                        source=definition.name,
+                        stored=stored,
+                        duration_ms=int((time.perf_counter() - started) * 1000),
+                        retries=attempt,
+                    )
+                    self._last_run_reports[definition.name] = report
+                    return report
+
+                if definition.fetch is None or definition.store is None:
+                    raise ValueError(f"source {definition.name} is missing pipeline stages")
+
+                raw_items = self._materialize_items(definition.fetch())
+                normalized_items = self._run_stage(definition.normalize, raw_items)
+                validated_items = self._run_stage(definition.validate, normalized_items)
+                deduplicated_items = self._run_stage(definition.deduplicate, validated_items)
+                stored = definition.store(deduplicated_items)
+                report = IngestionRunReport(
+                    source=definition.name,
+                    stored=int(stored if stored is not None else len(deduplicated_items)),
+                    fetched=len(raw_items),
+                    normalized=len(normalized_items),
+                    validated=len(validated_items),
+                    deduplicated=len(deduplicated_items),
+                    duration_ms=int((time.perf_counter() - started) * 1000),
+                    retries=attempt,
+                )
+                self._last_run_reports[definition.name] = report
+                return report
+            except Exception as exc:
+                if attempt < definition.max_retries:
+                    attempt += 1
+                    if definition.retry_backoff_seconds > 0:
+                        time.sleep(definition.retry_backoff_seconds * attempt)
+                    continue
+                logger.warning("%s ingestion failed", definition.name, exc_info=True)
+                report = IngestionRunReport(
+                    source=definition.name,
+                    stored=0,
+                    duration_ms=int((time.perf_counter() - started) * 1000),
+                    retries=attempt,
+                    error=str(exc),
+                )
+                self._last_run_reports[definition.name] = report
+                return report
+
+    @staticmethod
+    def _deduplicate_by_key(items: list[Any], key_fn: Callable[[Any], Any]) -> list[Any]:
+        unique: list[Any] = []
+        seen: set[Any] = set()
+        for item in items:
+            marker = key_fn(item)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            unique.append(item)
+        return unique
+
+    def _build_calendar_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="calendar",
+            interval_seconds=3600,
+            prepare=self._ensure_calendar_indicator_seed,
+            fetch=self._fetch_calendar_events,
+            normalize=self._normalize_calendar_events,
+            validate=self._validate_calendar_events,
+            deduplicate=self._deduplicate_calendar_events,
+            store=self._store_calendar_events,
+        )
+
+    def _fetch_calendar_events(self) -> list[StoredEventRecord]:
+        events: list[StoredEventRecord] = []
+        providers = [
+            ("Investing.com", lambda: self.investing.fetch_range(days_back=1, days_forward=3)),
+            ("ForexFactory", self.forexfactory.fetch),
+            ("TradingEconomics", self.tradingeconomics.fetch),
+        ]
+        for label, fetch_fn in providers:
+            try:
+                events.extend(list(fetch_fn()))
             except Exception:
                 logger.warning("%s calendar refresh failed", label, exc_info=True)
-        return {"calendar": total}
+        return events
+
+    def _normalize_calendar_events(self, events: list[StoredEventRecord]) -> list[StoredEventRecord]:
+        return [self._resolve_calendar_indicator(event) for event in events]
+
+    @staticmethod
+    def _validate_calendar_events(events: list[StoredEventRecord]) -> list[StoredEventRecord]:
+        return [
+            event for event in events
+            if event.event_id and event.indicator and event.country and event.timestamp > 0
+        ]
+
+    def _deduplicate_calendar_events(self, events: list[StoredEventRecord]) -> list[StoredEventRecord]:
+        return self._deduplicate_by_key(events, lambda event: (event.source, event.event_id))
+
+    def _store_calendar_events(self, events: list[StoredEventRecord]) -> int:
+        for event in events:
+            self.store.upsert_calendar_event(event)
+        return len(events)
+
+    def _build_fed_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="fed",
+            interval_seconds=14_400,
+            fetch=self.fed.fetch_communications,
+            validate=self._validate_fed_communications,
+            deduplicate=self._deduplicate_fed_communications,
+            store=lambda items: self.fed.store_communications(self.store, items),
+        )
+
+    @staticmethod
+    def _validate_fed_communications(
+        communications: list[CentralBankCommunicationRecord],
+    ) -> list[CentralBankCommunicationRecord]:
+        return [item for item in communications if item.title.strip() and item.url.strip()]
+
+    def _deduplicate_fed_communications(
+        self,
+        communications: list[CentralBankCommunicationRecord],
+    ) -> list[CentralBankCommunicationRecord]:
+        return self._deduplicate_by_key(
+            communications,
+            lambda item: (item.url, item.timestamp, item.title),
+        )
+
+    def _build_market_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="market",
+            interval_seconds=1800,
+            fetch=self.market.fetch_prices,
+            validate=self._validate_market_prices,
+            deduplicate=self._deduplicate_market_prices,
+            store=lambda items: self.market.store_prices(self.store, items),
+        )
+
+    @staticmethod
+    def _validate_market_prices(prices: list[MarketPriceRecord]) -> list[MarketPriceRecord]:
+        return [price for price in prices if price.symbol and price.price > 0]
+
+    def _deduplicate_market_prices(self, prices: list[MarketPriceRecord]) -> list[MarketPriceRecord]:
+        return self._deduplicate_by_key(prices, lambda price: price.symbol)
+
+    def _build_news_source(self, *, category: str | None = None) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="news",
+            interval_seconds=300 if category is None else None,
+            fetch=lambda: self.news.fetch_entries(category=category),
+            normalize=self.news.normalize_entries,
+            validate=self.news.validate_entries,
+            deduplicate=lambda items: self.news.deduplicate_entries(self.store, items),
+            store=lambda items: self.news.store_articles(self.store, items),
+            max_retries=1,
+            retry_backoff_seconds=1.0,
+        )
+
+    def _build_rate_probability_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="rate_probability",
+            interval_seconds=3600,
+            fetch=self._fetch_rate_probability_observations,
+            deduplicate=self._deduplicate_observations,
+            store=self._store_indicator_observations,
+        )
+
+    def _fetch_rate_probability_observations(self) -> list[IndicatorObservationRecord]:
+        prob = self.rate_probability.fetch_probabilities()
+        observations: list[IndicatorObservationRecord] = []
+        for meeting in prob.meetings:
+            observations.append(
+                IndicatorObservationRecord(
+                    series_id=f"FEDPROB_{meeting.meeting_date}",
+                    source="rateprobability",
+                    date=prob.as_of[:10] if len(prob.as_of) >= 10 else prob.as_of,
+                    value=meeting.implied_rate,
+                    metadata={
+                        "prob_move_pct": meeting.prob_move_pct,
+                        "is_cut": meeting.is_cut,
+                        "num_moves": meeting.num_moves,
+                        "change_bps": meeting.change_bps,
+                        "current_band": prob.current_band,
+                    },
+                )
+            )
+        return observations
+
+    def _build_fred_daily_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="fred_daily",
+            interval_seconds=86_400,
+            prepare=self._ensure_obs_seed,
+            execute=lambda: self.fred.refresh_daily_series(
+                self.store,
+                family_lookup=self._family_lookup or None,
+            ).count,
+        )
+
+    def _build_fred_full_source(self, *, lookback_days: int = 365) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="fred_full",
+            interval_seconds=None,
+            prepare=self._ensure_obs_seed,
+            execute=lambda: self.fred.refresh_all_series(
+                self.store,
+                lookback_days=lookback_days,
+                family_lookup=self._family_lookup or None,
+            ).count,
+        )
+
+    def _build_fred_vintages_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="fred_vintages",
+            interval_seconds=86_400,
+            prepare=self._ensure_obs_seed,
+            execute=lambda: self.fred.refresh_vintages(
+                self.store,
+                family_lookup=self._family_lookup or None,
+            ).count,
+        )
+
+    def _build_nyfed_rates_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="nyfed_rates",
+            interval_seconds=86_400,
+            prepare=self._ensure_obs_seed,
+            fetch=self._fetch_nyfed_rate_observations,
+            deduplicate=self._deduplicate_observations,
+            store=self._store_indicator_observations,
+        )
+
+    def _fetch_nyfed_rate_observations(self) -> list[IndicatorObservationRecord]:
+        observations: list[IndicatorObservationRecord] = []
+        for rate in self.nyfed.fetch_all_rates(last_n=5):
+            metadata: dict[str, Any] = {}
+            if rate.percentile_1 is not None:
+                metadata["percentile_1"] = rate.percentile_1
+            if rate.percentile_25 is not None:
+                metadata["percentile_25"] = rate.percentile_25
+            if rate.percentile_75 is not None:
+                metadata["percentile_75"] = rate.percentile_75
+            if rate.percentile_99 is not None:
+                metadata["percentile_99"] = rate.percentile_99
+            if rate.volume_billions is not None:
+                metadata["volume_billions"] = rate.volume_billions
+            if rate.target_rate_from is not None:
+                metadata["target_range"] = f"{rate.target_rate_from}-{rate.target_rate_to}"
+            series_id = f"NYFED_{rate.type}"
+            fam_id = self._family_lookup.get(("nyfed", series_id)) if self._family_lookup else None
+            observations.append(
+                IndicatorObservationRecord(
+                    series_id=series_id,
+                    source="nyfed",
+                    date=rate.date,
+                    value=rate.rate,
+                    metadata=metadata,
+                    obs_family_id=fam_id,
+                )
+            )
+        return observations
+
+    def _build_gov_reports_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="gov_reports",
+            interval_seconds=21_600,
+            fetch=self.gov_report.fetch_items,
+            validate=self._validate_gov_report_items,
+            deduplicate=self._deduplicate_gov_report_items,
+            store=lambda items: self.gov_report.store_items(self.store, items),
+        )
+
+    @staticmethod
+    def _validate_gov_report_items(items: list[GovReportItem]) -> list[GovReportItem]:
+        return [item for item in items if item.title.strip() and item.url.strip() and item.source_id.strip()]
+
+    def _deduplicate_gov_report_items(self, items: list[GovReportItem]) -> list[GovReportItem]:
+        return self._deduplicate_by_key(items, lambda item: canonicalize_url(item.url))
+
+    def _build_eia_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="eia",
+            interval_seconds=86_400,
+            prepare=self._ensure_obs_seed,
+            execute=lambda: self.eia.refresh(
+                self.store,
+                family_lookup=self._family_lookup or None,
+            ).count,
+        )
+
+    def _build_treasury_fiscal_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="treasury_fiscal",
+            interval_seconds=86_400,
+            prepare=self._ensure_obs_seed,
+            execute=lambda: self.treasury_fiscal.refresh(
+                self.store,
+                family_lookup=self._family_lookup or None,
+            ).count,
+        )
+
+    def _build_imf_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="imf",
+            interval_seconds=86_400,
+            prepare=self._ensure_obs_seed,
+            execute=lambda: self.imf.refresh(
+                self.store,
+                family_lookup=self._family_lookup or None,
+            ).count,
+        )
+
+    def _build_imf_vintages_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="imf_vintages",
+            interval_seconds=86_400,
+            prepare=self._ensure_obs_seed,
+            execute=lambda: self.imf.refresh_vintages(
+                self.store,
+                family_lookup=self._family_lookup or None,
+            ).count,
+        )
+
+    def _build_eurostat_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="eurostat",
+            interval_seconds=86_400,
+            prepare=self._ensure_obs_seed,
+            execute=lambda: self.eurostat.refresh(
+                self.store,
+                family_lookup=self._family_lookup or None,
+            ).count,
+        )
+
+    def _build_bis_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="bis",
+            interval_seconds=86_400,
+            prepare=self._ensure_obs_seed,
+            execute=lambda: self.bis.refresh(
+                self.store,
+                family_lookup=self._family_lookup or None,
+            ).count,
+        )
+
+    def _build_ecb_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="ecb",
+            interval_seconds=86_400,
+            prepare=self._ensure_obs_seed,
+            execute=lambda: self.ecb.refresh(
+                self.store,
+                family_lookup=self._family_lookup or None,
+            ).count,
+        )
+
+    def _build_oecd_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="oecd",
+            interval_seconds=86_400,
+            prepare=self._ensure_obs_seed,
+            execute=lambda: self.oecd.refresh(
+                self.store,
+                family_lookup=self._family_lookup or None,
+            ).count,
+        )
+
+    def _build_worldbank_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="worldbank",
+            interval_seconds=86_400,
+            prepare=self._ensure_obs_seed,
+            execute=lambda: self.worldbank.refresh(
+                self.store,
+                family_lookup=self._family_lookup or None,
+            ).count,
+        )
+
+    def _deduplicate_observations(
+        self,
+        observations: list[IndicatorObservationRecord],
+    ) -> list[IndicatorObservationRecord]:
+        return self._deduplicate_by_key(
+            observations,
+            lambda observation: (observation.source, observation.series_id, observation.date),
+        )
+
+    def _store_indicator_observations(self, observations: list[IndicatorObservationRecord]) -> int:
+        for observation in observations:
+            self.store.upsert_indicator_observation(observation)
+        return len(observations)
+
+    def refresh_calendar(self) -> dict[str, int]:
+        return self.run_source("calendar").to_counts()
 
     def refresh_market(self) -> dict[str, int]:
-        stats = self.market.refresh(self.store)
-        return {stats.source: stats.count}
+        return self.run_source("market").to_counts()
 
     def refresh_fed(self) -> dict[str, int]:
-        stats = self.fed.refresh(self.store)
-        return {stats.source: stats.count}
+        return self.run_source("fed").to_counts()
 
     def refresh_fred_daily(self) -> dict[str, int]:
-        stats = self.fred.refresh_daily_series(self.store, family_lookup=self._family_lookup or None)
-        return {stats.source: stats.count}
+        return self.run_source("fred_daily").to_counts()
 
     def refresh_fred_full(self, *, lookback_days: int = 365) -> dict[str, int]:
-        stats = self.fred.refresh_all_series(self.store, lookback_days=lookback_days, family_lookup=self._family_lookup or None)
-        return {stats.source: stats.count}
+        if lookback_days == 365:
+            return self.run_source("fred_full").to_counts()
+        return self._run_definition(self._build_fred_full_source(lookback_days=lookback_days)).to_counts()
 
     def refresh_news(self, *, category: str | None = None) -> dict[str, int]:
-        stats = self.news.refresh(self.store, category=category)
-        return {stats.source: stats.count}
+        if category is None:
+            return self.run_source("news").to_counts()
+        return self._run_definition(self._build_news_source(category=category)).to_counts()
 
     def refresh_rate_probability(self) -> dict[str, int]:
-        count = 0
-        try:
-            prob = self.rate_probability.fetch_probabilities()
-            for m in prob.meetings:
-                self.store.upsert_indicator_observation(
-                    IndicatorObservationRecord(
-                        series_id=f"FEDPROB_{m.meeting_date}",
-                        source="rateprobability",
-                        date=prob.as_of[:10] if len(prob.as_of) >= 10 else prob.as_of,
-                        value=m.implied_rate,
-                        metadata={
-                            "prob_move_pct": m.prob_move_pct,
-                            "is_cut": m.is_cut,
-                            "num_moves": m.num_moves,
-                            "change_bps": m.change_bps,
-                            "current_band": prob.current_band,
-                        },
-                        # Dynamic series — no pre-registered family
-                    )
-                )
-                count += 1
-        except Exception:
-            logger.warning("rateprobability.com refresh failed", exc_info=True)
-        return {"rate_probability": count}
+        return self.run_source("rate_probability").to_counts()
 
     def refresh_fred_vintages(self) -> dict[str, int]:
-        stats = self.fred.refresh_vintages(self.store, family_lookup=self._family_lookup or None)
-        return {stats.source: stats.count}
+        return self.run_source("fred_vintages").to_counts()
 
     def refresh_eia(self) -> dict[str, int]:
-        stats = self.eia.refresh(self.store, family_lookup=self._family_lookup or None)
-        return {stats.source: stats.count}
+        return self.run_source("eia").to_counts()
 
     def refresh_treasury_fiscal(self) -> dict[str, int]:
-        stats = self.treasury_fiscal.refresh(self.store, family_lookup=self._family_lookup or None)
-        return {stats.source: stats.count}
+        return self.run_source("treasury_fiscal").to_counts()
 
     def refresh_imf(self) -> dict[str, int]:
-        stats = self.imf.refresh(self.store, family_lookup=self._family_lookup or None)
-        return {stats.source: stats.count}
+        return self.run_source("imf").to_counts()
 
     def refresh_imf_vintages(self) -> dict[str, int]:
-        stats = self.imf.refresh_vintages(self.store, family_lookup=self._family_lookup or None)
-        return {stats.source: stats.count}
+        return self.run_source("imf_vintages").to_counts()
 
     def refresh_eurostat(self) -> dict[str, int]:
-        stats = self.eurostat.refresh(self.store, family_lookup=self._family_lookup or None)
-        return {stats.source: stats.count}
+        return self.run_source("eurostat").to_counts()
 
     def refresh_bis(self) -> dict[str, int]:
-        stats = self.bis.refresh(self.store, family_lookup=self._family_lookup or None)
-        return {stats.source: stats.count}
+        return self.run_source("bis").to_counts()
 
     def refresh_ecb(self) -> dict[str, int]:
-        stats = self.ecb.refresh(self.store, family_lookup=self._family_lookup or None)
-        return {stats.source: stats.count}
+        return self.run_source("ecb").to_counts()
 
     def refresh_oecd(self) -> dict[str, int]:
-        stats = self.oecd.refresh(self.store, family_lookup=self._family_lookup or None)
-        return {stats.source: stats.count}
+        return self.run_source("oecd").to_counts()
 
     def refresh_worldbank(self) -> dict[str, int]:
-        stats = self.worldbank.refresh(self.store, family_lookup=self._family_lookup or None)
-        return {stats.source: stats.count}
+        return self.run_source("worldbank").to_counts()
 
     def refresh_gov_reports(self) -> dict[str, int]:
-        try:
-            stats = self.gov_report.refresh(self.store)
-            return {stats.source: stats.count}
-        except Exception:
-            logger.warning("Gov reports refresh failed", exc_info=True)
-            return {"gov_reports": 0}
+        return self.run_source("gov_reports").to_counts()
 
     def refresh_nyfed_rates(self) -> dict[str, int]:
-        count = 0
-        try:
-            for rate in self.nyfed.fetch_all_rates(last_n=5):
-                metadata: dict[str, Any] = {}
-                if rate.percentile_1 is not None:
-                    metadata["percentile_1"] = rate.percentile_1
-                if rate.percentile_25 is not None:
-                    metadata["percentile_25"] = rate.percentile_25
-                if rate.percentile_75 is not None:
-                    metadata["percentile_75"] = rate.percentile_75
-                if rate.percentile_99 is not None:
-                    metadata["percentile_99"] = rate.percentile_99
-                if rate.volume_billions is not None:
-                    metadata["volume_billions"] = rate.volume_billions
-                if rate.target_rate_from is not None:
-                    metadata["target_range"] = f"{rate.target_rate_from}-{rate.target_rate_to}"
-                series_id = f"NYFED_{rate.type}"
-                fam_id = self._family_lookup.get(("nyfed", series_id)) if self._family_lookup else None
-                self.store.upsert_indicator_observation(
-                    IndicatorObservationRecord(
-                        series_id=series_id,
-                        source="nyfed",
-                        date=rate.date,
-                        value=rate.rate,
-                        metadata=metadata,
-                        obs_family_id=fam_id,
-                    )
-                )
-                count += 1
-        except Exception:
-            logger.warning("NY Fed rates refresh failed", exc_info=True)
-        return {"nyfed_rates": count}
+        return self.run_source("nyfed_rates").to_counts()
 
     def refresh_all(self) -> dict[str, int]:
-        self._ensure_obs_seed()
         results: dict[str, int] = {}
-        for batch in (
-            self.refresh_calendar(),
-            self.refresh_fed(),
-            self.refresh_market(),
-            self.refresh_fred_daily(),
-            self.refresh_news(),
-            self.refresh_rate_probability(),
-            self.refresh_nyfed_rates(),
-            self.refresh_gov_reports(),
-            self.refresh_eia(),
-            self.refresh_treasury_fiscal(),
-            self.refresh_imf(),
-            self.refresh_imf_vintages(),
-            self.refresh_eurostat(),
-            self.refresh_bis(),
-            self.refresh_ecb(),
-            self.refresh_oecd(),
-            self.refresh_worldbank(),
-        ):
-            results.update(batch)
+        for source in self._default_refresh_order:
+            results.update(self.run_source(source).to_counts())
         return results
 
     def run_schedule(self, *, poll_interval_seconds: int = 60) -> None:
         jobs = {
-            "calendar": {"interval": 3600, "handler": self.refresh_calendar},
-            "fed": {"interval": 14_400, "handler": self.refresh_fed},
-            "market": {"interval": 1800, "handler": self.refresh_market},
-            "fred_daily": {"interval": 86_400, "handler": self.refresh_fred_daily},
-            "fred_vintages": {"interval": 86_400, "handler": self.refresh_fred_vintages},
-            "news": {"interval": 900, "handler": self.refresh_news},
-            "rate_probability": {"interval": 3600, "handler": self.refresh_rate_probability},
-            "nyfed_rates": {"interval": 86_400, "handler": self.refresh_nyfed_rates},
-            "gov_reports": {"interval": 21_600, "handler": self.refresh_gov_reports},
-            "eia": {"interval": 86_400, "handler": self.refresh_eia},
-            "treasury_fiscal": {"interval": 86_400, "handler": self.refresh_treasury_fiscal},
-            "imf": {"interval": 86_400, "handler": self.refresh_imf},
-            "imf_vintages": {"interval": 86_400, "handler": self.refresh_imf_vintages},
-            "eurostat": {"interval": 86_400, "handler": self.refresh_eurostat},
-            "bis": {"interval": 86_400, "handler": self.refresh_bis},
-            "ecb": {"interval": 86_400, "handler": self.refresh_ecb},
-            "oecd": {"interval": 86_400, "handler": self.refresh_oecd},
-            "worldbank": {"interval": 86_400, "handler": self.refresh_worldbank},
+            name: definition
+            for name, definition in self._sources.items()
+            if definition.interval_seconds is not None
         }
         next_run = {name: 0.0 for name in jobs}
         self.refresh_all()
@@ -1803,6 +2290,6 @@ class IngestionOrchestrator:
             now = time.time()
             for job_name, job in jobs.items():
                 if now >= next_run[job_name]:
-                    job["handler"]()
-                    next_run[job_name] = now + float(job["interval"])
+                    self.run_source(job_name)
+                    next_run[job_name] = now + float(job.interval_seconds or 0)
             time.sleep(poll_interval_seconds)

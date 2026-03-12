@@ -6,6 +6,8 @@ from .scrapers import (
 from .sources import (
     FREDIngestionClient,
     FedIngestionClient,
+    IngestionRunReport,
+    IngestionSourceDefinition,
     IngestionOrchestrator,
     MarketPriceClient,
     NewsIngestionClient,
@@ -15,6 +17,8 @@ __all__ = [
     "FREDIngestionClient",
     "FedIngestionClient",
     "ForexFactoryCalendarClient",
+    "IngestionRunReport",
+    "IngestionSourceDefinition",
     "IngestionOrchestrator",
     "InvestingCalendarClient",
     "MarketPriceClient",

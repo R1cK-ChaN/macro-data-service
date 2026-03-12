@@ -30,6 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
     news_refresh.add_argument("--category", default=None)
     news_refresh.add_argument("--db-path", default=None)
 
+    refresh_source = subparsers.add_parser("refresh-source")
+    refresh_source.add_argument("--source", required=True)
+    refresh_source.add_argument("--db-path", default=None)
+
     oecd_dataflows = subparsers.add_parser("oecd-dataflows")
     oecd_dataflows.add_argument("--query", default=None)
     oecd_dataflows.add_argument("--limit", type=int, default=20)
@@ -180,6 +184,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "news-refresh":
         print(json.dumps(service.invoke("refresh_news", {"category": args.category}), ensure_ascii=False, sort_keys=True))
+        return 0
+    if args.command == "refresh-source":
+        print(json.dumps(service.invoke("refresh_source", {"source": args.source}), ensure_ascii=False, sort_keys=True))
         return 0
     if args.command == "oecd-dataflows":
         return _run_oecd_dataflows(args)

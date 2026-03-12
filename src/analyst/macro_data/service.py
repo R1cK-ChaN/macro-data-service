@@ -76,6 +76,20 @@ class LocalMacroDataService:
         category = arguments.get("category")
         return dict(self._ingestion.refresh_news(category=category))
 
+    def _op_refresh_source(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self._ingestion is None:
+            return {"error": "refresh unavailable"}
+        source = str(arguments.get("source") or "").strip()
+        if not source:
+            return {"error": "source is required"}
+        try:
+            return self._ingestion.run_source(source).to_dict()
+        except KeyError:
+            return {
+                "error": f"unknown source: {source}",
+                "available_sources": self._ingestion.list_sources(),
+            }
+
     def _op_get_recent_releases(self, arguments: dict[str, Any]) -> dict[str, Any]:
         events = self._store.list_recent_events(
             limit=int(arguments.get("limit", 10)),
