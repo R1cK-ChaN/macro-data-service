@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "macro-data-service"
+version = "0.1.0"
+description = "Standalone macro-data service extracted from analyst-project"
+requires-python = ">=3.11"
+dependencies = [
+    "beautifulsoup4",
+    "curl_cffi",
+    "feedparser",
+    "httpx",
+    "markdownify",
+    "mmh3>=4.1.0",
+    "numpy>=1.24",
+    "openai>=1.10.0",
+    "playwright",
+    "playwright-stealth",
+    "PyYAML",
+    "readability-lxml",
+    "requests",
+    "yfinance",
+]
+
+[project.scripts]
+macro-data-service = "analyst.macro_data.cli:main"
+macro-data-api = "analyst.macro_data.server:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
