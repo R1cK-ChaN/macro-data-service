@@ -1,8 +1,10 @@
 # Scrapers – Data Reference
 
 Each scraper module targets one financial site and exposes clients for every
-scrapable data section. All clients use `curl_cffi` (via `create_cf_session`)
-for TLS-fingerprint bypass of Cloudflare protection.
+scrapable data section. Transport varies by site: bot-sensitive news scrapers
+use `curl_cffi` (via `create_cf_session`) when browser impersonation helps,
+while official APIs and simpler government/structured-data sources often use
+plain `requests.Session`.
 
 All news clients support **pagination** — single-page fetches for polling,
 plus `fetch_all_news()` convenience methods for backfill.
@@ -659,13 +661,15 @@ content.
 
 ## 10. Government Reports (`gov_report.py`)
 
-> **Transport:** Plain `requests.Session` with browser User-Agent — no
-> Cloudflare or TLS fingerprint impersonation needed.
+> **Transport:** Plain `requests.Session` with browser User-Agent for direct
+> official pages, plus RSS fallback discovery for a subset of blocked or
+> unstable sources.
 
 Scrapes **official government statistical releases** from US, CN, JP, and EU
 institutions. Each source is defined as a declarative config dict with a
 scraping strategy. The scraper fetches listing pages, finds the most recent
-matching release, then extracts the full article content as Markdown.
+matching release, then extracts the full article content as Markdown when a
+detail page is available.
 
 ### Data Type
 
@@ -690,9 +694,19 @@ matching release, then extracts the full article content as Markdown.
 | Strategy | How it works |
 |----------|-------------|
 | `fixed_url` | Fetch a single known URL directly (e.g. BLS press releases) |
+| `asset_url` | Return a direct asset/report URL and derive publish time from HTTP metadata |
 | `listing_keywords` | Fetch listing page, find first `<a>` matching keywords (+ optional `link_must_contain` URL filter), follow to detail page |
-| `listing_regex` | Fetch listing page, find first `<a>` whose `href` matches a regex pattern, follow to detail page |
-| `rss` | Parse RSS/Atom feed, fetch the most recent entry's detail page |
+| `listing_regex` | Fetch listing page, find first `<a>` whose `href` matches a regex pattern, including lazy-loaded ECB snippet indexes when present |
+| `rss` | Parse RSS/Atom feed, optionally filter entries by `rss_link_pattern`, then use feed metadata or fetch the detail page |
+
+### Extraction Notes
+
+- Title extraction ignores generic placeholders such as `Navigation` and falls
+  back to metadata like `og:title` and `citation_title` when needed.
+- Publish-time extraction now prefers exact page timestamps, but falls back to
+  HTTP `Last-Modified` when page templates expose stale or generic date text.
+- Some China sources use Google News RSS discovery because the direct official
+  pages are blocked or unstable from this runtime.
 
 ### GovReportClient (unified facade)
 
@@ -710,7 +724,7 @@ single `fetch_all()` method.
 
 ### Sources by Region
 
-**US (11 sources):**
+**US (13 sources):**
 
 | Source ID | Institution | Category | Strategy |
 |-----------|-------------|----------|----------|
@@ -721,14 +735,15 @@ single `fetch_all()` method.
 | `us_bea_pce` | BEA | inflation | `listing_keywords` |
 | `us_bea_trade` | BEA | trade | `listing_keywords` |
 | `us_fed_fomc_minutes` | Federal Reserve | monetary_policy | `listing_regex` |
+| `us_fed_beigebook` | Federal Reserve | economic_conditions | `listing_regex` |
 | `us_fed_ip` | Federal Reserve | industrial_production | `listing_regex` |
-| `us_census_retail` | Census Bureau | consumption | `fixed_url` |
-| `us_census_housing` | Census Bureau | housing | `listing_keywords` |
-| `us_treasury_tic` | Treasury | capital_flows | `listing_keywords` |
-| `us_treasury_debt` | Treasury | fiscal_policy | `listing_keywords` |
+| `us_census_retail` | Census Bureau | consumption | `asset_url` |
+| `us_census_housing` | Census Bureau | housing | `fixed_url` |
+| `us_treasury_tic` | Treasury | capital_flows | `listing_regex` |
+| `us_treasury_debt` | Treasury | fiscal_policy | `fixed_url` |
 | `us_umich_sentiment` | UMich | consumer_sentiment | `fixed_url` |
 
-**CN (12 sources):**
+**CN (14 sources):**
 
 | Source ID | Institution | Category | Strategy |
 |-----------|-------------|----------|----------|
@@ -736,16 +751,16 @@ single `fetch_all()` method.
 | `cn_nbs_ppi` | 国家统计局 | inflation | `listing_keywords` |
 | `cn_nbs_gdp` | 国家统计局 | gdp | `listing_keywords` |
 | `cn_nbs_pmi` | 国家统计局 | manufacturing | `listing_keywords` |
-| `cn_nbs_industrial` | 国家统计局 | industrial_production | `listing_keywords` |
-| `cn_nbs_retail` | 国家统计局 | consumption | `listing_keywords` |
-| `cn_nbs_fai` | 国家统计局 | investment | `listing_keywords` |
-| `cn_pboc_monetary` | 中国人民银行 | money_supply | `listing_keywords` |
+| `cn_nbs_industrial` | 国家统计局 | industrial_production | `rss` |
+| `cn_nbs_retail` | 国家统计局 | consumption | `rss` |
+| `cn_nbs_fai` | 国家统计局 | investment | `rss` |
+| `cn_pboc_monetary` | 中国人民银行 | monetary | `listing_keywords` |
 | `cn_pboc_lpr` | 中国人民银行 | interest_rate | `listing_keywords` |
-| `cn_customs_trade` | 海关总署 | trade | `listing_keywords` |
-| `cn_mof_fiscal` | 财政部 | fiscal_policy | `listing_keywords` |
-| `cn_mof_bonds` | 财政部 | bond_issuance | `listing_keywords` |
+| `cn_customs_trade` | 海关总署 | trade | `rss` |
+| `cn_mof_fiscal` | 财政部 | fiscal_policy | `rss` |
+| `cn_mof_bonds` | 财政部 | bond_issuance | `rss` |
 | `cn_safe_fx` | 国家外汇管理局 | fx_reserves | `listing_keywords` |
-| `cn_caixin_pmi` | Caixin/S&P Global | manufacturing | `listing_keywords` |
+| `cn_caixin_pmi` | Caixin/S&P Global | manufacturing | `rss` |
 
 **JP (4 sources):**
 
@@ -769,13 +784,16 @@ single `fetch_all()` method.
 | `eu_eurostat_gdp` | Eurostat | gdp | `listing_keywords` |
 | `eu_eurostat_employment` | Eurostat | employment | `listing_keywords` |
 
-**Typical yield:** ~28 items total (US 13, CN 7, JP 3, EU 5). Some sources
-return `None` when no recent matching release is found or when the detail page
-is a PDF. Failed fetches are logged as warnings and skipped.
+**Typical yield:** one latest item per configured source. In the current live
+configuration, the full matrix is 41/41 `ok`, although some China sources are
+resolved through RSS fallback metadata rather than direct detail-page scraping.
 
-**Anti-bot notes:** Chinese Customs (`cn_customs_trade`) returns 412
-Precondition Failed due to server-side bot detection. This source may
-intermittently fail; errors are caught and logged gracefully.
+**Blocked-source notes:** the direct `customs.gov.cn`, `zwgls.mof.gov.cn`, and
+`pmi.spglobal.com` paths were not reliably accessible from this environment, so
+`cn_customs_trade`, `cn_mof_bonds`, and `cn_caixin_pmi` use Google News RSS
+discovery as a live fallback. `cn_nbs_retail`, `cn_nbs_industrial`,
+`cn_nbs_fai`, and `cn_mof_fiscal` also use RSS fallback because the official
+listings were too unstable or noisy for deterministic link selection here.
 
 ---
 
@@ -1209,18 +1227,13 @@ first element, data array in second element.
 ## Running Tests
 
 ```bash
-# Unit tests only (no network, fast)
-pytest tests/test_scrapers.py -m "not live" -v
+# Checked-in smoke tests
+pytest tests/test_macro_data_cli.py tests/test_ingestion_orchestrator.py tests/test_selector_versioning.py -q
 
-# Live integration tests (hits real endpoints)
-pytest tests/test_scrapers.py -m live -v
+# Ontology + service smoke
+pytest tests/test_macro_ontology_service.py -q
 
-# All scraper tests
-pytest tests/test_scrapers.py -v
-
-# Government report scraper tests
-pytest tests/test_gov_report.py -x -q
-
-# Structured data API tests (FRED, EIA, Treasury, IMF, Eurostat, BIS)
-pytest tests/test_fred.py tests/test_eia.py tests/test_treasury_fiscal.py tests/test_imf.py tests/test_eurostat.py tests/test_bis.py tests/test_ecb.py tests/test_oecd.py tests/test_worldbank.py -x -q
+# Government report live validation is currently ad hoc rather than a
+# checked-in pytest module. Use a targeted script or service-level smoke when
+# validating live source reachability.
 ```
