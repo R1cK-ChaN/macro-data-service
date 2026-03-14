@@ -192,6 +192,7 @@ class IngestionRunReport:
     duration_ms: int = 0
     retries: int = 0
     error: str = ""
+    validation_report: Any = None
 
     def to_counts(self) -> dict[str, int]:
         return {self.source: self.stored}
@@ -199,6 +200,10 @@ class IngestionRunReport:
     def to_dict(self) -> dict[str, Any]:
         payload = dataclasses.asdict(self)
         payload["ok"] = not self.error
+        if self.validation_report is not None:
+            payload["validation"] = self.validation_report.to_dict()
+        else:
+            payload.pop("validation_report", None)
         return payload
 
 
@@ -2812,8 +2817,10 @@ class IngestionOrchestrator:
         ecb: ECBIngestionClient | None = None,
         oecd: OECDIngestionClient | None = None,
         worldbank: WorldBankIngestionClient | None = None,
+        validation_engine: Any | None = None,
     ) -> None:
         self.store = store
+        self._validation = validation_engine
         self.fred = fred or FREDIngestionClient()
         self.investing = investing or InvestingCalendarClient()
         self.forexfactory = forexfactory or ForexFactoryCalendarClient()
@@ -2963,6 +2970,7 @@ class IngestionOrchestrator:
                         duration_ms=int((time.perf_counter() - started) * 1000),
                         retries=attempt,
                     )
+                    report = self._run_validation(definition.name, report)
                     self._last_run_reports[definition.name] = report
                     return report
 
@@ -2984,6 +2992,7 @@ class IngestionOrchestrator:
                     duration_ms=int((time.perf_counter() - started) * 1000),
                     retries=attempt,
                 )
+                report = self._run_validation(definition.name, report)
                 self._last_run_reports[definition.name] = report
                 return report
             except Exception as exc:
@@ -3002,6 +3011,16 @@ class IngestionOrchestrator:
                 )
                 self._last_run_reports[definition.name] = report
                 return report
+
+    def _run_validation(self, source_name: str, report: IngestionRunReport) -> IngestionRunReport:
+        if self._validation is None:
+            return report
+        try:
+            val_report = self._validation.validate_post_store(source_name, report)
+            return dataclasses.replace(report, validation_report=val_report)
+        except Exception:
+            logger.warning("%s post-store validation failed", source_name, exc_info=True)
+            return report
 
     @staticmethod
     def _deduplicate_by_key(items: list[Any], key_fn: Callable[[Any], Any]) -> list[Any]:

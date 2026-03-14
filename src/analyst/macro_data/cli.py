@@ -99,6 +99,15 @@ def build_parser() -> argparse.ArgumentParser:
     rag_sub.add_parser("sync")
     rag_sub.add_parser("status")
 
+    validate = subparsers.add_parser("validate")
+    validate.add_argument("--source", default=None, help="Validate a single source")
+    validate.add_argument("--cross-source", action="store_true", help="Run cross-source checks")
+    validate.add_argument("--report", action="store_true", help="Show last validation report")
+    validate.add_argument("--history", action="store_true", help="Show check history")
+    validate.add_argument("--days", type=int, default=7, help="History lookback days")
+    validate.add_argument("--json", action="store_true", dest="json_output", help="JSON output")
+    validate.add_argument("--db-path", default=None)
+
     return parser
 
 
@@ -251,6 +260,52 @@ def _run_wb_refresh_catalog(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_validate(args: argparse.Namespace) -> int:
+    from analyst.ingestion.validation import ValidationEngine, ValidationStore
+
+    db_path = args.db_path or ".macro-data/engine.db"
+    validation_store = ValidationStore(db_path)
+
+    if args.report:
+        reports = validation_store.list_reports(source=args.source, limit=5)
+        if not reports:
+            print("No validation reports found.")
+            return 0
+        if args.json_output:
+            print(json.dumps(reports, ensure_ascii=False, indent=2))
+        else:
+            for r in reports:
+                print(f"  {r['timestamp']}  {r['source']:<20}  "
+                      f"{'PASS' if r['passed'] else 'FAIL'}  "
+                      f"errors={r['error_count']}  warnings={r['warning_count']}  "
+                      f"checks={r['total_checks']}  {r['duration_ms']}ms")
+        return 0
+
+    if args.history:
+        history = validation_store.get_history(source=args.source, days=args.days)
+        if not history:
+            print("No validation history found.")
+            return 0
+        if args.json_output:
+            print(json.dumps(history, ensure_ascii=False, indent=2))
+        else:
+            for h in history:
+                status = "PASS" if h.get("passed") else "FAIL"
+                print(f"  {h.get('timestamp', '')}  {h.get('source', ''):<15}  "
+                      f"{h.get('layer', ''):<14}  {h.get('check_name', ''):<35}  "
+                      f"{status}  {h.get('message', '')}")
+        return 0
+
+    engine = ValidationEngine(validation_store)
+    report = engine.validate_full(args.source or "all")
+
+    if args.json_output:
+        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(report.format_text())
+    return 0 if report.passed else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -303,6 +358,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_oecd_refresh_catalog(args)
     if args.command == "rag":
         return _run_rag(args)
+    if args.command == "validate":
+        return _run_validate(args)
     parser.error("unknown command")
     return 2
 
