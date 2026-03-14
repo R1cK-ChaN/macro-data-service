@@ -39,7 +39,7 @@ from analyst.ingestion.scrapers.imf import IMFClient
 from analyst.ingestion.scrapers.oecd import OECDClient, OECDRateLimitError
 from analyst.ingestion.scrapers.reddit import RedditTrendClient, RedditTrendPost
 from analyst.ingestion.scrapers.weibo import WeiboTrendClient, WeiboTrendItem
-from analyst.ingestion.scrapers.worldbank import WorldBankClient
+from analyst.ingestion.scrapers.worldbank import WorldBankClient, WorldBankRateLimitError
 from analyst.ingestion.scrapers.nyfed import NYFedRatesClient
 from analyst.ingestion.scrapers.rateprobability import RateProbabilityClient
 from analyst.ingestion.scrapers.treasury_fiscal import TreasuryFiscalClient
@@ -497,11 +497,64 @@ OECD_SERIES = {
     ),
 }
 
-WORLDBANK_SERIES = {
-    "gdp_pcap_us":   {"indicator": "NY.GDP.PCAP.PP.CD",  "country": "USA", "series_id": "WB_GDP_PCAP_US",   "category": "development"},
-    "gdp_pcap_cn":   {"indicator": "NY.GDP.PCAP.PP.CD",  "country": "CHN", "series_id": "WB_GDP_PCAP_CN",   "category": "development"},
-    "gdp_growth_us": {"indicator": "NY.GDP.MKTP.KD.ZG",  "country": "USA", "series_id": "WB_GDP_GROWTH_US", "category": "growth"},
-    "ca_gdp_us":     {"indicator": "BN.CAB.XOKA.GD.ZS",  "country": "USA", "series_id": "WB_CA_GDP_US",     "category": "trade"},
+@dataclass(frozen=True)
+class WorldBankSeriesConfig:
+    """Configuration for a single World Bank indicator series."""
+
+    indicator: str
+    series_id: str
+    category: str
+    country: str = "all"
+    source_id: str = ""
+    topic_id: str = ""
+    start_year: int | None = None
+    limit: int = 30
+
+
+def _slugify_wb_token(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    return slug or "worldbank"
+
+
+def _generated_wb_series_id(indicator_code: str, country: str) -> str:
+    slug = _slugify_wb_token(indicator_code)[:48]
+    digest = hashlib.sha1(f"{indicator_code}|{country}".encode("utf-8")).hexdigest()[:12].upper()
+    return f"WB_AUTO_{slug.upper()}_{digest}"
+
+
+def _generated_wb_config_key(indicator_code: str, country: str) -> str:
+    slug = _slugify_wb_token(indicator_code)[:48]
+    digest = hashlib.sha1(f"{indicator_code}|{country}".encode("utf-8")).hexdigest()[:10]
+    return f"auto_{slug}_{digest}"
+
+
+def render_wb_series_configs(series_configs: dict[str, WorldBankSeriesConfig]) -> str:
+    """Render Python source code for generated World Bank series configs."""
+    lines = ["generated_wb_series = {"]
+    for config_key, cfg in sorted(series_configs.items()):
+        lines.append(f'    "{config_key}": WorldBankSeriesConfig(')
+        lines.append(f'        indicator="{cfg.indicator}",')
+        lines.append(f'        series_id="{cfg.series_id}",')
+        lines.append(f'        category="{cfg.category}",')
+        lines.append(f'        country="{cfg.country}",')
+        if cfg.source_id:
+            lines.append(f'        source_id="{cfg.source_id}",')
+        if cfg.topic_id:
+            lines.append(f'        topic_id="{cfg.topic_id}",')
+        if cfg.start_year is not None:
+            lines.append(f'        start_year={cfg.start_year},')
+        if cfg.limit != 30:
+            lines.append(f'        limit={cfg.limit},')
+        lines.append("    ),")
+    lines.append("}")
+    return "\n".join(lines)
+
+
+WORLDBANK_SERIES: dict[str, WorldBankSeriesConfig] = {
+    "gdp_pcap_us":   WorldBankSeriesConfig(indicator="NY.GDP.PCAP.PP.CD",  country="USA", series_id="WB_GDP_PCAP_US",   category="development"),
+    "gdp_pcap_cn":   WorldBankSeriesConfig(indicator="NY.GDP.PCAP.PP.CD",  country="CHN", series_id="WB_GDP_PCAP_CN",   category="development"),
+    "gdp_growth_us": WorldBankSeriesConfig(indicator="NY.GDP.MKTP.KD.ZG",  country="USA", series_id="WB_GDP_GROWTH_US", category="growth"),
+    "ca_gdp_us":     WorldBankSeriesConfig(indicator="BN.CAB.XOKA.GD.ZS",  country="USA", series_id="WB_CA_GDP_US",     category="trade"),
 }
 
 
@@ -909,6 +962,51 @@ class _OECDRateLimiter:
                 self._hour_count = 0
                 now = time.monotonic()
             # Enforce minimum interval
+            elapsed = now - self._last_request
+            if elapsed < self._min_interval:
+                time.sleep(self._min_interval - elapsed)
+            self._last_request = time.monotonic()
+            self._hour_count += 1
+
+    def backoff(self, seconds: float) -> None:
+        """Push the next allowed request time forward (called on 429)."""
+        with self._lock:
+            self._last_request = time.monotonic() + seconds - self._min_interval
+
+
+class _WorldBankRateLimiter:
+    """Thread-safe rate limiter for World Bank API requests.
+
+    World Bank has no documented hard rate limit, but we enforce
+    respectful defaults: 0.3s min interval, 500 requests/hour budget.
+    """
+
+    HOURLY_BUDGET = 500
+
+    def __init__(self, min_interval: float = 0.3) -> None:
+        self._lock = threading.Lock()
+        self._last_request = 0.0
+        self._min_interval = min_interval
+        self._hour_start = time.monotonic()
+        self._hour_count = 0
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            if now - self._hour_start >= 3600.0:
+                self._hour_start = now
+                self._hour_count = 0
+            if self._hour_count >= self.HOURLY_BUDGET:
+                sleep_for = 3600.0 - (now - self._hour_start)
+                if sleep_for > 0:
+                    logger.warning(
+                        "World Bank hourly budget (%d/%d) exhausted, sleeping %.0fs",
+                        self._hour_count, self.HOURLY_BUDGET, sleep_for,
+                    )
+                    time.sleep(sleep_for)
+                self._hour_start = time.monotonic()
+                self._hour_count = 0
+                now = time.monotonic()
             elapsed = now - self._last_request
             if elapsed < self._min_interval:
                 time.sleep(self._min_interval - elapsed)
@@ -1358,8 +1456,16 @@ class OECDIngestionClient:
 
 
 class WorldBankIngestionClient:
-    def __init__(self) -> None:
-        self.client = WorldBankClient()
+    def __init__(
+        self,
+        client: WorldBankClient | None = None,
+        *,
+        series_configs: dict[str, WorldBankSeriesConfig] | None = None,
+    ) -> None:
+        self.client = client or WorldBankClient()
+        self.series_configs = series_configs or WORLDBANK_SERIES
+
+    # -- configured series refresh (backward compatible) ---------------------
 
     def refresh(
         self,
@@ -1368,15 +1474,15 @@ class WorldBankIngestionClient:
         family_lookup: dict[tuple[str, str], str] | None = None,
     ) -> RefreshStats:
         count = 0
-        for key, cfg in WORLDBANK_SERIES.items():
+        for key, cfg in self.series_configs.items():
             try:
                 observations = self.client.get_indicator(
-                    cfg["indicator"],
-                    cfg["country"],
-                    series_id=cfg["series_id"],
-                    limit=30,
+                    cfg.indicator,
+                    cfg.country,
+                    series_id=cfg.series_id,
+                    limit=cfg.limit,
                 )
-                fam_id = family_lookup.get(("worldbank", cfg["series_id"])) if family_lookup else None
+                fam_id = family_lookup.get(("worldbank", cfg.series_id)) if family_lookup else None
                 for obs in observations:
                     store.upsert_indicator_observation(
                         IndicatorObservationRecord(
@@ -1384,7 +1490,7 @@ class WorldBankIngestionClient:
                             source="worldbank",
                             date=obs.date,
                             value=obs.value,
-                            metadata={"category": cfg["category"], "indicator": obs.indicator},
+                            metadata={"category": cfg.category, "indicator": obs.indicator},
                             obs_family_id=fam_id,
                         )
                     )
@@ -1393,6 +1499,279 @@ class WorldBankIngestionClient:
                 logger.warning("World Bank refresh failed for %s", key, exc_info=True)
             time.sleep(0.5)
         return RefreshStats(source="worldbank", count=count)
+
+    # -- parallel configured series refresh ----------------------------------
+
+    def refresh_parallel(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+        max_workers: int = 4,
+        request_delay: float = 0.3,
+    ) -> RefreshStats:
+        """Fetch all configured series using a thread pool."""
+        limiter = _WorldBankRateLimiter(min_interval=request_delay)
+        results: list[list[IndicatorObservationRecord]] = []
+
+        def _fetch_one(key: str, cfg: WorldBankSeriesConfig) -> list[IndicatorObservationRecord]:
+            max_retries = 3
+            for attempt in range(max_retries):
+                limiter.wait()
+                try:
+                    observations = self.client.get_indicator(
+                        cfg.indicator,
+                        cfg.country,
+                        series_id=cfg.series_id,
+                        start_year=cfg.start_year,
+                        limit=cfg.limit,
+                    )
+                    break
+                except WorldBankRateLimitError:
+                    if attempt < max_retries - 1:
+                        backoff = max(5.0, request_delay) * (2 ** attempt)
+                        logger.warning("World Bank 429 for %s, retry %d backing off %.1fs", key, attempt + 1, backoff)
+                        limiter.backoff(backoff)
+                        continue
+                    raise
+            fam_id = family_lookup.get(("worldbank", cfg.series_id)) if family_lookup else None
+            return [
+                IndicatorObservationRecord(
+                    series_id=obs.series_id,
+                    source="worldbank",
+                    date=obs.date,
+                    value=obs.value,
+                    metadata={"category": cfg.category, "indicator": obs.indicator},
+                    obs_family_id=fam_id,
+                )
+                for obs in observations
+            ]
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_key: dict[concurrent.futures.Future[list[IndicatorObservationRecord]], str] = {}
+            for key, cfg in self.series_configs.items():
+                future = executor.submit(_fetch_one, key, cfg)
+                future_to_key[future] = key
+
+            for future in concurrent.futures.as_completed(future_to_key):
+                key = future_to_key[future]
+                try:
+                    results.append(future.result())
+                except Exception:
+                    logger.warning("World Bank parallel refresh failed for %s", key, exc_info=True)
+
+        count = 0
+        for records in results:
+            for record in records:
+                store.upsert_indicator_observation(record)
+                count += 1
+        return RefreshStats(source="worldbank", count=count)
+
+    # -- catalog discovery proxies -------------------------------------------
+
+    def list_catalog_sources(self) -> list[Any]:
+        return self.client.list_sources()
+
+    def list_catalog_topics(self) -> list[Any]:
+        return self.client.list_topics()
+
+    def list_catalog_countries(self) -> list[Any]:
+        return self.client.list_countries()
+
+    def list_catalog_indicators(
+        self,
+        *,
+        source_id: str | None = None,
+        topic_id: str | None = None,
+        query: str | None = None,
+        limit: int | None = None,
+    ) -> list[Any]:
+        if query:
+            indicators = self.client.search_indicators(
+                query, source_id=source_id, topic_id=topic_id, limit=limit or 50,
+            )
+        else:
+            indicators = self.client.list_indicators(source_id=source_id, topic_id=topic_id)
+            if limit:
+                indicators = indicators[:limit]
+        return indicators
+
+    # -- config generation ---------------------------------------------------
+
+    def generate_catalog_series_configs(
+        self,
+        *,
+        source_id: str | None = None,
+        topic_id: str | None = None,
+        query: str | None = None,
+        indicator_limit: int | None = 10,
+        countries: list[str] | None = None,
+        category: str = "catalog",
+    ) -> dict[str, WorldBankSeriesConfig]:
+        """Auto-discover indicators and generate series configs."""
+        indicators = self.list_catalog_indicators(
+            source_id=source_id, topic_id=topic_id, query=query, limit=indicator_limit,
+        )
+        generated: dict[str, WorldBankSeriesConfig] = {}
+        for ind in indicators:
+            country = ";".join(countries) if countries else "all"
+            config = WorldBankSeriesConfig(
+                indicator=ind.id,
+                series_id=_generated_wb_series_id(ind.id, country),
+                category=category,
+                country=country,
+                source_id=ind.source_id,
+            )
+            generated[_generated_wb_config_key(ind.id, country)] = config
+        return generated
+
+    # -- catalog refresh (sequential) ----------------------------------------
+
+    def refresh_catalog(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        source_id: str | None = None,
+        topic_id: str | None = None,
+        query: str | None = None,
+        indicator_limit: int | None = 10,
+        countries: list[str] | None = None,
+        latest_observations: int = 5,
+        sleep_seconds: float = 0.3,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        """Discover indicators from catalog and fetch their latest data."""
+        indicators = self.list_catalog_indicators(
+            source_id=source_id, topic_id=topic_id, query=query, limit=indicator_limit,
+        )
+        country_str = ";".join(countries) if countries else "all"
+        count = 0
+        for ind in indicators:
+            try:
+                observations = self.client.get_indicator(
+                    ind.id,
+                    country_str,
+                    series_id=f"WB_{ind.id}",
+                    limit=latest_observations * 300 if country_str == "all" else latest_observations,
+                    per_page=1000,
+                    fetch_all_pages=country_str == "all",
+                )
+                for obs in observations:
+                    sid = f"WB_{ind.id}_{obs.country_code}" if obs.country_code else f"WB_{ind.id}"
+                    fam_id = family_lookup.get(("worldbank", sid)) if family_lookup else None
+                    store.upsert_indicator_observation(
+                        IndicatorObservationRecord(
+                            series_id=sid,
+                            source="worldbank",
+                            date=obs.date,
+                            value=obs.value,
+                            metadata={
+                                "category": "catalog",
+                                "indicator": ind.id,
+                                "indicator_name": ind.name,
+                                "source_name": ind.source_name,
+                                "country_code": obs.country_code,
+                                "country_name": obs.country_name,
+                            },
+                            obs_family_id=fam_id,
+                        )
+                    )
+                    count += 1
+            except Exception:
+                logger.warning("World Bank catalog refresh failed for %s", ind.id, exc_info=True)
+            time.sleep(max(sleep_seconds, 0.0))
+        return RefreshStats(source="worldbank_catalog", count=count)
+
+    # -- catalog refresh (parallel) ------------------------------------------
+
+    def refresh_catalog_parallel(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        source_id: str | None = None,
+        topic_id: str | None = None,
+        query: str | None = None,
+        indicator_limit: int | None = 10,
+        countries: list[str] | None = None,
+        max_workers: int = 3,
+        request_delay: float = 0.3,
+        latest_observations: int = 5,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        """Fetch catalog data from multiple indicators in parallel."""
+        indicators = self.list_catalog_indicators(
+            source_id=source_id, topic_id=topic_id, query=query, limit=indicator_limit,
+        )
+        country_str = ";".join(countries) if countries else "all"
+        limiter = _WorldBankRateLimiter(min_interval=request_delay)
+        results: list[list[IndicatorObservationRecord]] = []
+
+        def _fetch_indicator(ind: Any) -> list[IndicatorObservationRecord]:
+            max_retries = 3
+            for attempt in range(max_retries):
+                limiter.wait()
+                try:
+                    observations = self.client.get_indicator(
+                        ind.id,
+                        country_str,
+                        series_id=f"WB_{ind.id}",
+                        limit=latest_observations * 300 if country_str == "all" else latest_observations,
+                        per_page=1000,
+                        fetch_all_pages=country_str == "all",
+                    )
+                    break
+                except WorldBankRateLimitError:
+                    if attempt < max_retries - 1:
+                        backoff = max(5.0, request_delay) * (2 ** attempt)
+                        logger.warning(
+                            "World Bank 429 for %s, retry %d backing off %.1fs",
+                            ind.id, attempt + 1, backoff,
+                        )
+                        limiter.backoff(backoff)
+                        continue
+                    raise
+            records: list[IndicatorObservationRecord] = []
+            for obs in observations:
+                sid = f"WB_{ind.id}_{obs.country_code}" if obs.country_code else f"WB_{ind.id}"
+                fam_id = family_lookup.get(("worldbank", sid)) if family_lookup else None
+                records.append(
+                    IndicatorObservationRecord(
+                        series_id=sid,
+                        source="worldbank",
+                        date=obs.date,
+                        value=obs.value,
+                        metadata={
+                            "category": "catalog",
+                            "indicator": ind.id,
+                            "indicator_name": ind.name,
+                            "source_name": ind.source_name,
+                            "country_code": obs.country_code,
+                            "country_name": obs.country_name,
+                        },
+                        obs_family_id=fam_id,
+                    )
+                )
+            return records
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_id: dict[concurrent.futures.Future[list[IndicatorObservationRecord]], str] = {}
+            for ind in indicators:
+                future = executor.submit(_fetch_indicator, ind)
+                future_to_id[future] = ind.id
+
+            for future in concurrent.futures.as_completed(future_to_id):
+                label = future_to_id[future]
+                try:
+                    results.append(future.result())
+                except Exception:
+                    logger.warning("World Bank catalog parallel refresh failed for %s", label, exc_info=True)
+
+        count = 0
+        for records in results:
+            for record in records:
+                store.upsert_indicator_observation(record)
+                count += 1
+        return RefreshStats(source="worldbank_catalog", count=count)
 
 
 class FedIngestionClient:
@@ -2524,6 +2903,7 @@ class IngestionOrchestrator:
             self._build_ecb_source(),
             self._build_oecd_source(),
             self._build_worldbank_source(),
+            self._build_worldbank_catalog_source(),
         ]
         for definition in definitions:
             self.register_source(definition)
@@ -2547,6 +2927,7 @@ class IngestionOrchestrator:
             "ecb",
             "oecd",
             "worldbank",
+            "worldbank_catalog",
         ]
 
     @staticmethod
@@ -2972,14 +3353,35 @@ class IngestionOrchestrator:
         )
 
     def _build_worldbank_source(self) -> IngestionSourceDefinition:
+        def _execute_worldbank() -> int:
+            lookup = self._family_lookup or None
+            if len(self.worldbank.series_configs) > 10:
+                return self.worldbank.refresh_parallel(
+                    self.store, family_lookup=lookup,
+                ).count
+            return self.worldbank.refresh(
+                self.store, family_lookup=lookup,
+            ).count
+
         return IngestionSourceDefinition(
             name="worldbank",
             interval_seconds=86_400,
             prepare=self._ensure_obs_seed,
-            execute=lambda: self.worldbank.refresh(
-                self.store,
-                family_lookup=self._family_lookup or None,
-            ).count,
+            execute=_execute_worldbank,
+        )
+
+    def _build_worldbank_catalog_source(self) -> IngestionSourceDefinition:
+        def _execute() -> int:
+            lookup = self._family_lookup or None
+            return self.worldbank.refresh_catalog_parallel(
+                self.store, family_lookup=lookup,
+            ).count
+
+        return IngestionSourceDefinition(
+            name="worldbank_catalog",
+            interval_seconds=86_400 * 7,
+            prepare=self._ensure_obs_seed,
+            execute=_execute,
         )
 
     def _deduplicate_observations(
@@ -3050,6 +3452,9 @@ class IngestionOrchestrator:
 
     def refresh_worldbank(self) -> dict[str, int]:
         return self.run_source("worldbank").to_counts()
+
+    def refresh_worldbank_catalog(self) -> dict[str, int]:
+        return self.run_source("worldbank_catalog").to_counts()
 
     def refresh_gov_reports(self) -> dict[str, int]:
         return self.run_source("gov_reports").to_counts()

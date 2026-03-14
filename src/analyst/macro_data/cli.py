@@ -6,7 +6,12 @@ import json
 from pathlib import Path
 
 from analyst.ingestion.scrapers.oecd import OECDClient
-from analyst.ingestion.sources import OECDIngestionClient, render_oecd_series_configs
+from analyst.ingestion.sources import (
+    OECDIngestionClient,
+    WorldBankIngestionClient,
+    render_oecd_series_configs,
+    render_wb_series_configs,
+)
 
 from .server import main as serve_main
 
@@ -61,6 +66,32 @@ def build_parser() -> argparse.ArgumentParser:
     oecd_refresh.add_argument("--latest-observations", type=int, default=1)
     oecd_refresh.add_argument("--sleep-seconds", type=float, default=1.2)
     oecd_refresh.add_argument("--db-path", default=None)
+
+    # -- World Bank catalog commands --
+    subparsers.add_parser("wb-sources")
+
+    wb_indicators = subparsers.add_parser("wb-indicators")
+    wb_indicators.add_argument("--source-id", default=None)
+    wb_indicators.add_argument("--topic-id", default=None)
+    wb_indicators.add_argument("--query", default=None)
+    wb_indicators.add_argument("--limit", type=int, default=50)
+
+    wb_generate = subparsers.add_parser("wb-generate-configs")
+    wb_generate.add_argument("--source-id", default=None)
+    wb_generate.add_argument("--topic-id", default=None)
+    wb_generate.add_argument("--query", default=None)
+    wb_generate.add_argument("--indicator-limit", type=int, default=10)
+    wb_generate.add_argument("--countries", nargs="*", default=None)
+
+    wb_refresh = subparsers.add_parser("wb-refresh-catalog")
+    wb_refresh.add_argument("--source-id", default=None)
+    wb_refresh.add_argument("--topic-id", default=None)
+    wb_refresh.add_argument("--query", default=None)
+    wb_refresh.add_argument("--indicator-limit", type=int, default=10)
+    wb_refresh.add_argument("--countries", nargs="*", default=None)
+    wb_refresh.add_argument("--latest-observations", type=int, default=5)
+    wb_refresh.add_argument("--sleep-seconds", type=float, default=0.3)
+    wb_refresh.add_argument("--db-path", default=None)
 
     rag_parser = subparsers.add_parser("rag")
     rag_sub = rag_parser.add_subparsers(dest="rag_command", required=True)
@@ -156,6 +187,70 @@ def _run_oecd_refresh_catalog(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- World Bank CLI handlers ------------------------------------------------
+
+def _run_wb_sources(args: argparse.Namespace) -> int:
+    ingestion = WorldBankIngestionClient()
+    sources = ingestion.list_catalog_sources()
+    if not sources:
+        print("No World Bank sources found.")
+        return 0
+    for src in sources:
+        print(f"{src.id}\t{src.name}\t{src.description[:80] if src.description else ''}")
+    return 0
+
+
+def _run_wb_indicators(args: argparse.Namespace) -> int:
+    ingestion = WorldBankIngestionClient()
+    indicators = ingestion.list_catalog_indicators(
+        source_id=args.source_id,
+        topic_id=args.topic_id,
+        query=args.query,
+        limit=args.limit,
+    )
+    if not indicators:
+        print("No World Bank indicators found.")
+        return 0
+    for ind in indicators:
+        print(f"{ind.id}\t{ind.name}\t{ind.source_name}")
+    return 0
+
+
+def _run_wb_generate_configs(args: argparse.Namespace) -> int:
+    ingestion = WorldBankIngestionClient()
+    configs = ingestion.generate_catalog_series_configs(
+        source_id=args.source_id,
+        topic_id=args.topic_id,
+        query=args.query,
+        indicator_limit=args.indicator_limit,
+        countries=args.countries,
+    )
+    if not configs:
+        print("generated_wb_series = {}")
+        return 0
+    print(render_wb_series_configs(configs))
+    return 0
+
+
+def _run_wb_refresh_catalog(args: argparse.Namespace) -> int:
+    from analyst.storage import SQLiteEngineStore
+
+    store = SQLiteEngineStore(db_path=Path(args.db_path) if args.db_path else None)
+    ingestion = WorldBankIngestionClient()
+    stats = ingestion.refresh_catalog(
+        store,
+        source_id=args.source_id,
+        topic_id=args.topic_id,
+        query=args.query,
+        indicator_limit=args.indicator_limit,
+        countries=args.countries,
+        latest_observations=args.latest_observations,
+        sleep_seconds=args.sleep_seconds,
+    )
+    print(json.dumps({stats.source: stats.count}, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -171,6 +266,16 @@ def main(argv: list[str] | None = None) -> int:
         if args.api_token is not None:
             serve_argv.extend(["--api-token", args.api_token])
         return serve_main(serve_argv)
+
+    # World Bank commands (no service needed)
+    if args.command == "wb-sources":
+        return _run_wb_sources(args)
+    if args.command == "wb-indicators":
+        return _run_wb_indicators(args)
+    if args.command == "wb-generate-configs":
+        return _run_wb_generate_configs(args)
+    if args.command == "wb-refresh-catalog":
+        return _run_wb_refresh_catalog(args)
 
     from analyst.macro_data.factory import build_local_macro_data_service
 

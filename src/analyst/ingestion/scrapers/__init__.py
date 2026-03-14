@@ -26,7 +26,17 @@ from .bloomberg import BloombergArticle, BloombergArticleClient, BloombergNewsCl
 from .ft import FTArticle, FTArticleClient, FTNewsClient
 from .reuters import ReutersArticle, ReutersArticleClient, ReutersNewsClient
 from .treasury_fiscal import TreasuryFiscalClient, TreasuryFiscalObservation
-from .worldbank import WorldBankClient, WorldBankObservation
+from .worldbank import (
+    WorldBankAPIError,
+    WorldBankClient,
+    WorldBankCountry,
+    WorldBankIndicatorInfo,
+    WorldBankObservation,
+    WorldBankRateLimitError,
+    WorldBankResponseFormatError,
+    WorldBankSource,
+    WorldBankTopic,
+)
 from .wsj import WSJArticle, WSJArticleClient, WSJNewsClient
 from .gov_report import GovReportClient, GovReportItem
 from .nyfed import NYFedRate, NYFedRatesClient
@@ -78,7 +88,14 @@ __all__ = [
     "ScrapedNewsItem",
     "TreasuryFiscalObservation",
     "WSJArticle",
+    "WorldBankAPIError",
+    "WorldBankCountry",
+    "WorldBankIndicatorInfo",
     "WorldBankObservation",
+    "WorldBankRateLimitError",
+    "WorldBankResponseFormatError",
+    "WorldBankSource",
+    "WorldBankTopic",
     # Calendar
     "ForexFactoryCalendarClient",
     "InvestingCalendarClient",
