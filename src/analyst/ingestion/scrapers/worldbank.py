@@ -150,11 +150,32 @@ class WorldBankClient:
         World Bank returns ``[{page_info}, [records]]`` where ``page_info``
         contains ``page``, ``pages``, ``per_page``, ``total``.
         """
+        records, _ = self._get_all_pages_with_total(
+            url, params=params, per_page=per_page, max_pages=max_pages,
+        )
+        return records
+
+    def _get_all_pages_with_total(
+        self,
+        url: str,
+        *,
+        params: dict[str, str] | None = None,
+        per_page: int = 1000,
+        max_pages: int | None = None,
+    ) -> tuple[list[dict], int]:
+        """Fetch all pages and return ``(records, api_reported_total)``.
+
+        The ``api_reported_total`` is the ``total`` field from the first
+        page's metadata — the number the API *claims* to have.  Callers
+        can compare ``len(records) == api_reported_total`` to detect
+        pagination truncation.
+        """
         params = dict(params) if params else {}
         params["format"] = "json"
         params["per_page"] = str(per_page)
 
         all_records: list[dict] = []
+        api_total = 0
         page = 1
 
         while True:
@@ -166,6 +187,8 @@ class WorldBankClient:
                 break
 
             page_info = data[0]
+            if page == 1:
+                api_total = int(page_info.get("total", 0))
             records = data[1]
             if records:
                 all_records.extend(records)
@@ -177,7 +200,51 @@ class WorldBankClient:
                 break
             page += 1
 
-        return all_records
+        return all_records, api_total
+
+    def get_api_total(self, endpoint: str, *, params: dict[str, str] | None = None) -> int:
+        """Return the API-reported ``total`` count for an endpoint (single request).
+
+        Useful for quick count verification without fetching all records.
+        """
+        p = dict(params) if params else {}
+        p["format"] = "json"
+        p["per_page"] = "1"
+        resp = self._get_json(f"{self.BASE_URL}/{endpoint}", params=p)
+        data = resp.json()
+        if isinstance(data, list) and len(data) >= 1 and isinstance(data[0], dict):
+            return int(data[0].get("total", 0))
+        return 0
+
+    # -- catalog counts (for data validation) ---------------------------------
+
+    def count_sources(self) -> int:
+        """Return the API-reported total number of sources."""
+        return self.get_api_total("source")
+
+    def count_topics(self) -> int:
+        """Return the API-reported total number of topics."""
+        return self.get_api_total("topic")
+
+    def count_countries(self) -> int:
+        """Return the API-reported total number of countries/economies."""
+        return self.get_api_total("country")
+
+    def count_indicators(self, *, source_id: str | None = None, topic_id: str | None = None) -> int:
+        """Return the API-reported total number of indicators."""
+        if topic_id:
+            endpoint = f"topic/{topic_id}/indicator"
+        elif source_id:
+            endpoint = f"source/{source_id}/indicator"
+        else:
+            endpoint = "indicator"
+        return self.get_api_total(endpoint)
+
+    def count_indicator_observations(self, indicator_code: str, country: str = "all") -> int:
+        """Return the API-reported total observations for an indicator/country."""
+        return self.get_api_total(
+            f"country/{country}/indicator/{indicator_code}",
+        )
 
     # -- catalog discovery ---------------------------------------------------
 
@@ -186,7 +253,7 @@ class WorldBankClient:
         if self._sources_cache is not None:
             return self._sources_cache
 
-        records = self._get_all_pages(f"{self.BASE_URL}/source")
+        records, api_total = self._get_all_pages_with_total(f"{self.BASE_URL}/source")
         sources: list[WorldBankSource] = []
         for rec in records:
             try:
@@ -198,6 +265,11 @@ class WorldBankClient:
                 ))
             except (KeyError, TypeError):
                 continue
+        if api_total and len(records) != api_total:
+            logger.warning(
+                "World Bank source pagination mismatch: fetched %d, API reports %d",
+                len(records), api_total,
+            )
         self._sources_cache = sources
         return sources
 
@@ -206,7 +278,7 @@ class WorldBankClient:
         if self._topics_cache is not None:
             return self._topics_cache
 
-        records = self._get_all_pages(f"{self.BASE_URL}/topic")
+        records, api_total = self._get_all_pages_with_total(f"{self.BASE_URL}/topic")
         topics: list[WorldBankTopic] = []
         for rec in records:
             try:
@@ -221,6 +293,11 @@ class WorldBankClient:
                 ))
             except (KeyError, TypeError):
                 continue
+        if api_total and len(records) != api_total:
+            logger.warning(
+                "World Bank topic pagination mismatch: fetched %d, API reports %d",
+                len(records), api_total,
+            )
         self._topics_cache = topics
         return topics
 
@@ -237,7 +314,9 @@ class WorldBankClient:
         if income_level:
             params["incomeLevel"] = income_level
 
-        records = self._get_all_pages(f"{self.BASE_URL}/country", params=params)
+        records, api_total = self._get_all_pages_with_total(
+            f"{self.BASE_URL}/country", params=params,
+        )
         countries: list[WorldBankCountry] = []
         for rec in records:
             try:
@@ -251,6 +330,11 @@ class WorldBankClient:
                 ))
             except (KeyError, TypeError):
                 continue
+        if api_total and len(records) != api_total:
+            logger.warning(
+                "World Bank country pagination mismatch: fetched %d, API reports %d",
+                len(records), api_total,
+            )
 
         if income_level is None:
             self._countries_cache = countries
@@ -277,7 +361,14 @@ class WorldBankClient:
         else:
             url = f"{self.BASE_URL}/indicator"
 
-        records = self._get_all_pages(url, per_page=per_page, max_pages=max_pages)
+        records, api_total = self._get_all_pages_with_total(
+            url, per_page=per_page, max_pages=max_pages,
+        )
+        if max_pages is None and api_total and len(records) != api_total:
+            logger.warning(
+                "World Bank indicator pagination mismatch: fetched %d, API reports %d",
+                len(records), api_total,
+            )
         return self._parse_indicator_records(records)
 
     def search_indicators(
