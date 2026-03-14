@@ -873,3 +873,225 @@ class TestRevisionMonitoring:
         threshold = [r for r in results if r.check_name == "revision_magnitude_threshold"]
         assert len(threshold) == 1
         assert threshold[0].passed is False  # 100 > 50
+
+
+# ── Lineage validation ──────────────────────────────────────────
+
+
+class TestLineageValidation:
+    def test_complete_lineage(self):
+        from analyst.ingestion.validation._lineage import check_lineage
+
+        obs = [
+            {"source": "fred", "series_id": "CPIAUCSL", "date": "2023-01-01", "value": 100.0},
+            {"source": "fred", "series_id": "CPIAUCSL", "date": "2023-02-01", "value": 101.0},
+        ]
+        results = check_lineage("fred", obs)
+        assert all(r.passed for r in results)
+
+    def test_missing_source(self):
+        from analyst.ingestion.validation._lineage import check_lineage
+
+        obs = [
+            {"source": "", "series_id": "CPIAUCSL", "date": "2023-01-01", "value": 100.0},
+            {"source": "fred", "series_id": "CPIAUCSL", "date": "2023-02-01", "value": 101.0},
+        ]
+        results = check_lineage("fred", obs)
+        src = [r for r in results if r.check_name == "lineage_source"]
+        assert len(src) == 1
+        assert src[0].passed is False
+
+    def test_missing_series_id(self):
+        from analyst.ingestion.validation._lineage import check_lineage
+
+        obs = [
+            {"source": "fred", "series_id": "", "date": "2023-01-01", "value": 100.0},
+        ]
+        results = check_lineage("fred", obs)
+        sid = [r for r in results if r.check_name == "lineage_series_id"]
+        assert sid[0].passed is False
+
+    def test_missing_date(self):
+        from analyst.ingestion.validation._lineage import check_lineage
+
+        obs = [
+            {"source": "fred", "series_id": "CPIAUCSL", "date": "", "value": 100.0},
+        ]
+        results = check_lineage("fred", obs)
+        d = [r for r in results if r.check_name == "lineage_date"]
+        assert d[0].passed is False
+
+    def test_invalid_date_format(self):
+        from analyst.ingestion.validation._lineage import check_lineage
+
+        obs = [
+            {"source": "fred", "series_id": "CPIAUCSL", "date": "abc", "value": 100.0},
+        ]
+        results = check_lineage("fred", obs)
+        d = [r for r in results if r.check_name == "lineage_date"]
+        assert d[0].passed is False
+
+    def test_family_id_required(self):
+        from analyst.ingestion.validation._lineage import check_lineage
+
+        obs = [
+            {"source": "fred", "series_id": "CPIAUCSL", "date": "2023-01-01", "value": 100.0, "obs_family_id": None},
+        ]
+        results = check_lineage("fred", obs, require_family_id=True)
+        fid = [r for r in results if r.check_name == "lineage_family_id"]
+        assert len(fid) == 1
+        assert fid[0].passed is False
+
+    def test_family_id_present(self):
+        from analyst.ingestion.validation._lineage import check_lineage
+
+        obs = [
+            {"source": "fred", "series_id": "CPIAUCSL", "date": "2023-01-01",
+             "value": 100.0, "obs_family_id": "us.inflation.cpi_all"},
+        ]
+        results = check_lineage("fred", obs, require_family_id=True)
+        fid = [r for r in results if r.check_name == "lineage_family_id"]
+        assert fid[0].passed is True
+
+    def test_empty_list(self):
+        from analyst.ingestion.validation._lineage import check_lineage
+
+        results = check_lineage("fred", [])
+        assert results == []
+
+
+# ── Dimension validation ─────────────────────────────────────────
+
+
+class TestDimensionValidation:
+    def test_valid_dimensions(self):
+        from analyst.ingestion.validation._dimensions import check_dimensions
+
+        families = [
+            {
+                "family_id": "us.inflation.cpi_all",
+                "source_id": "fred",
+                "frequency": "monthly",
+                "unit": "index",
+                "seasonal_adjustment": "sa",
+                "country_code": "US",
+            },
+            {
+                "family_id": "us.rates.fed_funds",
+                "source_id": "fred",
+                "frequency": "daily",
+                "unit": "percent",
+                "seasonal_adjustment": "none",
+                "country_code": "US",
+            },
+        ]
+        results = check_dimensions("fred", families)
+        assert all(r.passed for r in results)
+
+    def test_invalid_frequency(self):
+        from analyst.ingestion.validation._dimensions import check_dimensions
+
+        families = [
+            {
+                "family_id": "test.bad",
+                "source_id": "fred",
+                "frequency": "biweekly",
+                "unit": "percent",
+                "seasonal_adjustment": "sa",
+                "country_code": "US",
+            },
+        ]
+        results = check_dimensions("fred", families)
+        freq = [r for r in results if r.check_name == "dimension_frequency"]
+        assert freq[0].passed is False
+
+    def test_invalid_unit(self):
+        from analyst.ingestion.validation._dimensions import check_dimensions
+
+        families = [
+            {
+                "family_id": "test.bad",
+                "source_id": "fred",
+                "frequency": "monthly",
+                "unit": "bushels_per_acre",
+                "seasonal_adjustment": "sa",
+                "country_code": "US",
+            },
+        ]
+        results = check_dimensions("fred", families)
+        unit = [r for r in results if r.check_name == "dimension_unit"]
+        assert unit[0].passed is False
+
+    def test_invalid_seasonal_adjustment(self):
+        from analyst.ingestion.validation._dimensions import check_dimensions
+
+        families = [
+            {
+                "family_id": "test.bad",
+                "source_id": "fred",
+                "frequency": "monthly",
+                "unit": "percent",
+                "seasonal_adjustment": "double_adjusted",
+                "country_code": "US",
+            },
+        ]
+        results = check_dimensions("fred", families)
+        sa = [r for r in results if r.check_name == "dimension_seasonal_adjustment"]
+        assert sa[0].passed is False
+
+    def test_unrecognized_country_code(self):
+        from analyst.ingestion.validation._dimensions import check_dimensions
+
+        families = [
+            {
+                "family_id": "test.bad",
+                "source_id": "fred",
+                "frequency": "monthly",
+                "unit": "percent",
+                "seasonal_adjustment": "sa",
+                "country_code": "ZZ",
+            },
+        ]
+        results = check_dimensions("fred", families)
+        cc = [r for r in results if r.check_name == "dimension_country_code"]
+        assert cc[0].passed is False
+
+    def test_invalid_source_id(self):
+        from analyst.ingestion.validation._dimensions import check_dimensions
+
+        families = [
+            {
+                "family_id": "test.bad",
+                "source_id": "unknown_provider",
+                "frequency": "monthly",
+                "unit": "percent",
+                "seasonal_adjustment": "sa",
+                "country_code": "US",
+            },
+        ]
+        results = check_dimensions("fred", families)
+        sid = [r for r in results if r.check_name == "dimension_source_id"]
+        assert sid[0].passed is False
+
+    def test_empty_families(self):
+        from analyst.ingestion.validation._dimensions import check_dimensions
+
+        results = check_dimensions("fred", [])
+        assert results == []
+
+    def test_multiple_errors(self):
+        from analyst.ingestion.validation._dimensions import check_dimensions
+
+        families = [
+            {
+                "family_id": "test.bad",
+                "source_id": "xyz",
+                "frequency": "biweekly",
+                "unit": "bushels",
+                "seasonal_adjustment": "triple",
+                "country_code": "ZZ",
+            },
+        ]
+        results = check_dimensions("fred", families)
+        failed = [r for r in results if not r.passed]
+        assert len(failed) == 5  # all five dimensions fail

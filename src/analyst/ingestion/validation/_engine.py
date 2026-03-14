@@ -16,11 +16,13 @@ from ._cross_source import (
     check_cross_source,
 )
 from ._diff import check_data_diff
+from ._dimensions import check_dimensions
 from ._freshness import (
     FreshnessExpectation,
     check_freshness,
     check_freshness_batch,
 )
+from ._lineage import check_lineage
 from ._revision import check_revisions, check_revisions_batch
 from ._schema import check_schema
 from ._series import check_series_integrity
@@ -45,6 +47,8 @@ class ValidationConfig:
     enable_volume: bool = True
     enable_freshness: bool = True
     enable_revisions: bool = False
+    enable_lineage: bool = True
+    enable_dimensions: bool = True
     anomaly_sample_size: int = 10
     fail_on_error: bool = False
     catalog_expectations: tuple[CatalogExpectation, ...] = ()
@@ -229,6 +233,34 @@ class ValidationEngine:
         )
         return self._finalize_report(source, checks, started)
 
+    # ── Lineage validation (on-demand) ───────────────────────────
+
+    def validate_lineage(
+        self,
+        source: str,
+        observations: list[Any],
+        *,
+        require_family_id: bool = False,
+    ) -> ValidationReport:
+        """Check every observation has source, series_id, date."""
+        started = time.perf_counter()
+        checks = check_lineage(
+            source, observations, require_family_id=require_family_id
+        )
+        return self._finalize_report(source, checks, started)
+
+    # ── Dimension validation (on-demand) ─────────────────────────
+
+    def validate_dimensions(
+        self,
+        source: str,
+        families: list[Any],
+    ) -> ValidationReport:
+        """Check dimension values on observation families."""
+        started = time.perf_counter()
+        checks = check_dimensions(source, families)
+        return self._finalize_report(source, checks, started)
+
     # ── Full validation (CLI / scheduled) ────────────────────────
 
     def validate_full(
@@ -241,6 +273,7 @@ class ValidationEngine:
         observation_count: int | None = None,
         latest_date: str | None = None,
         vintages: dict[str, list[dict[str, Any]]] | None = None,
+        families: list[Any] | None = None,
     ) -> ValidationReport:
         """Run all applicable layers for a source."""
         started = time.perf_counter()
@@ -309,6 +342,20 @@ class ValidationEngine:
             checks.extend(
                 check_revisions_batch(source, vintages, validation_store=self._store)
             )
+
+        # Layer 10: Lineage
+        if config.enable_lineage and stored_observations:
+            all_obs = [
+                obs
+                for obs_list in stored_observations.values()
+                for obs in obs_list
+            ]
+            if all_obs:
+                checks.extend(check_lineage(source, all_obs))
+
+        # Layer 11: Dimensions
+        if config.enable_dimensions and families:
+            checks.extend(check_dimensions(source, families))
 
         return self._finalize_report(source, checks, started)
 
