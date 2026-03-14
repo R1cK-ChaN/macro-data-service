@@ -1370,6 +1370,8 @@ class OECDIngestionClient:
         latest_observations: int = 1,
         updated_after: str | None = None,
         family_lookup: dict[tuple[str, str], str] | None = None,
+        chunked: bool = True,
+        obs_threshold: int = 1_000_000,
     ) -> RefreshStats:
         """Fetch catalog data from multiple dataflows in parallel.
 
@@ -1381,6 +1383,11 @@ class OECDIngestionClient:
         to only fetch data that changed since your last sync.  Most OECD
         datasets update annually or monthly, so this dramatically reduces
         request volume for recurring ingestion.
+
+        When ``chunked=True`` (default), datasets estimated to exceed
+        ``obs_threshold`` observations are automatically split into
+        decade-sized time-range queries to avoid timeouts and memory
+        exhaustion on large cubes (e.g. SNA_TABLE1, ICIO).
         """
         dataflows = self.resolve_catalog_dataflows(
             dataflow_ids=dataflow_ids,
@@ -1390,12 +1397,42 @@ class OECDIngestionClient:
         limiter = _OECDRateLimiter(min_interval=request_delay)
         results: list[list[IndicatorObservationRecord]] = []
 
-        def _fetch_dataflow(dataflow: Any) -> list[IndicatorObservationRecord]:
+        def _fetch_with_retry(
+            fetch_fn: Callable[[], list[Any]],
+            label: str,
+        ) -> list[Any]:
             max_retries = 5
             for attempt in range(max_retries):
                 limiter.wait()
                 try:
-                    observations = self.client.fetch_data(
+                    return fetch_fn()
+                except OECDRateLimitError:
+                    if attempt < max_retries - 1:
+                        backoff = max(10.0, request_delay) * (2 ** attempt)
+                        logger.warning(
+                            "OECD 429 for %s, retry %d backing off %.1fs",
+                            label, attempt + 1, backoff,
+                        )
+                        limiter.backoff(backoff)
+                        continue
+                    raise
+            return []  # unreachable, but satisfies type checker
+
+        def _fetch_dataflow(dataflow: Any) -> list[IndicatorObservationRecord]:
+            label = f"{dataflow.agency_id}/{dataflow.id}"
+            if chunked:
+                observations = self.client.fetch_dataset_chunked(
+                    dataflow.id,
+                    agency_id=dataflow.agency_id,
+                    version=dataflow.version,
+                    key="all",
+                    series_id=None,
+                    limit=latest_observations,
+                    obs_threshold=obs_threshold,
+                )
+            else:
+                observations = _fetch_with_retry(
+                    lambda: self.client.fetch_data(
                         dataflow.id,
                         agency_id=dataflow.agency_id,
                         version=dataflow.version,
@@ -1403,18 +1440,9 @@ class OECDIngestionClient:
                         series_id=None,
                         updated_after=updated_after,
                         limit=latest_observations,
-                    )
-                    break
-                except OECDRateLimitError:
-                    if attempt < max_retries - 1:
-                        backoff = max(10.0, request_delay) * (2 ** attempt)
-                        logger.warning(
-                            "OECD 429 for %s/%s, retry %d backing off %.1fs",
-                            dataflow.agency_id, dataflow.id, attempt + 1, backoff,
-                        )
-                        limiter.backoff(backoff)
-                        continue
-                    raise
+                    ),
+                    label,
+                )
             records: list[IndicatorObservationRecord] = []
             for obs in observations:
                 fam_id = family_lookup.get(("oecd", obs.series_id)) if family_lookup else None

@@ -7,7 +7,7 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 import requests
 
@@ -52,6 +52,17 @@ def _normalize_date(raw: str) -> str:
         return f"{raw}-01-01"
 
     return raw
+
+
+def _build_decade_chunks(start_year: int, end_year: int) -> list[tuple[str, str]]:
+    """Split a year range into decade-sized chunks for OECD time-range queries."""
+    chunks: list[tuple[str, str]] = []
+    year = start_year
+    while year <= end_year:
+        chunk_end = min(year + 9, end_year)
+        chunks.append((str(year), str(chunk_end)))
+        year = chunk_end + 1
+    return chunks
 
 
 def _pick_localized_xml_text(parent: ET.Element, tag: str) -> str:
@@ -540,6 +551,125 @@ class OECDClient:
             end_period=end_period,
             limit=limit,
         )
+
+    def fetch_dataset_chunked(
+        self,
+        dataflow_id: str,
+        *,
+        agency_id: str = DEFAULT_AGENCY_ID,
+        version: str | None = None,
+        key: str = "all",
+        filters: Mapping[str, str | Sequence[str]] | None = None,
+        use_defaults: bool = False,
+        series_id: str | None = None,
+        limit: int | None = None,
+        chunk_ranges: Sequence[tuple[str, str]] | None = None,
+        obs_threshold: int = 1_000_000,
+        on_chunk: Callable[[list[OECDObservation], str, str], None] | None = None,
+    ) -> list[OECDObservation]:
+        """Fetch a dataset with automatic time-range chunking for large cubes.
+
+        If ``chunk_ranges`` is given, those explicit (start, end) pairs are
+        used.  Otherwise, an initial probe (``limit=1``) estimates dataset
+        size; if the estimated observation count exceeds ``obs_threshold``
+        the request is split into decade-sized windows automatically.
+
+        ``on_chunk`` is called after each chunk with (observations, start, end)
+        for streaming / progress reporting.
+        """
+        resolved_key = self._resolve_key(
+            dataflow_id,
+            agency_id=agency_id,
+            version=version or "latest",
+            key=key,
+            filters=filters,
+            use_defaults=use_defaults,
+        )
+
+        if chunk_ranges is None:
+            chunk_ranges = self._auto_chunk_ranges(
+                dataflow_id,
+                agency_id=agency_id,
+                version=version,
+                key=resolved_key,
+                obs_threshold=obs_threshold,
+            )
+
+        if not chunk_ranges:
+            return self.fetch_data(
+                dataflow_id,
+                agency_id=agency_id,
+                version=version,
+                key=resolved_key,
+                series_id=series_id,
+                limit=limit,
+            )
+
+        all_obs: list[OECDObservation] = []
+        for start_period, end_period in chunk_ranges:
+            logger.info(
+                "OECD chunked fetch %s/%s [%s – %s]",
+                agency_id, dataflow_id, start_period, end_period,
+            )
+            chunk = self.fetch_data(
+                dataflow_id,
+                agency_id=agency_id,
+                version=version,
+                key=resolved_key,
+                series_id=series_id,
+                start_period=start_period,
+                end_period=end_period,
+                limit=limit,
+            )
+            all_obs.extend(chunk)
+            if on_chunk is not None:
+                on_chunk(chunk, start_period, end_period)
+        return all_obs
+
+    def _auto_chunk_ranges(
+        self,
+        dataflow_id: str,
+        *,
+        agency_id: str,
+        version: str | None,
+        key: str,
+        obs_threshold: int,
+    ) -> list[tuple[str, str]] | None:
+        """Probe the dataset and return chunk ranges if it exceeds the threshold."""
+        probe = self._get_data_json(
+            dataflow_id,
+            agency_id=agency_id,
+            version=version,
+            key=key,
+            limit=1,
+        )
+        inner = probe.get("data", probe)
+        datasets = inner.get("dataSets", [])
+        if not datasets:
+            return None
+
+        total_series = sum(len(ds.get("series", {})) for ds in datasets)
+        if total_series == 0:
+            total_series = sum(len(ds.get("observations", {})) for ds in datasets)
+
+        obs_dims = inner.get("structures", [{}])[0].get("dimensions", {}).get("observation", [])
+        time_dim_size = 1
+        for dim in obs_dims:
+            if dim.get("id") == "TIME_PERIOD":
+                time_dim_size = max(len(dim.get("values", [])), 1)
+                break
+
+        estimated_obs = total_series * time_dim_size
+        logger.info(
+            "OECD probe %s: ~%d series × %d time periods ≈ %d obs (threshold=%d)",
+            dataflow_id, total_series, time_dim_size, estimated_obs, obs_threshold,
+        )
+
+        if estimated_obs <= obs_threshold:
+            return None
+
+        current_year = date.today().year
+        return _build_decade_chunks(1960, current_year)
 
     def get_data(
         self,
