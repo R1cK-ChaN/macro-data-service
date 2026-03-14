@@ -3,12 +3,14 @@
 These tests verify DATA COMPLETENESS against the live World Bank API,
 not just code mechanics.  They confirm:
 
-1. Source completeness   — fetched count == API total
-2. Topic completeness    — fetched count == API total
-3. Country completeness  — fetched count == API total
+1. Source completeness    — fetched count == API total
+2. Topic completeness     — fetched count == API total
+3. Country completeness   — fetched count == API total
 4. Indicator completeness — fetched count == API total (full catalog)
 5. Pagination correctness — no truncation across all endpoints
-6. Series consistency     — sampled indicator data matches API exactly
+6. Series row accounting  — raw_fetched == API total,
+                            parsed + null_filtered == raw_fetched
+7. Series hash consistency — SHA-256(client data) == SHA-256(raw API data)
 
 Run with:
     pytest tests/test_worldbank_data_validation.py -v -s
@@ -18,7 +20,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import random
 import sys
 import time
 from pathlib import Path
@@ -72,21 +73,9 @@ def _api_fetch_all(endpoint: str, *, per_page: int = 1000) -> tuple[list[dict], 
     return all_records, api_total
 
 
-def _hash_series(rows: list[dict]) -> str:
-    """Deterministic hash of a series for consistency checking."""
-    # Normalize: sort by date, keep only (date, value, country) tuples
-    normalized = []
-    for row in rows:
-        val = row.get("value")
-        if val is None:
-            continue
-        normalized.append({
-            "date": row.get("date", ""),
-            "value": float(val),
-            "country": (row.get("country") or {}).get("id", ""),
-        })
-    normalized.sort(key=lambda r: (r["country"], r["date"]))
-    return hashlib.sha256(json.dumps(normalized, sort_keys=True).encode()).hexdigest()
+def _count_null_values(records: list[dict]) -> int:
+    """Count records where value is None."""
+    return sum(1 for r in records if r.get("value") is None)
 
 
 @pytest.fixture(scope="module")
@@ -131,9 +120,8 @@ class TestTopicCompleteness:
         fetched = len(topics)
 
         print(f"\n  Topics — API total: {api_total}, fetched: {fetched}")
-        # Topics endpoint reports total including blank entries;
-        # our parser skips entries without id/name, so fetched <= api_total
-        # is acceptable, but fetched should be close
+        # Topics endpoint may report total including blank entries;
+        # our parser skips entries without id/name
         assert fetched >= api_total - 5, (
             f"Topic completeness FAILED: fetched {fetched}, API reports {api_total}"
         )
@@ -234,10 +222,9 @@ class TestPaginationCorrectness:
 
 
 # ============================================================================
-# Test 6 — Series data consistency (sampled)
+# Test 6 — Series row accounting (exact)
 # ============================================================================
 
-# Well-known indicators with data for most countries and long time series
 SAMPLE_INDICATORS = [
     ("SP.POP.TOTL", "Population, total"),
     ("NY.GDP.MKTP.CD", "GDP (current US$)"),
@@ -249,49 +236,73 @@ SAMPLE_INDICATORS = [
 SAMPLE_COUNTRIES = ["USA", "CHN", "GBR"]
 
 
-class TestSeriesConsistency:
-    """Verify data fetched through the client matches the raw API exactly."""
+class TestSeriesRowAccounting:
+    """Exact row accounting: raw_fetched == API total, parsed + nulls == raw_fetched."""
 
     @pytest.mark.parametrize(
         "indicator_code,indicator_name",
         SAMPLE_INDICATORS,
         ids=[code for code, _ in SAMPLE_INDICATORS],
     )
-    def test_indicator_observation_count_matches_api(
+    def test_exact_row_accounting_for_indicator(
         self, wb_client: WorldBankClient, indicator_code: str, indicator_name: str,
     ) -> None:
-        """For each sample indicator, verify fetched count == API total for USA."""
-        api_total = wb_client.count_indicator_observations(indicator_code, "USA")
-        observations = wb_client.get_indicator(
+        """For each indicator:
+        1. raw_fetched == api_total  (pagination complete)
+        2. parsed + null_filtered == raw_fetched  (no silent drops)
+        """
+        # Step 1: fetch raw records (including nulls) with API total
+        raw_records, api_total = wb_client.fetch_indicator_raw(
             indicator_code, "USA",
-            series_id="validation",
+        )
+        raw_fetched = len(raw_records)
+
+        # Step 2: count nulls in raw
+        null_count = _count_null_values(raw_records)
+        no_date_count = sum(1 for r in raw_records if not r.get("date"))
+
+        # Step 3: fetch parsed (non-null) observations through client
+        parsed_obs = wb_client.get_indicator(
+            indicator_code, "USA",
+            series_id="accounting",
             fetch_all_pages=True,
         )
-        # Note: observations with value=None are skipped by our parser,
-        # so fetched <= api_total.  But fetched should be > 0.
+        parsed_count = len(parsed_obs)
+
+        filtered_total = null_count + no_date_count
+
         print(
-            f"\n  {indicator_code} ({indicator_name}) USA — "
-            f"API total: {api_total}, fetched (non-null): {len(observations)}"
-        )
-        if api_total == 0:
-            # Indicator discontinued or no data for this country — valid
-            assert len(observations) == 0, (
-                f"{indicator_code}: API reports 0 but we fetched {len(observations)}"
-            )
-            return
-        assert len(observations) > 0, (
-            f"No observations for {indicator_code} USA (API reports {api_total})"
-        )
-        # Fetched non-null should be a reasonable fraction of API total
-        # (some rows have value=None which we correctly skip)
-        coverage = len(observations) / api_total
-        assert coverage >= 0.3, (
-            f"{indicator_code}: only {coverage:.0%} coverage "
-            f"({len(observations)}/{api_total})"
+            f"\n  {indicator_code} ({indicator_name}) USA:"
+            f"\n    API total:     {api_total}"
+            f"\n    Raw fetched:   {raw_fetched}"
+            f"\n    Null values:   {null_count}"
+            f"\n    No date:       {no_date_count}"
+            f"\n    Parsed (used): {parsed_count}"
+            f"\n    Accounting:    {parsed_count} + {filtered_total} = {parsed_count + filtered_total}"
         )
 
-    def test_multi_country_data_hash_consistency(self, wb_client: WorldBankClient) -> None:
-        """Fetch SP.POP.TOTL for 3 countries via client and raw API; hashes must match."""
+        # Assertion 1: pagination fetched ALL rows the API claims to have
+        assert raw_fetched == api_total, (
+            f"PAGINATION TRUNCATION: raw_fetched={raw_fetched} != api_total={api_total}"
+        )
+
+        # Assertion 2: every raw row is accounted for (parsed or filtered)
+        assert parsed_count + filtered_total == raw_fetched, (
+            f"ROW LEAK: parsed({parsed_count}) + filtered({filtered_total}) "
+            f"!= raw({raw_fetched}). "
+            f"Unaccounted rows: {raw_fetched - parsed_count - filtered_total}"
+        )
+
+
+# ============================================================================
+# Test 7 — Series hash consistency
+# ============================================================================
+
+class TestSeriesHashConsistency:
+    """SHA-256 hash of client-parsed data must match raw API data exactly."""
+
+    def test_multi_country_data_hash_matches(self, wb_client: WorldBankClient) -> None:
+        """Fetch SP.POP.TOTL for 3 countries; client hash == raw API hash."""
         indicator = "SP.POP.TOTL"
         country_str = ";".join(SAMPLE_COUNTRIES)
 
@@ -314,7 +325,7 @@ class TestSeriesConsistency:
         ]
         client_rows.sort(key=lambda r: (r["country"], r["date"]))
 
-        # Build comparable dicts from raw records (skip null values)
+        # Build comparable dicts from raw records (skip null values — same as client)
         raw_rows = []
         for rec in raw_records:
             val = rec.get("value")
@@ -330,19 +341,39 @@ class TestSeriesConsistency:
         raw_hash = hashlib.sha256(json.dumps(raw_rows, sort_keys=True).encode()).hexdigest()
         client_hash = hashlib.sha256(json.dumps(client_rows, sort_keys=True).encode()).hexdigest()
 
-        print(
-            f"\n  SP.POP.TOTL hash check — "
-            f"raw rows: {len(raw_rows)}, client rows: {len(client_rows)}"
-        )
-        print(f"  Raw hash:    {raw_hash[:16]}...")
-        print(f"  Client hash: {client_hash[:16]}...")
+        raw_nulls = _count_null_values(raw_records)
 
-        assert len(client_rows) == len(raw_rows), (
-            f"Row count mismatch: client={len(client_rows)}, raw={len(raw_rows)}"
+        print(
+            f"\n  SP.POP.TOTL hash check:"
+            f"\n    API total:       {api_total}"
+            f"\n    Raw records:     {len(raw_records)}"
+            f"\n    Raw nulls:       {raw_nulls}"
+            f"\n    Raw non-null:    {len(raw_rows)}"
+            f"\n    Client parsed:   {len(client_rows)}"
+            f"\n    Raw hash:        {raw_hash[:16]}..."
+            f"\n    Client hash:     {client_hash[:16]}..."
         )
+
+        # Row counts must match
+        assert len(raw_records) == api_total, (
+            f"Raw pagination incomplete: {len(raw_records)} != {api_total}"
+        )
+        assert len(client_rows) == len(raw_rows), (
+            f"Row count mismatch: client={len(client_rows)}, raw_non_null={len(raw_rows)}"
+        )
+
+        # Hashes must match
         assert client_hash == raw_hash, (
             "Data hash mismatch — client parsed data differs from raw API"
         )
+
+
+# ============================================================================
+# Test 8 — Coverage depth
+# ============================================================================
+
+class TestCoverageDepth:
+    """Verify time and country coverage dimensions."""
 
     def test_year_coverage_for_population(self, wb_client: WorldBankClient) -> None:
         """SP.POP.TOTL for USA should have data from at least 1960-2023."""
@@ -372,65 +403,76 @@ class TestSeriesConsistency:
 
 
 # ============================================================================
-# Validation report (run as a single test)
+# Validation report
 # ============================================================================
 
 class TestValidationReport:
-    """Produce a human-readable validation report."""
+    """Produce a human-readable validation report with exact row accounting."""
 
     def test_full_validation_report(self, wb_client: WorldBankClient) -> None:
-        """Print a complete ingestion validation report."""
-        report_lines = ["\n" + "=" * 60, "  World Bank Ingestion Validation Report", "=" * 60]
+        report_lines = ["\n" + "=" * 70, "  World Bank Ingestion Validation Report", "=" * 70]
 
-        # Sources
+        # Catalog completeness
+        checks: list[tuple[str, int, int]] = []
+
         api_src = wb_client.count_sources()
         fetched_src = len(wb_client.list_sources())
-        src_ok = fetched_src == api_src
-        report_lines.append(f"\n  Sources:      API={api_src:>6}  Fetched={fetched_src:>6}  {'PASS' if src_ok else 'FAIL'}")
+        checks.append(("Sources", api_src, fetched_src))
 
-        # Topics
         api_top = wb_client.count_topics()
         fetched_top = len(wb_client.list_topics())
-        top_ok = fetched_top >= api_top - 5
-        report_lines.append(f"  Topics:       API={api_top:>6}  Fetched={fetched_top:>6}  {'PASS' if top_ok else 'FAIL'}")
+        checks.append(("Topics", api_top, fetched_top))
 
-        # Countries
         api_cty = wb_client.count_countries()
         fetched_cty = len(wb_client.list_countries())
-        cty_ok = fetched_cty == api_cty
-        report_lines.append(f"  Countries:    API={api_cty:>6}  Fetched={fetched_cty:>6}  {'PASS' if cty_ok else 'FAIL'}")
+        checks.append(("Countries", api_cty, fetched_cty))
 
-        # Indicators (full catalog)
         api_ind = wb_client.count_indicators()
         fetched_ind = len(wb_client.list_indicators())
-        ind_ok = fetched_ind == api_ind
-        report_lines.append(f"  Indicators:   API={api_ind:>6}  Fetched={fetched_ind:>6}  {'PASS' if ind_ok else 'FAIL'}")
+        checks.append(("Indicators", api_ind, fetched_ind))
 
-        # Sample series tests
-        report_lines.append(f"\n  Series sampling ({len(SAMPLE_INDICATORS)} indicators):")
-        series_pass = 0
+        report_lines.append("\n  Catalog completeness:")
+        catalog_ok = True
+        for label, api, fetched in checks:
+            ok = fetched == api or (label == "Topics" and fetched >= api - 5)
+            if not ok:
+                catalog_ok = False
+            report_lines.append(
+                f"    {label:<14} API={api:>6}  Fetched={fetched:>6}  {'PASS' if ok else 'FAIL'}"
+            )
+
+        # Series row accounting
+        report_lines.append(f"\n  Series row accounting ({len(SAMPLE_INDICATORS)} indicators, USA):")
+        report_lines.append(
+            f"    {'Indicator':<25} {'API':>5} {'Raw':>5} {'Null':>5} {'Parsed':>6} {'Accounted':>9}  Status"
+        )
+        series_ok = True
         for code, name in SAMPLE_INDICATORS:
-            api_obs = wb_client.count_indicator_observations(code, "USA")
-            client_obs = wb_client.get_indicator(
+            raw_records, api_total = wb_client.fetch_indicator_raw(code, "USA")
+            raw_fetched = len(raw_records)
+            null_count = _count_null_values(raw_records)
+            parsed_obs = wb_client.get_indicator(
                 code, "USA", series_id="report", fetch_all_pages=True,
             )
-            if api_obs == 0:
-                ok = len(client_obs) == 0
-            else:
-                ok = len(client_obs) > 0 and len(client_obs) / api_obs >= 0.3
+            parsed_count = len(parsed_obs)
+
+            pagination_ok = raw_fetched == api_total
+            accounting_ok = parsed_count + null_count == raw_fetched
+            ok = pagination_ok and accounting_ok
+
+            if not ok:
+                series_ok = False
+
             status = "PASS" if ok else "FAIL"
-            if ok:
-                series_pass += 1
             report_lines.append(
-                f"    {code:<25} API={api_obs:>5}  Fetched={len(client_obs):>5}  {status}"
+                f"    {code:<25} {api_total:>5} {raw_fetched:>5} {null_count:>5} {parsed_count:>6} "
+                f"{parsed_count + null_count:>5}/{raw_fetched:<5} {status}"
             )
             time.sleep(0.3)
 
-        report_lines.append(f"\n  Series: {series_pass}/{len(SAMPLE_INDICATORS)} passed")
-
-        all_pass = src_ok and top_ok and cty_ok and ind_ok and series_pass == len(SAMPLE_INDICATORS)
+        all_pass = catalog_ok and series_ok
         report_lines.append(f"\n  Overall: {'ALL PASS' if all_pass else 'FAILURES DETECTED'}")
-        report_lines.append("=" * 60)
+        report_lines.append("=" * 70)
 
         print("\n".join(report_lines))
         assert all_pass, "Validation report has failures — see output above"

@@ -466,6 +466,22 @@ class WorldBankClient:
             response.json(), series_id=series_id, indicator=indicator_code, limit=limit,
         )
 
+    def fetch_indicator_raw(
+        self,
+        indicator_code: str,
+        country: str = "all",
+        *,
+        per_page: int = 1000,
+    ) -> tuple[list[dict], int]:
+        """Fetch all raw records for an indicator (including null values).
+
+        Returns ``(raw_records, api_total)`` for data validation.
+        Every row the API claims to have is returned, whether
+        ``value`` is ``null`` or not.
+        """
+        url = f"{self.BASE_URL}/country/{country}/indicator/{indicator_code}"
+        return self._get_all_pages_with_total(url, per_page=per_page)
+
     def fetch_indicator_bulk(
         self,
         indicator_code: str,
