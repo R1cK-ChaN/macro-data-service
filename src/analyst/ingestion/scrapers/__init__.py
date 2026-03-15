@@ -25,6 +25,17 @@ from .eurostat import (
     EurostatSizeEstimate,
     EurostatStructureSummary,
 )
+from .ilo import (
+    ILOAPIError,
+    ILOClient,
+    ILODataStructure,
+    ILODataflow,
+    ILODimension,
+    ILOObservation,
+    ILORateLimitError,
+    ILOSizeEstimate,
+    ILOStructureSummary,
+)
 from .forexfactory import ForexFactoryCalendarClient, ForexFactoryNewsClient
 from .fred import FredClient, FredObservation, FredVintageObservation
 from .imf import IMFClient, IMFObservation, IMFVintageObservation
@@ -107,6 +118,14 @@ __all__ = [
     "EurostatSizeEstimate",
     "EurostatStructureSummary",
     "FTArticle",
+    "ILOAPIError",
+    "ILODataStructure",
+    "ILODataflow",
+    "ILODimension",
+    "ILOObservation",
+    "ILORateLimitError",
+    "ILOSizeEstimate",
+    "ILOStructureSummary",
     "FedMeetingProbability",
     "FedRateProbability",
     "FredObservation",
@@ -175,6 +194,7 @@ __all__ = [
     "EIAClient",
     "EurostatClient",
     "FredClient",
+    "ILOClient",
     "IMFClient",
     "OECDClient",
     "TreasuryFiscalClient",
