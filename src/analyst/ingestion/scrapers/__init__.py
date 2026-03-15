@@ -37,7 +37,13 @@ from .ilo import (
     ILOStructureSummary,
 )
 from .forexfactory import ForexFactoryCalendarClient, ForexFactoryNewsClient
-from .fred import FredClient, FredObservation, FredVintageObservation
+from .fred import (
+    FredAPIError,
+    FredClient,
+    FredObservation,
+    FredRateLimitError,
+    FredVintageObservation,
+)
 from .imf import IMFClient, IMFObservation, IMFVintageObservation
 from .investing import InvestingCalendarClient, InvestingNewsClient
 from .oecd import (
@@ -128,7 +134,9 @@ __all__ = [
     "ILOStructureSummary",
     "FedMeetingProbability",
     "FedRateProbability",
+    "FredAPIError",
     "FredObservation",
+    "FredRateLimitError",
     "FredVintageObservation",
     "GovReportClient",
     "GovReportItem",

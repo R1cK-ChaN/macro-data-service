@@ -13,6 +13,26 @@ from analyst.env import get_env_value
 logger = logging.getLogger(__name__)
 
 
+class FredAPIError(RuntimeError):
+    """Base error for FRED/ALFRED API failures."""
+
+
+class FredRateLimitError(FredAPIError):
+    """Raised when FRED throttles a request (HTTP 429)."""
+
+
+def _raise_for_status(response: requests.Response) -> None:
+    """Convert HTTP errors to FredAPIError/FredRateLimitError."""
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        if response.status_code == 429:
+            raise FredRateLimitError(f"FRED rate limit: {exc}") from exc
+        raise FredAPIError(
+            f"FRED API error {response.status_code}: {exc}"
+        ) from exc
+
+
 @dataclass(frozen=True)
 class FredObservation:
     """A single observation from FRED."""
@@ -65,7 +85,7 @@ class FredClient:
             },
             timeout=30,
         )
-        response.raise_for_status()
+        _raise_for_status(response)
         payload = response.json()
         observations: list[FredObservation] = []
         for obs in payload.get("observations", []):
@@ -94,7 +114,7 @@ class FredClient:
             },
             timeout=30,
         )
-        response.raise_for_status()
+        _raise_for_status(response)
         seriess = response.json().get("seriess", [])
         return seriess[0] if seriess else {}
 
@@ -112,7 +132,7 @@ class FredClient:
             },
             timeout=30,
         )
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json().get("seriess", [])
 
     # -- ALFRED methods (vintage/revision history) ---------------------------
@@ -122,31 +142,31 @@ class FredClient:
         series_id: str,
         *,
         start_date: str,
-        vintage_dates: str | None = None,
+        realtime_start: str = "1776-07-04",
+        realtime_end: str = "9999-12-31",
     ) -> list[FredVintageObservation]:
         """Fetch all vintage observations for a series.
 
-        Uses FRED's ``output_type=2`` (vintage dates) to retrieve the full
+        Uses FRED's real-time period parameters to retrieve the full
         revision history: each observation_date may appear multiple times with
-        different vintage_dates showing how the value was revised.
+        different ``realtime_start`` values showing how the value was revised.
         """
         if not self.api_key:
             return []
         params: dict = {
             "series_id": series_id,
             "observation_start": start_date,
-            "output_type": 2,
+            "realtime_start": realtime_start,
+            "realtime_end": realtime_end,
             "api_key": self.api_key,
             "file_type": "json",
         }
-        if vintage_dates:
-            params["vintage_dates"] = vintage_dates
         response = self.session.get(
             f"{self.BASE_URL}/series/observations",
             params=params,
             timeout=30,
         )
-        response.raise_for_status()
+        _raise_for_status(response)
         payload = response.json()
         observations: list[FredVintageObservation] = []
         for obs in payload.get("observations", []):
@@ -181,13 +201,14 @@ class FredClient:
                 "series_id": series_id,
                 "observation_start": observation_date,
                 "observation_end": observation_date,
-                "output_type": 2,
+                "realtime_start": "1776-07-04",
+                "realtime_end": "9999-12-31",
                 "api_key": self.api_key,
                 "file_type": "json",
             },
             timeout=30,
         )
-        response.raise_for_status()
+        _raise_for_status(response)
         payload = response.json()
         revisions: list[FredVintageObservation] = []
         for obs in payload.get("observations", []):
@@ -203,3 +224,75 @@ class FredClient:
             except (KeyError, ValueError, TypeError):
                 continue
         return revisions
+
+    # -- Catalog browsing methods ---------------------------------------------
+
+    def get_categories(self, category_id: int = 0) -> list[dict]:
+        """Fetch child categories for a given category (default: root)."""
+        if not self.api_key:
+            return []
+        response = self.session.get(
+            f"{self.BASE_URL}/category/children",
+            params={
+                "category_id": category_id,
+                "api_key": self.api_key,
+                "file_type": "json",
+            },
+            timeout=30,
+        )
+        _raise_for_status(response)
+        return response.json().get("categories", [])
+
+    def get_category_series(
+        self, category_id: int, *, limit: int = 1000,
+    ) -> list[dict]:
+        """Fetch series belonging to a category."""
+        if not self.api_key:
+            return []
+        response = self.session.get(
+            f"{self.BASE_URL}/category/series",
+            params={
+                "category_id": category_id,
+                "limit": limit,
+                "api_key": self.api_key,
+                "file_type": "json",
+            },
+            timeout=30,
+        )
+        _raise_for_status(response)
+        return response.json().get("seriess", [])
+
+    def get_releases(self, *, limit: int = 1000) -> list[dict]:
+        """Fetch all FRED releases."""
+        if not self.api_key:
+            return []
+        response = self.session.get(
+            f"{self.BASE_URL}/releases",
+            params={
+                "limit": limit,
+                "api_key": self.api_key,
+                "file_type": "json",
+            },
+            timeout=30,
+        )
+        _raise_for_status(response)
+        return response.json().get("releases", [])
+
+    def get_release_series(
+        self, release_id: int, *, limit: int = 1000,
+    ) -> list[dict]:
+        """Fetch series belonging to a release."""
+        if not self.api_key:
+            return []
+        response = self.session.get(
+            f"{self.BASE_URL}/release/series",
+            params={
+                "release_id": release_id,
+                "limit": limit,
+                "api_key": self.api_key,
+                "file_type": "json",
+            },
+            timeout=30,
+        )
+        _raise_for_status(response)
+        return response.json().get("seriess", [])
