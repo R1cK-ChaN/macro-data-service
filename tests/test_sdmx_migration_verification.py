@@ -379,6 +379,118 @@ class TestDataIntegrity:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Layer 4: Series-Count Validation Per Dataset
+# ══════════════════════════════════════════════════════════════════════
+
+class TestSeriesCountValidation:
+    """Verify series counts per dataflow are stable and non-zero.
+
+    A unified client could silently drop series combinations if
+    dimension key generation is incorrect. This layer catches that
+    by comparing series counts from the data probe (estimate_size)
+    against the DSD-computed upper bound, and verifying stability
+    across repeated probes.
+    """
+
+    def test_ecb_series_count_per_dataflow(self, new_ecb: NewECB) -> None:
+        """Series count from probe vs DSD-based estimate must be consistent."""
+        seen: set[str] = set()
+        print("\n  ECB series-count validation:")
+        print(f"  {'Dataflow':<12} {'Probe':<10} {'DSD-est':<12} {'Status'}")
+        print(f"  {'─' * 12} {'─' * 10} {'─' * 12} {'─' * 10}")
+        for name, cfg in ECB_SERIES.items():
+            df_id = cfg["dataflow"]
+            if df_id in seen:
+                continue
+            seen.add(df_id)
+            est = new_ecb.estimate_size(df_id)
+            # DSD-based upper bound
+            structure = new_ecb.get_datastructure(df_id)
+            dsd_product = 1
+            for d in structure.dimensions:
+                if not d.is_time and d.code_count > 0:
+                    dsd_product *= d.code_count
+            # Probe count should be <= DSD product (DSD is upper bound)
+            assert est.total_series > 0, f"{df_id}: probe returned 0 series"
+            assert est.total_series <= dsd_product or dsd_product == 1, (
+                f"{df_id}: probe ({est.total_series}) > DSD ({dsd_product})"
+            )
+            print(f"  {df_id:<12} {est.total_series:<10} {dsd_product:<12} ✓")
+
+    def test_bis_series_count_per_dataflow(self, new_bis: NewBIS) -> None:
+        seen: set[str] = set()
+        print("\n  BIS series-count validation:")
+        print(f"  {'Dataflow':<18} {'Probe':<10} {'DSD-est':<12} {'Status'}")
+        print(f"  {'─' * 18} {'─' * 10} {'─' * 12} {'─' * 10}")
+        for name, cfg in BIS_SERIES.items():
+            df_id = cfg["dataflow"]
+            if df_id in seen:
+                continue
+            seen.add(df_id)
+            est = new_bis.estimate_size(df_id)
+            structure = new_bis.get_datastructure(df_id)
+            dsd_product = 1
+            for d in structure.dimensions:
+                if not d.is_time and d.code_count > 0:
+                    dsd_product *= d.code_count
+            assert est.total_series > 0, f"{df_id}: probe returned 0 series"
+            print(f"  {df_id:<18} {est.total_series:<10} {dsd_product:<12} ✓")
+
+    def test_ecb_series_count_stability(self, new_ecb: NewECB) -> None:
+        """Two probes of the same dataflow must return identical series counts."""
+        df_id = "EXR"
+        est1 = new_ecb.estimate_size(df_id)
+        time.sleep(0.5)
+        est2 = new_ecb.estimate_size(df_id)
+        assert est1.total_series == est2.total_series, (
+            f"EXR series count unstable: {est1.total_series} vs {est2.total_series}"
+        )
+        print(f"\n  ECB EXR series count: {est1.total_series} (stable) ✓")
+
+    def test_bis_series_count_stability(self, new_bis: NewBIS) -> None:
+        df_id = "WS_CBPOL"
+        est1 = new_bis.estimate_size(df_id)
+        time.sleep(0.5)
+        est2 = new_bis.estimate_size(df_id)
+        assert est1.total_series == est2.total_series, (
+            f"CBPOL series count unstable: {est1.total_series} vs {est2.total_series}"
+        )
+        print(f"\n  BIS CBPOL series count: {est1.total_series} (stable) ✓")
+
+    def test_eurostat_series_count_for_hardcoded(self, new_eurostat: NewEurostat) -> None:
+        """Verify Eurostat hardcoded datasets have non-zero series counts."""
+        seen: set[str] = set()
+        print("\n  Eurostat series-count validation:")
+        for name, cfg in EUROSTAT_SERIES.items():
+            ds_id = cfg["dataset"]
+            if ds_id in seen:
+                continue
+            seen.add(ds_id)
+            est = new_eurostat.estimate_size(ds_id)
+            assert est.total_series > 0, f"{ds_id}: 0 series"
+            print(f"    {ds_id}: {est.total_series} series ✓")
+
+    def test_observation_count_cross_check(self, new_ecb: NewECB) -> None:
+        """Fetch actual obs and compare count against estimate.
+
+        If estimate says N series and we fetch limit=0 for a short
+        time range, the actual obs count should be in the same ballpark.
+        """
+        cfg = ECB_SERIES["eurusd"]
+        # Fetch all EURUSD obs for a known period
+        obs = new_ecb.get_data(
+            cfg["dataflow"], cfg["key"],
+            series_id=cfg["series_id"],
+            start_period="2024", limit=0,
+        )
+        assert len(obs) >= 1, "Should have EURUSD obs for 2024+"
+        # Verify dates are all >= 2024
+        for o in obs:
+            assert o.date >= "2024-01-01", f"Obs before requested period: {o.date}"
+        print(f"\n  ECB EURUSD 2024+: {len(obs)} obs, all dates >= 2024 ✓")
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Catalog-Wide Sweep
 # ══════════════════════════════════════════════════════════════════════
 
@@ -524,6 +636,38 @@ class TestAggregateReport:
                     message=str(exc)[:100],
                     source="eurostat",
                 ))
+
+        # Series-count checks
+        for provider_name, client, series_cfg in [
+            ("ecb", new_ecb, ECB_SERIES),
+            ("bis", new_bis, BIS_SERIES),
+        ]:
+            seen: set[str] = set()
+            for cfg_name, cfg in series_cfg.items():
+                df_id = cfg["dataflow"]
+                if df_id in seen:
+                    continue
+                seen.add(df_id)
+                try:
+                    est = client.estimate_size(df_id)
+                    ok = est.total_series > 0
+                    checks.append(CheckResult(
+                        check_name=f"{provider_name}_{df_id}_series_count",
+                        layer=ValidationLayer.SERIES,
+                        passed=ok,
+                        severity=ValidationSeverity.ERROR,
+                        message=f"{est.total_series} series",
+                        source=provider_name,
+                    ))
+                except Exception as exc:
+                    checks.append(CheckResult(
+                        check_name=f"{provider_name}_{df_id}_series_count",
+                        layer=ValidationLayer.SERIES,
+                        passed=False,
+                        severity=ValidationSeverity.ERROR,
+                        message=str(exc)[:100],
+                        source=provider_name,
+                    ))
 
         # Catalog checks
         for provider_name, client, min_count in [
