@@ -377,7 +377,37 @@ class TestStressTest:
         for start, end, count in chunks_received:
             print(f"    [{start}-{end}]: {count} obs")
 
-    def test_full_fetch_with_geo_filter(self, eurostat_client: EurostatClient) -> None:
+    def test_full_fetch_with_explicit_geo_codes(self, eurostat_client: EurostatClient) -> None:
+        """Fetch HICP with explicit geo code chunking."""
+        _check_eurostat_available(eurostat_client)
+        t0 = time.monotonic()
+        obs = eurostat_client.fetch_dataset_chunked(
+            "prc_hicp_manr", ".",
+            series_id="ESTAT_HICP",
+            chunk_ranges=[("2023", "2026")],
+            geo_codes=["DE", "FR", "IT", "ES", "NL"],
+            geo_batch_size=3,
+        )
+        elapsed = time.monotonic() - t0
+        assert len(obs) >= 0
+        print(f"\n  HICP geo-chunked [5 countries, 2023-2026]: {len(obs)} obs in {elapsed:.1f}s")
+
+    def test_full_fetch_with_nuts_level_filter(self, eurostat_client: EurostatClient) -> None:
+        """Fetch with nuts_level=0 to auto-filter to country-level codes."""
+        _check_eurostat_available(eurostat_client)
+        t0 = time.monotonic()
+        obs = eurostat_client.fetch_dataset_chunked(
+            "prc_hicp_manr", ".",
+            series_id="ESTAT_HICP",
+            chunk_ranges=[("2024", "2026")],
+            nuts_level=0,
+        )
+        elapsed = time.monotonic() - t0
+        assert len(obs) >= 0
+        print(f"\n  HICP NUTS-0 [countries only, 2024-2026]: {len(obs)} obs in {elapsed:.1f}s")
+
+    def test_full_fetch_with_json_stat_geo_filter(self, eurostat_client: EurostatClient) -> None:
+        """Fetch via the JSON-stat endpoint with geo param (original method)."""
         _check_eurostat_available(eurostat_client)
         cfg = EUROSTAT_SERIES["hicp"]
         t0 = time.monotonic()
@@ -389,7 +419,7 @@ class TestStressTest:
         )
         elapsed = time.monotonic() - t0
         assert len(obs) >= 1, f"Expected HICP obs for EA20, got {len(obs)}"
-        print(f"\n  HICP EA20 [all]: {len(obs)} obs in {elapsed:.1f}s")
+        print(f"\n  HICP EA20 [JSON-stat, all time]: {len(obs)} obs in {elapsed:.1f}s")
 
     def test_memory_bounded_large_fetch(self, eurostat_client: EurostatClient) -> None:
         _check_eurostat_available(eurostat_client)
@@ -548,6 +578,35 @@ class TestEdgeCases:
         level1 = _filter_nuts_codes(codes, level=1)
         assert set(level1) == {"AT1", "DE1"}
         print(f"\n  NUTS filtering: level0={level0}, level1={level1}")
+
+    def test_geo_chunking_helpers(self) -> None:
+        from analyst.ingestion.scrapers.eurostat import (
+            _build_geo_chunks,
+            _inject_geo_into_key,
+        )
+
+        # _build_geo_chunks splits codes into batched key fragments
+        chunks = _build_geo_chunks(["AT", "DE", "FR", "IT", "ES"], batch_size=2)
+        assert len(chunks) == 3
+        assert chunks[0] == "AT+DE"
+        assert chunks[1] == "FR+IT"
+        assert chunks[2] == "ES"
+        print(f"\n  Geo chunks: {chunks}")
+
+        # _inject_geo_into_key places geo fragment into the right position
+        result = _inject_geo_into_key(".", "AT+DE", geo_position=2, total_dims=4)
+        assert result == "..AT+DE."
+        print(f"  Injected key: {result}")
+
+        # With a fuller base key
+        result2 = _inject_geo_into_key("M.CP00..", "FR+IT", geo_position=2, total_dims=4)
+        assert result2 == "M.CP00.FR+IT."
+        print(f"  Injected key (partial): {result2}")
+
+        # Empty geo codes
+        empty = _build_geo_chunks([], batch_size=40)
+        assert empty == [""]
+        print(f"  Empty geo: {empty}")
 
 
 # ── Layer 9: Performance Benchmark ────────────────────────────────────

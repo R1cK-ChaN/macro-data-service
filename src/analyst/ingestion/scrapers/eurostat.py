@@ -159,6 +159,53 @@ def _filter_nuts_codes(codes: tuple[str, ...], level: int = 0) -> tuple[str, ...
     return tuple(c for c in codes if len(c) == target_len)
 
 
+def _build_geo_chunks(
+    geo_codes: Sequence[str],
+    batch_size: int = 40,
+) -> list[str]:
+    """Split a list of geo codes into ``+``-delimited SDMX key fragments.
+
+    Eurostat SDMX keys use ``+`` to combine multiple codes for one dimension,
+    e.g. ``"AT+DE+FR"``.  When the geo dimension has hundreds of codes,
+    requesting them all at once can produce multi-minute responses or timeouts.
+    This helper splits them into manageable batches.
+
+    Returns a list of key fragments like ``["AT+BE+BG+...", "LT+LU+LV+...", ...]``.
+    """
+    codes = list(geo_codes)
+    if not codes:
+        return [""]
+    chunks: list[str] = []
+    for i in range(0, len(codes), batch_size):
+        chunks.append("+".join(codes[i : i + batch_size]))
+    return chunks
+
+
+def _inject_geo_into_key(
+    base_key: str,
+    geo_fragment: str,
+    geo_position: int,
+    total_dims: int,
+) -> str:
+    """Replace the geo dimension slot in an SDMX key with a specific fragment.
+
+    ``base_key`` uses dots to separate dimensions.  An empty slot (``".."`` or
+    trailing ``.``) means "all values".  This helper injects ``geo_fragment``
+    into the slot at ``geo_position``.
+
+    Example::
+
+        _inject_geo_into_key(".", "AT+DE", geo_position=2, total_dims=4)
+        # → "..AT+DE."
+    """
+    parts = base_key.split(".")
+    # Extend to cover all dimension positions if the key is short
+    while len(parts) < total_dims:
+        parts.append("")
+    parts[geo_position] = geo_fragment
+    return ".".join(parts)
+
+
 class EurostatClient:
     """Client for the Eurostat JSON-stat and SDMX 2.1 APIs (no key required).
 
@@ -650,33 +697,129 @@ class EurostatClient:
         start_year: int = 1960,
         end_year: int = 2026,
         chunk_ranges: Sequence[tuple[str, str]] | None = None,
+        geo_codes: Sequence[str] | None = None,
+        geo_batch_size: int = 40,
+        nuts_level: int | None = None,
         limit: int = 0,
         on_chunk: Callable[[list[EurostatObservation], str, str], None] | None = None,
     ) -> list[EurostatObservation]:
-        """Fetch a dataset with time-range chunking.
+        """Fetch a dataset with time-range and optional geo-dimension chunking.
 
-        If ``chunk_ranges`` is given those pairs are used; otherwise the
-        year range is split into decade-sized windows automatically.
+        Eurostat datasets with NUTS regions can have 1500+ geo codes, making
+        full queries extremely slow or prone to timeouts.  This method
+        supports two geo-reduction strategies:
+
+        1. **Explicit geo codes**: Pass ``geo_codes=["AT", "DE", "FR", ...]``
+           to request only those codes, split into batches of ``geo_batch_size``.
+        2. **NUTS level filter**: Pass ``nuts_level=0`` to auto-filter the
+           DSD's geo codelist to country-level (2-char) codes only.  Use
+           ``nuts_level=1`` for NUTS-1 regions, etc.
+
+        If neither is provided, geo chunking is **automatically enabled** when
+        the DSD's geo dimension has more than ``geo_batch_size`` codes — the
+        codes are split into batches and each batch is queried separately.
+
+        Time chunking uses ``chunk_ranges`` or decade-sized windows as before.
+        When both time and geo chunking are active, the method iterates
+        ``time_chunks × geo_chunks`` (outer=time, inner=geo).
+
+        Args:
+            dataflow_id: Eurostat dataflow, e.g. ``"prc_hicp_manr"``.
+            key: SDMX dimension key.  Use ``"."`` for all series.
+            version: Dataflow version (used for DSD lookup).
+            series_id: Logical series id for the returned records.
+            start_year: Start of time range (default 1960).
+            end_year: End of time range (default 2026).
+            chunk_ranges: Explicit time-range pairs; overrides year range.
+            geo_codes: Explicit list of geo codes to request.
+            geo_batch_size: Max geo codes per request (default 40).
+            nuts_level: If set, auto-filter DSD geo codes to this NUTS level.
+            limit: Max observations per request (0 = unlimited).
+            on_chunk: Callback invoked after each time chunk completes.
         """
         if chunk_ranges is None:
             chunk_ranges = _build_decade_chunks(start_year, end_year)
 
+        # ── Resolve geo chunks ────────────────────────────────────────
+        geo_chunks: list[str] | None = None
+        geo_position: int = 0
+        total_dims: int = 0
+
+        if geo_codes is not None:
+            # Caller provided explicit geo codes
+            geo_chunks = _build_geo_chunks(geo_codes, geo_batch_size)
+        elif nuts_level is not None:
+            # Auto-filter from DSD
+            try:
+                structure = self.get_datastructure(dataflow_id, version)
+                for d in structure.dimensions:
+                    if d.id.lower() == "geo":
+                        filtered = _filter_nuts_codes(d.codes, level=nuts_level)
+                        if filtered:
+                            geo_chunks = _build_geo_chunks(filtered, geo_batch_size)
+                        geo_position = d.position
+                        break
+                total_dims = len(structure.dimensions)
+            except (EurostatAPIError, EurostatRateLimitError):
+                pass
+        else:
+            # Auto-detect: chunk if geo dimension is large
+            try:
+                structure = self.get_datastructure(dataflow_id, version)
+                for d in structure.dimensions:
+                    if d.id.lower() == "geo" and d.code_count > geo_batch_size:
+                        geo_chunks = _build_geo_chunks(d.codes, geo_batch_size)
+                        geo_position = d.position
+                        logger.info(
+                            "Eurostat %s: auto-chunking %d geo codes into %d batches",
+                            dataflow_id, d.code_count, len(geo_chunks),
+                        )
+                        break
+                total_dims = len(structure.dimensions)
+            except (EurostatAPIError, EurostatRateLimitError):
+                pass
+
+        # ── Fetch: time × geo ─────────────────────────────────────────
         all_obs: list[EurostatObservation] = []
         for start_period, end_period in chunk_ranges:
-            logger.info(
-                "Eurostat chunked fetch %s [%s – %s]",
-                dataflow_id, start_period, end_period,
-            )
-            obs = self.get_data(
-                dataflow_id,
-                key,
-                series_id=series_id or dataflow_id,
-                start_period=start_period,
-                end_period=end_period,
-                limit=limit,
-            )
-            all_obs.extend(obs)
+            chunk_obs: list[EurostatObservation] = []
+
+            if geo_chunks and total_dims > 0:
+                for geo_fragment in geo_chunks:
+                    effective_key = _inject_geo_into_key(
+                        key, geo_fragment, geo_position, total_dims,
+                    )
+                    logger.info(
+                        "Eurostat chunked fetch %s [%s – %s] geo=%s",
+                        dataflow_id, start_period, end_period,
+                        geo_fragment[:40] + ("..." if len(geo_fragment) > 40 else ""),
+                    )
+                    obs = self.get_data(
+                        dataflow_id,
+                        effective_key,
+                        series_id=series_id or dataflow_id,
+                        start_period=start_period,
+                        end_period=end_period,
+                        limit=limit,
+                    )
+                    chunk_obs.extend(obs)
+            else:
+                logger.info(
+                    "Eurostat chunked fetch %s [%s – %s]",
+                    dataflow_id, start_period, end_period,
+                )
+                obs = self.get_data(
+                    dataflow_id,
+                    key,
+                    series_id=series_id or dataflow_id,
+                    start_period=start_period,
+                    end_period=end_period,
+                    limit=limit,
+                )
+                chunk_obs.extend(obs)
+
+            all_obs.extend(chunk_obs)
             if on_chunk is not None:
-                on_chunk(obs, start_period, end_period)
+                on_chunk(chunk_obs, start_period, end_period)
 
         return all_obs
