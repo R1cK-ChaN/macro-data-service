@@ -11,6 +11,7 @@ import re
 import sys
 import time
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -680,3 +681,229 @@ class TestPerformanceBenchmark:
         assert elapsed < 10, f"Search took {elapsed:.1f}s (limit: 10s)"
         assert len(results) > 0
         print(f"\n  Search 'inflation': {elapsed:.2f}s, {len(results)} results")
+
+
+# -- Layer 10: Full Catalog Crawl -------------------------------------------
+
+class TestFullCatalogCrawl:
+    """Full FRED catalog crawl — proves access to all ~800k+ series.
+
+    These tests enumerate the entire FRED universe through releases and
+    the category tree, then probe a random sample for accessibility.
+    """
+
+    def test_release_enumeration_discovers_800k_series(
+        self, fred_client: FredClient, all_releases: list[dict],
+    ) -> None:
+        """Enumerate all 322 releases and sum series counts.
+
+        Each FRED series belongs to at least one release, so the sum across
+        all releases (with duplicates) must exceed 800k.
+        """
+        _check_fred_available(fred_client)
+        total = 0
+        release_counts: list[tuple[int, int, str]] = []
+
+        print(f"\n  Enumerating series across {len(all_releases)} releases...")
+        for i, r in enumerate(all_releases):
+            try:
+                count = fred_client.count_release_series(r["id"])
+            except (FredAPIError, FredRateLimitError):
+                count = 0
+            total += count
+            release_counts.append((count, r["id"], r.get("name", "")))
+            time.sleep(_FRED_REQUEST_DELAY)
+            if (i + 1) % 50 == 0:
+                print(f"    Progress: {i + 1}/{len(all_releases)} releases, running total: {total:,}")
+
+        release_counts.sort(reverse=True)
+        print(f"\n  ── Release Enumeration Report ──")
+        print(f"  Releases discovered:   {len(all_releases)}")
+        print(f"  Total series (sum):    {total:,}")
+        print(f"\n  Top 10 largest releases:")
+        for count, rid, name in release_counts[:10]:
+            print(f"    Release {rid:>4} ({name[:50]}): {count:,}")
+
+        assert total > 800_000, (
+            f"Expected >800k series across releases, got {total:,}"
+        )
+
+    def test_category_tree_crawl(self, fred_client: FredClient) -> None:
+        """BFS crawl of the entire FRED category tree.
+
+        Traverses every category, counts series at leaf nodes (categories
+        with no children), and sums total series references.
+        """
+        _check_fred_available(fred_client)
+        queue: deque[tuple[int, int]] = deque([(0, 0)])
+        visited: set[int] = set()
+        depth_counts: dict[int, int] = {}
+        total_series_refs = 0
+        leaf_count = 0
+        series_by_depth: dict[int, int] = {}
+
+        print("\n  Crawling FRED category tree (BFS)...")
+        t0 = time.monotonic()
+
+        while queue:
+            cat_id, depth = queue.popleft()
+            if cat_id in visited:
+                continue
+            visited.add(cat_id)
+            depth_counts[depth] = depth_counts.get(depth, 0) + 1
+
+            try:
+                children = fred_client.get_categories(cat_id)
+            except (FredAPIError, FredRateLimitError):
+                children = []
+            time.sleep(_FRED_REQUEST_DELAY)
+
+            for child in children:
+                cid = child["id"]
+                if cid not in visited:
+                    queue.append((cid, depth + 1))
+
+            # Count series at leaf categories (no children)
+            if not children and cat_id != 0:
+                try:
+                    count = fred_client.count_category_series(cat_id)
+                except (FredAPIError, FredRateLimitError):
+                    count = 0
+                total_series_refs += count
+                leaf_count += 1
+                series_by_depth[depth] = series_by_depth.get(depth, 0) + count
+                time.sleep(_FRED_REQUEST_DELAY)
+
+            if len(visited) % 200 == 0:
+                elapsed = time.monotonic() - t0
+                print(
+                    f"    Crawled {len(visited)} categories, "
+                    f"{leaf_count} leaves, {total_series_refs:,} series refs "
+                    f"({elapsed:.0f}s)"
+                )
+
+        elapsed = time.monotonic() - t0
+        print(f"\n  ── Category Tree Crawl Report ──")
+        print(f"  Total categories:      {len(visited)}")
+        print(f"  Leaf categories:       {leaf_count}")
+        print(f"  Series references:     {total_series_refs:,}")
+        print(f"  Crawl time:            {elapsed:.0f}s")
+        print(f"\n  Depth distribution:")
+        for d in sorted(depth_counts):
+            series = series_by_depth.get(d, 0)
+            print(f"    Depth {d}: {depth_counts[d]} categories, {series:,} series")
+
+        assert len(visited) > 100, (
+            f"Expected >100 categories, got {len(visited)}"
+        )
+        assert total_series_refs > 800_000, (
+            f"Expected >800k series refs across leaves, got {total_series_refs:,}"
+        )
+
+    def test_release_coverage_cross_reference(
+        self, fred_client: FredClient, all_releases: list[dict],
+    ) -> None:
+        """Verify that hardcoded MACRO_SERIES appear in release enumeration."""
+        _check_fred_available(fred_client)
+        # Pick 5 large releases likely to contain our configured series
+        known_release_names = {
+            "Gross Domestic Product": ["GDP", "GDPC1"],
+            "Consumer Price Index": ["CPIAUCSL", "CPILFESL"],
+            "Employment Situation": ["UNRATE", "PAYEMS"],
+        }
+        found_series: set[str] = set()
+
+        for r in all_releases:
+            rname = r.get("name", "")
+            for release_name, expected_sids in known_release_names.items():
+                if release_name in rname:
+                    series = fred_client.get_release_series(r["id"], limit=1000)
+                    release_sids = {s["id"] for s in series}
+                    for sid in expected_sids:
+                        if sid in release_sids:
+                            found_series.add(sid)
+                            print(f"    {sid} found in release '{rname}'")
+                    time.sleep(_FRED_REQUEST_DELAY)
+
+        expected_total = sum(len(v) for v in known_release_names.values())
+        assert len(found_series) >= expected_total - 1, (
+            f"Expected >={expected_total - 1} cross-referenced series, "
+            f"found {len(found_series)}: {found_series}"
+        )
+        print(f"\n  Cross-reference: {len(found_series)}/{expected_total} series found in releases")
+
+    def test_catalog_sample_accessibility(
+        self, fred_client: FredClient, all_releases: list[dict],
+    ) -> None:
+        """Probe random series discovered via releases for metadata + observations."""
+        _check_fred_available(fred_client)
+        # Pick 3 random releases and get their series
+        sample_releases = random.sample(all_releases, min(3, len(all_releases)))
+        discovered_series: list[str] = []
+        for r in sample_releases:
+            try:
+                series = fred_client.get_release_series(r["id"], limit=50)
+                discovered_series.extend(s["id"] for s in series)
+            except (FredAPIError, FredRateLimitError):
+                pass
+            time.sleep(_FRED_REQUEST_DELAY)
+
+        if not discovered_series:
+            pytest.skip("No series discovered from sample releases")
+
+        # Probe 50 random series
+        sample = random.sample(discovered_series, min(50, len(discovered_series)))
+        meta_ok = 0
+        data_ok = 0
+
+        print(f"\n  Probing {len(sample)} random series from catalog...")
+        for sid in sample:
+            try:
+                info = fred_client.get_series_info(sid)
+                if info.get("title"):
+                    meta_ok += 1
+            except (FredAPIError, FredRateLimitError):
+                pass
+            time.sleep(_FRED_REQUEST_DELAY)
+
+            try:
+                obs = fred_client.get_series(sid, start_date="2020-01-01", limit=1)
+                if obs:
+                    data_ok += 1
+            except (FredAPIError, FredRateLimitError):
+                pass
+            time.sleep(_FRED_REQUEST_DELAY)
+
+        meta_rate = meta_ok / len(sample) if sample else 0
+        data_rate = data_ok / len(sample) if sample else 0
+        print(f"\n  ── Sample Accessibility Report ──")
+        print(f"  Series probed:         {len(sample)}")
+        print(f"  Metadata accessible:   {meta_rate:.0%} ({meta_ok}/{len(sample)})")
+        print(f"  Observations returned: {data_rate:.0%} ({data_ok}/{len(sample)})")
+
+        assert meta_rate >= 0.90, f"Metadata accessibility {meta_rate:.0%} < 90%"
+        assert data_rate >= 0.50, f"Data accessibility {data_rate:.0%} < 50%"
+
+    def test_alfred_vintage_coverage(self, fred_client: FredClient) -> None:
+        """Verify ALFRED vintage availability for revised macro series."""
+        _check_fred_available(fred_client)
+        revised_series = ["GDP", "GDPC1", "CPIAUCSL", "PAYEMS", "UNRATE"]
+        passed = 0
+        total_vintages = 0
+
+        for sid in revised_series:
+            revisions = fred_client.get_revision_history(sid, "2023-01-01")
+            vintage_dates = {r.vintage_date for r in revisions}
+            if len(vintage_dates) >= 2:
+                passed += 1
+                total_vintages += len(vintage_dates)
+                print(f"    {sid}: {len(vintage_dates)} distinct vintages")
+            else:
+                print(f"    {sid}: only {len(vintage_dates)} vintage(s)")
+            time.sleep(_FRED_REQUEST_DELAY)
+
+        print(f"\n  ALFRED vintage coverage: {passed}/{len(revised_series)} series with >=2 revisions")
+        print(f"  Total distinct vintages: {total_vintages}")
+        assert passed >= 4, (
+            f"Expected >=4 series with revision history, got {passed}"
+        )

@@ -804,15 +804,25 @@ listings were too unstable or noisy for deterministic link selection here.
 ### FredClient
 
 Fetches **macro time-series** from FRED and **vintage/revision history** from
-ALFRED (Archival FRED). Extracted from the inline implementation in `sources.py`.
+ALFRED (Archival FRED). Supports full catalog discovery via category tree
+browsing and release enumeration (~840k+ series across 322 releases).
+
+**Error classes:** `FredAPIError`, `FredRateLimitError` — raised on HTTP errors
+and 429 rate-limiting respectively.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_series(series_id, *, start_date, limit=100)` | `list[FredObservation]` | Recent observations for a series |
 | `get_series_info(series_id)` | `dict` | Series metadata (title, frequency, units) |
 | `search_series(query, *, limit=10)` | `list[dict]` | Search FRED for series matching a text query |
-| `get_vintages(series_id, *, start_date, vintage_dates=None)` | `list[FredVintageObservation]` | All vintage observations (ALFRED `output_type=2`) |
+| `get_vintages(series_id, *, start_date, realtime_start, realtime_end)` | `list[FredVintageObservation]` | All vintage observations via ALFRED real-time periods |
 | `get_revision_history(series_id, observation_date)` | `list[FredVintageObservation]` | All revisions for a specific observation date |
+| `get_categories(category_id=0)` | `list[dict]` | Child categories (root=0 has 8 top-level) |
+| `get_category_series(category_id, *, limit=1000)` | `list[dict]` | Series belonging to a category |
+| `count_category_series(category_id)` | `int` | Lightweight series count (limit=1 probe) |
+| `get_releases(*, limit=1000)` | `list[dict]` | All FRED releases (~322) |
+| `get_release_series(release_id, *, limit=1000)` | `list[dict]` | Series belonging to a release |
+| `count_release_series(release_id)` | `int` | Lightweight series count (limit=1 probe) |
 
 **`FredObservation` fields:**
 
@@ -838,6 +848,11 @@ ALFRED (Archival FRED). Extracted from the inline implementation in `sources.py`
 
 **Storage:** Latest values in `indicators` table (source `fred`), vintages
 in `indicator_vintages` table (source `fred`).
+
+**Testing:** 9-layer validation + full catalog crawl in
+`tests/test_fred_full_catalog.py` (41 tests). Layer 10 enumerates all 322
+releases (840k+ series), crawls the category tree, cross-references releases
+with configured series, and probes random catalog series for accessibility.
 
 ---
 

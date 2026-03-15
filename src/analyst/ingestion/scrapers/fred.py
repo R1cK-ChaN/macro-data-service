@@ -262,6 +262,23 @@ class FredClient:
         _raise_for_status(response)
         return response.json().get("seriess", [])
 
+    def count_category_series(self, category_id: int) -> int:
+        """Return total series count for a category (lightweight, limit=1)."""
+        if not self.api_key:
+            return 0
+        response = self.session.get(
+            f"{self.BASE_URL}/category/series",
+            params={
+                "category_id": category_id,
+                "limit": 1,
+                "api_key": self.api_key,
+                "file_type": "json",
+            },
+            timeout=30,
+        )
+        _raise_for_status(response)
+        return response.json().get("count", 0)
+
     def get_releases(self, *, limit: int = 1000) -> list[dict]:
         """Fetch all FRED releases."""
         if not self.api_key:
@@ -296,3 +313,20 @@ class FredClient:
         )
         _raise_for_status(response)
         return response.json().get("seriess", [])
+
+    def count_release_series(self, release_id: int) -> int:
+        """Return total series count for a release (lightweight, limit=1)."""
+        if not self.api_key:
+            return 0
+        response = self.session.get(
+            f"{self.BASE_URL}/release/series",
+            params={
+                "release_id": release_id,
+                "limit": 1,
+                "api_key": self.api_key,
+                "file_type": "json",
+            },
+            timeout=30,
+        )
+        _raise_for_status(response)
+        return response.json().get("count", 0)
