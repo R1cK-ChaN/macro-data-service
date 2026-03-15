@@ -1,9 +1,8 @@
-"""ECB SDMX 2.1 API client — money supply, deposit rate, and FX dataflows.
+"""UNSD (UNData) SDMX REST API client — global statistical indicators.
 
-Uses the ECB Data Portal API at ``data-api.ecb.europa.eu`` which provides
-free, unauthenticated access to SDMX-JSON formatted data.  Includes full
-catalog discovery (``list_dataflows``, ``get_datastructure``,
-``summarize_structure``, ``estimate_size``, ``fetch_dataset_chunked``).
+Uses the UN SDMX API at ``data.un.org/ws/rest`` which provides
+unauthenticated access to datasets from multiple UN agencies
+(UNSD, UNICEF, UNFPA, WHO, FAO, etc.).
 """
 
 from __future__ import annotations
@@ -22,7 +21,7 @@ _QUARTER_MAP = {"Q1": "01", "Q2": "04", "Q3": "07", "Q4": "10"}
 
 
 def _normalize_date(raw: str) -> str:
-    """Normalize ECB date strings to YYYY-MM-DD.
+    """Normalize UNSD date strings to YYYY-MM-DD.
 
     Handles: ``"2024-01"``  → ``"2024-01-01"``,
              ``"2024-Q1"``  → ``"2024-01-01"``,
@@ -40,8 +39,8 @@ def _normalize_date(raw: str) -> str:
 
 
 @dataclass(frozen=True)
-class ECBObservation:
-    """A single observation from the ECB SDMX API."""
+class UNSDObservation:
+    """A single observation from the UNSD SDMX API."""
 
     series_id: str
     date: str
@@ -50,8 +49,8 @@ class ECBObservation:
 
 
 @dataclass(frozen=True)
-class ECBDataflow:
-    """Represents a dataset in the ECB catalog."""
+class UNSDDataflow:
+    """Represents a dataset in the UNSD catalog."""
 
     id: str
     agency_id: str
@@ -63,8 +62,8 @@ class ECBDataflow:
 
 
 @dataclass(frozen=True)
-class ECBDimension:
-    """A single dimension in an ECB data structure definition."""
+class UNSDDimension:
+    """A single dimension in a UNSD data structure definition."""
 
     id: str
     position: int
@@ -75,19 +74,19 @@ class ECBDimension:
 
 
 @dataclass(frozen=True)
-class ECBDataStructure:
-    """Full DSD with dimensions for an ECB dataflow."""
+class UNSDDataStructure:
+    """Full DSD with dimensions for a UNSD dataflow."""
 
     id: str
     version: str
     name: str = ""
-    dimensions: tuple[ECBDimension, ...] = ()
+    dimensions: tuple[UNSDDimension, ...] = ()
     dataflow_id: str = ""
     dataflow_version: str = ""
 
 
 @dataclass(frozen=True)
-class ECBStructureSummary:
+class UNSDStructureSummary:
     """Compact summary for catalog inspection."""
 
     dataflow_id: str
@@ -101,8 +100,8 @@ class ECBStructureSummary:
 
 
 @dataclass(frozen=True)
-class ECBSizeEstimate:
-    """Observation count estimate for an ECB dataflow."""
+class UNSDSizeEstimate:
+    """Observation count estimate for a UNSD dataflow."""
 
     dataflow_id: str
     version: str
@@ -111,12 +110,12 @@ class ECBSizeEstimate:
     estimated_observations: int = 0
 
 
-class ECBAPIError(RuntimeError):
-    """Base error for ECB API failures."""
+class UNSDAPIError(RuntimeError):
+    """Base error for UNSD API failures."""
 
 
-class ECBRateLimitError(ECBAPIError):
-    """Raised when ECB throttles a request (HTTP 429)."""
+class UNSDRateLimitError(UNSDAPIError):
+    """Raised when UNSD throttles a request (HTTP 429)."""
 
 
 def _build_decade_chunks(start_year: int, end_year: int) -> list[tuple[str, str]]:
@@ -133,7 +132,7 @@ def _build_decade_chunks(start_year: int, end_year: int) -> list[tuple[str, str]
 def _extract_id_from_urn(urn: str) -> str:
     """Extract the artefact ID from an SDMX URN.
 
-    Example: ``"urn:sdmx:...Codelist=ECB:CL_FREQ(1.0)"`` → ``"CL_FREQ"``
+    Example: ``"urn:sdmx:...Codelist=UNSD:CL_FREQ(1.0)"`` → ``"CL_FREQ"``
     """
     if "=" not in urn:
         return ""
@@ -145,11 +144,15 @@ def _extract_id_from_urn(urn: str) -> str:
     return after_eq
 
 
-class ECBClient:
-    """Client for the ECB Data Portal SDMX API (no API key required)."""
+class UNSDClient:
+    """Client for the UNSD SDMX REST API (no API key required).
 
-    BASE_URL = "https://data-api.ecb.europa.eu/service/data"
-    STRUCTURE_BASE_URL = "https://data-api.ecb.europa.eu/service"
+    UNSD hosts dataflows from multiple UN agencies (UNSD, UNICEF, UNFPA,
+    WHO, FAO, etc.), so ``agency_id`` is tracked per dataflow and used
+    in all structure/data queries.
+    """
+
+    BASE_URL = "https://data.un.org/ws/rest"
 
     def __init__(self, *, timeout: int = 30) -> None:
         self.session = requests.Session()
@@ -159,9 +162,9 @@ class ECBClient:
         })
         self.timeout = timeout
         self._last_request: float = 0.0
-        self._request_delay: float = 0.5
-        self._dataflow_cache: list[ECBDataflow] | None = None
-        self._structure_cache: dict[str, ECBDataStructure] = {}
+        self._request_delay: float = 1.0  # Conservative for UN servers
+        self._dataflow_cache: list[UNSDDataflow] | None = None
+        self._structure_cache: dict[str, UNSDDataStructure] = {}
 
     # ── Internal helpers ──────────────────────────────────────────────
 
@@ -184,17 +187,17 @@ class ECBClient:
         if response.status_code == 429:
             retry_after = response.headers.get("Retry-After")
             suffix = f" retry_after={retry_after}" if retry_after else ""
-            raise ECBRateLimitError(f"ECB rate limit exceeded for {url}.{suffix}")
+            raise UNSDRateLimitError(f"UNSD rate limit exceeded for {url}.{suffix}")
         try:
             response.raise_for_status()
         except requests.HTTPError as exc:
             detail = response.text.strip()
             if detail:
-                raise ECBAPIError(
-                    f"ECB request failed for {url}: HTTP {response.status_code}: {detail[:200]}"
+                raise UNSDAPIError(
+                    f"UNSD request failed for {url}: HTTP {response.status_code}: {detail[:200]}"
                 ) from exc
-            raise ECBAPIError(
-                f"ECB request failed for {url}: HTTP {response.status_code}"
+            raise UNSDAPIError(
+                f"UNSD request failed for {url}: HTTP {response.status_code}"
             ) from exc
         return response
 
@@ -203,24 +206,32 @@ class ECBClient:
     def get_data(
         self,
         dataflow_id: str,
-        key: str,
+        key: str = "all",
         *,
-        series_id: str,
+        series_id: str = "",
+        agency_id: str = "",
         start_period: str | None = None,
         end_period: str | None = None,
         limit: int = 100,
-    ) -> list[ECBObservation]:
-        """Fetch observations from an ECB SDMX dataflow as JSON.
+    ) -> list[UNSDObservation]:
+        """Fetch observations from a UNSD SDMX dataflow as JSON.
 
         Args:
-            dataflow_id: ECB dataflow, e.g. ``"BSI"``, ``"EXR"``.
-            key: Dimension key, e.g. ``"M.USD.EUR.SP00.A"``.
+            dataflow_id: UNSD dataflow, e.g. ``"DF_UNData_UNdata"``.
+            key: Dimension key. Use ``"all"`` for all series.
             series_id: Logical series id for the returned records.
-            start_period: Optional start filter, e.g. ``"2024"``.
+            agency_id: Agency owning the dataflow (auto-resolved if empty).
+            start_period: Optional start filter, e.g. ``"2020"``.
             end_period: Optional end filter, e.g. ``"2026"``.
-            limit: Maximum observations to return.
+            limit: Maximum observations to return (0 = unlimited).
         """
-        url = f"{self.BASE_URL}/{dataflow_id}/{key}"
+        # Resolve agency_id from catalog if not provided
+        if not agency_id:
+            flows = self.list_dataflows()
+            match = next((f for f in flows if f.id == dataflow_id), None)
+            agency_id = match.agency_id if match else "UNSD"
+
+        url = f"{self.BASE_URL}/data/{agency_id},{dataflow_id},latest/{key}"
         params: dict[str, str] = {"format": "jsondata"}
         if start_period:
             params["startPeriod"] = start_period
@@ -241,13 +252,12 @@ class ECBClient:
         series_id: str,
         dataflow: str,
         limit: int,
-    ) -> list[ECBObservation]:
+    ) -> list[UNSDObservation]:
         """Parse SDMX-JSON response into observations."""
-        observations: list[ECBObservation] = []
+        observations: list[UNSDObservation] = []
 
         try:
             datasets = data["dataSets"]
-            # ECB uses "structure" (singular), not "structures"
             structure = data.get("structure") or (data.get("structures") or [None])[0]
         except (KeyError, TypeError, IndexError):
             return observations
@@ -282,7 +292,7 @@ class ECBClient:
                 if value is None:
                     continue
                 try:
-                    observations.append(ECBObservation(
+                    observations.append(UNSDObservation(
                         series_id=series_id,
                         date=_normalize_date(period),
                         value=float(value),
@@ -296,16 +306,20 @@ class ECBClient:
 
     # ── Catalog discovery methods ─────────────────────────────────────
 
-    def list_dataflows(self) -> list[ECBDataflow]:
-        """Fetch the full ECB dataflow catalog. Results are cached."""
+    def list_dataflows(self) -> list[UNSDDataflow]:
+        """Fetch the full UNSD dataflow catalog. Results are cached.
+
+        Uses ``all/all`` for agency and dataflow to get the complete
+        multi-agency catalog.
+        """
         if self._dataflow_cache is not None:
             return list(self._dataflow_cache)
 
-        url = f"{self.STRUCTURE_BASE_URL}/dataflow/ECB/all/latest"
+        url = f"{self.BASE_URL}/dataflow/all/all/latest"
         response = self._get(url, headers={"Accept": "application/json"})
         data = response.json()
 
-        dataflows: list[ECBDataflow] = []
+        dataflows: list[UNSDDataflow] = []
         for df_node in data.get("data", {}).get("dataflows", []):
             structure_id = ""
             structure_version = ""
@@ -327,7 +341,7 @@ class ECBClient:
             if isinstance(desc_val, dict):
                 desc_val = desc_val.get("en", "") or next(iter(desc_val.values()), "")
 
-            dataflows.append(ECBDataflow(
+            dataflows.append(UNSDDataflow(
                 id=df_node.get("id", ""),
                 agency_id=df_node.get("agencyID", ""),
                 version=df_node.get("version", ""),
@@ -344,28 +358,33 @@ class ECBClient:
         self,
         dataflow_id: str,
         version: str | None = None,
-    ) -> ECBDataStructure:
+        agency_id: str | None = None,
+    ) -> UNSDDataStructure:
         """Fetch the data structure definition for a dataflow.
 
         Uses the dataflow endpoint with ``references=all`` to retrieve
         the DSD, codelists, and concept schemes in a single call.
+        The ``agency_id`` is auto-resolved from the catalog if not provided.
         """
         flows = self.list_dataflows()
         match = next((f for f in flows if f.id == dataflow_id), None)
         df_version = (match.version if match else version) or "1.0"
+        resolved_agency = agency_id or (match.agency_id if match else "UNSD")
 
-        cache_key = f"{dataflow_id}/{df_version}"
+        cache_key = f"{resolved_agency}/{dataflow_id}/{df_version}"
         if cache_key in self._structure_cache:
             return self._structure_cache[cache_key]
 
-        url = f"{self.STRUCTURE_BASE_URL}/dataflow/ECB/{dataflow_id}/{df_version}"
+        url = f"{self.BASE_URL}/dataflow/{resolved_agency}/{dataflow_id}/{df_version}"
         params: dict[str, str] = {"references": "all"}
         response = self._get(url, params, headers={"Accept": "application/json"})
         data = response.json()
 
         structures = data.get("data", {}).get("dataStructures", [])
         if not structures:
-            raise ECBAPIError(f"No data structure found for dataflow {dataflow_id}/{df_version}")
+            raise UNSDAPIError(
+                f"No data structure found for dataflow {resolved_agency}/{dataflow_id}/{df_version}"
+            )
 
         struct_node = structures[0]
         components = struct_node.get("dataStructureComponents", {})
@@ -390,7 +409,7 @@ class ECBClient:
                     if cl_id:
                         concept_codelist[concept.get("id", "")] = cl_id
 
-        dimensions: list[ECBDimension] = []
+        dimensions: list[UNSDDimension] = []
         for dim_node in dim_list.get("dimensions", []):
             dim_id = dim_node.get("id", "")
             position = dim_node.get("position", 0)
@@ -426,7 +445,7 @@ class ECBClient:
                 codes = tuple(code_list)
                 code_count = len(codes)
 
-            dimensions.append(ECBDimension(
+            dimensions.append(UNSDDimension(
                 id=dim_id,
                 position=position,
                 name=str(name_val),
@@ -440,7 +459,7 @@ class ECBClient:
             name_val = td_node.get("name", "")
             if isinstance(name_val, dict):
                 name_val = name_val.get("en", "") or next(iter(name_val.values()), "")
-            dimensions.append(ECBDimension(
+            dimensions.append(UNSDDimension(
                 id=td_id,
                 position=td_node.get("position", len(dimensions)),
                 name=str(name_val) or td_id,
@@ -455,7 +474,7 @@ class ECBClient:
         if isinstance(name_val, dict):
             name_val = name_val.get("en", "") or next(iter(name_val.values()), "")
 
-        result = ECBDataStructure(
+        result = UNSDDataStructure(
             id=struct_node.get("id", ""),
             version=struct_node.get("version", df_version),
             name=str(name_val),
@@ -470,7 +489,7 @@ class ECBClient:
         self,
         dataflow_id: str,
         version: str | None = None,
-    ) -> ECBStructureSummary:
+    ) -> UNSDStructureSummary:
         """Return a compact summary combining dataflow metadata and DSD."""
         flows = self.list_dataflows()
         flow = next((f for f in flows if f.id == dataflow_id), None)
@@ -491,7 +510,7 @@ class ECBClient:
             if count > 0:
                 estimated_series *= count
 
-        return ECBStructureSummary(
+        return UNSDStructureSummary(
             dataflow_id=dataflow_id,
             version=flow.version if flow else (version or ""),
             name=flow.name if flow else structure.name,
@@ -506,17 +525,23 @@ class ECBClient:
         self,
         dataflow_id: str,
         version: str = "1.0",
-    ) -> ECBSizeEstimate:
+        agency_id: str = "",
+    ) -> UNSDSizeEstimate:
         """Probe a dataflow with limit=1 to estimate its total size.
 
-        Uses the SDMX data endpoint with ``lastNObservations=1`` and key=``.``
         Falls back to DSD-based estimation if the probe returns nothing.
         """
         total_series = 0
         time_periods = 1
 
+        # Resolve agency
+        if not agency_id:
+            flows = self.list_dataflows()
+            match = next((f for f in flows if f.id == dataflow_id), None)
+            agency_id = match.agency_id if match else "UNSD"
+
         try:
-            url = f"{self.BASE_URL}/{dataflow_id}/."
+            url = f"{self.BASE_URL}/data/{agency_id},{dataflow_id},latest/all"
             params: dict[str, str] = {
                 "format": "jsondata",
                 "lastNObservations": "1",
@@ -527,21 +552,21 @@ class ECBClient:
             if datasets:
                 all_series = datasets[0].get("series", {})
                 total_series = len(all_series)
-        except (ECBAPIError, ECBRateLimitError):
+        except (UNSDAPIError, UNSDRateLimitError):
             pass
 
         # Fall back to DSD-based estimate
         if total_series == 0:
             try:
-                structure = self.get_datastructure(dataflow_id, version)
+                structure = self.get_datastructure(dataflow_id, version, agency_id=agency_id)
                 total_series = 1
                 for d in structure.dimensions:
                     if not d.is_time and d.code_count > 0:
                         total_series *= d.code_count
-            except (ECBAPIError, ECBRateLimitError):
+            except (UNSDAPIError, UNSDRateLimitError):
                 pass
 
-        return ECBSizeEstimate(
+        return UNSDSizeEstimate(
             dataflow_id=dataflow_id,
             version=version,
             total_series=total_series,
@@ -552,16 +577,17 @@ class ECBClient:
     def fetch_dataset_chunked(
         self,
         dataflow_id: str,
-        key: str = ".",
+        key: str = "all",
         *,
         version: str = "1.0",
         series_id: str = "",
+        agency_id: str = "",
         start_year: int = 1960,
         end_year: int = 2026,
         chunk_ranges: Sequence[tuple[str, str]] | None = None,
         limit: int = 0,
-        on_chunk: Callable[[list[ECBObservation], str, str], None] | None = None,
-    ) -> list[ECBObservation]:
+        on_chunk: Callable[[list[UNSDObservation], str, str], None] | None = None,
+    ) -> list[UNSDObservation]:
         """Fetch a dataset with time-range chunking.
 
         If ``chunk_ranges`` is given those pairs are used; otherwise the
@@ -570,16 +596,17 @@ class ECBClient:
         if chunk_ranges is None:
             chunk_ranges = _build_decade_chunks(start_year, end_year)
 
-        all_obs: list[ECBObservation] = []
+        all_obs: list[UNSDObservation] = []
         for start_period, end_period in chunk_ranges:
             logger.info(
-                "ECB chunked fetch %s [%s – %s]",
+                "UNSD chunked fetch %s [%s – %s]",
                 dataflow_id, start_period, end_period,
             )
             obs = self.get_data(
                 dataflow_id,
                 key,
                 series_id=series_id or dataflow_id,
+                agency_id=agency_id,
                 start_period=start_period,
                 end_period=end_period,
                 limit=limit,

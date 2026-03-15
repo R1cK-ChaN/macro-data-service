@@ -70,6 +70,7 @@ VALID_SOURCE_IDS: frozenset[str] = frozenset({
     "ecb",
     "oecd",
     "worldbank",
+    "unsd",
 })
 
 

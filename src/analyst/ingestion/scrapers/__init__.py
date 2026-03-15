@@ -2,9 +2,29 @@
 
 from ._common import ScrapedIndicator, ScrapedMarketQuote, ScrapedNewsItem
 from .bis import BISClient, BISObservation
-from .ecb import ECBClient, ECBObservation
+from .ecb import (
+    ECBAPIError,
+    ECBClient,
+    ECBDataStructure,
+    ECBDataflow,
+    ECBDimension,
+    ECBObservation,
+    ECBRateLimitError,
+    ECBSizeEstimate,
+    ECBStructureSummary,
+)
 from .eia import EIAClient, EIAObservation
-from .eurostat import EurostatClient, EurostatObservation
+from .eurostat import (
+    EurostatAPIError,
+    EurostatClient,
+    EurostatDataStructure,
+    EurostatDataflow,
+    EurostatDimension,
+    EurostatObservation,
+    EurostatRateLimitError,
+    EurostatSizeEstimate,
+    EurostatStructureSummary,
+)
 from .forexfactory import ForexFactoryCalendarClient, ForexFactoryNewsClient
 from .fred import FredClient, FredObservation, FredVintageObservation
 from .imf import IMFClient, IMFObservation, IMFVintageObservation
@@ -21,6 +41,17 @@ from .oecd import (
     OECDResponseFormatError,
     OECDSeries,
     OECDStructureSummary,
+)
+from .unsd import (
+    UNSDAPIError,
+    UNSDClient,
+    UNSDDataStructure,
+    UNSDDataflow,
+    UNSDDimension,
+    UNSDObservation,
+    UNSDRateLimitError,
+    UNSDSizeEstimate,
+    UNSDStructureSummary,
 )
 from .bloomberg import BloombergArticle, BloombergArticleClient, BloombergNewsClient
 from .ft import FTArticle, FTArticleClient, FTNewsClient
@@ -58,9 +89,23 @@ __all__ = [
     # Data classes
     "BISObservation",
     "BloombergArticle",
+    "ECBAPIError",
+    "ECBDataStructure",
+    "ECBDataflow",
+    "ECBDimension",
     "ECBObservation",
+    "ECBRateLimitError",
+    "ECBSizeEstimate",
+    "ECBStructureSummary",
     "EIAObservation",
+    "EurostatAPIError",
+    "EurostatDataStructure",
+    "EurostatDataflow",
+    "EurostatDimension",
     "EurostatObservation",
+    "EurostatRateLimitError",
+    "EurostatSizeEstimate",
+    "EurostatStructureSummary",
     "FTArticle",
     "FedMeetingProbability",
     "FedRateProbability",
@@ -87,6 +132,14 @@ __all__ = [
     "ScrapedMarketQuote",
     "ScrapedNewsItem",
     "TreasuryFiscalObservation",
+    "UNSDAPIError",
+    "UNSDDataStructure",
+    "UNSDDataflow",
+    "UNSDDimension",
+    "UNSDObservation",
+    "UNSDRateLimitError",
+    "UNSDSizeEstimate",
+    "UNSDStructureSummary",
     "WSJArticle",
     "WorldBankAPIError",
     "WorldBankCountry",
@@ -125,6 +178,7 @@ __all__ = [
     "IMFClient",
     "OECDClient",
     "TreasuryFiscalClient",
+    "UNSDClient",
     "WorldBankClient",
     # Indicators & Markets
     "TradingEconomicsIndicatorsClient",
