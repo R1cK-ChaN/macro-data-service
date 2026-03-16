@@ -314,6 +314,23 @@ class FredClient:
         _raise_for_status(response)
         return response.json().get("seriess", [])
 
+    def get_series_release(self, series_id: str) -> dict:
+        """Fetch the release that a series belongs to."""
+        if not self.api_key:
+            return {}
+        response = self.session.get(
+            f"{self.BASE_URL}/series/release",
+            params={
+                "series_id": series_id,
+                "api_key": self.api_key,
+                "file_type": "json",
+            },
+            timeout=30,
+        )
+        _raise_for_status(response)
+        releases = response.json().get("releases", [])
+        return releases[0] if releases else {}
+
     def count_release_series(self, release_id: int) -> int:
         """Return total series count for a release (lightweight, limit=1)."""
         if not self.api_key:
