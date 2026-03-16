@@ -45,6 +45,15 @@ from ingestion.sdmx.providers.ecb import ECBClient
 from ingestion.sdmx.providers.eurostat import EurostatClient
 from ingestion.sdmx.providers.ilo import ILOClient
 from ingestion.sdmx.providers.unsd import UNSDClient
+from .bls import (
+    BLSAPIError,
+    BLSClient,
+    BLSObservation,
+    BLSRateLimitError,
+    BLSResponseError,
+    BLSSeriesInfo,
+    BLSSurvey,
+)
 from .eia import EIAClient, EIAObservation
 from .forexfactory import ForexFactoryCalendarClient, ForexFactoryNewsClient
 from .fred import (
@@ -103,6 +112,12 @@ from .weibo import WeiboTrendClient, WeiboTrendItem
 
 __all__ = [
     # Data classes
+    "BLSAPIError",
+    "BLSObservation",
+    "BLSRateLimitError",
+    "BLSResponseError",
+    "BLSSeriesInfo",
+    "BLSSurvey",
     "BISObservation",
     "BloombergArticle",
     "ECBAPIError",
@@ -196,6 +211,7 @@ __all__ = [
     "WeiboTrendItem",
     "WSJArticleClient",
     # Structured Data APIs
+    "BLSClient",
     "BISClient",
     "ECBClient",
     "EIAClient",

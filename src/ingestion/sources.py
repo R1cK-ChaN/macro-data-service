@@ -275,6 +275,164 @@ TREASURY_DATASETS = {
     },
 }
 
+BLS_SERIES = {
+    # CPI (Consumer Price Index) — Survey prefix: CU
+    "cpi_all_urban": {
+        "series_id": "CUUR0000SA0",
+        "name": "CPI-U All Items",
+        "category": "inflation",
+        "survey": "CU",
+        "freq": "monthly",
+    },
+    "cpi_core": {
+        "series_id": "CUUR0000SA0L1E",
+        "name": "CPI-U All Items Less Food and Energy",
+        "category": "inflation",
+        "survey": "CU",
+        "freq": "monthly",
+    },
+    "cpi_food": {
+        "series_id": "CUUR0000SAF1",
+        "name": "CPI-U Food",
+        "category": "inflation",
+        "survey": "CU",
+        "freq": "monthly",
+    },
+    "cpi_energy": {
+        "series_id": "CUUR0000SA0E",
+        "name": "CPI-U Energy",
+        "category": "inflation",
+        "survey": "CU",
+        "freq": "monthly",
+    },
+    "cpi_shelter": {
+        "series_id": "CUUR0000SAH1",
+        "name": "CPI-U Shelter",
+        "category": "inflation",
+        "survey": "CU",
+        "freq": "monthly",
+    },
+    # PPI (Producer Price Index) — Survey prefix: WP
+    "ppi_final_demand": {
+        "series_id": "WPSFD4",
+        "name": "PPI Final Demand",
+        "category": "inflation",
+        "survey": "WP",
+        "freq": "monthly",
+    },
+    "ppi_core": {
+        "series_id": "WPSFD49116",
+        "name": "PPI Final Demand Less Foods and Energy",
+        "category": "inflation",
+        "survey": "WP",
+        "freq": "monthly",
+    },
+    # Employment Situation (CES) — Survey prefix: CE
+    "nfp_total": {
+        "series_id": "CES0000000001",
+        "name": "Total Nonfarm Payrolls",
+        "category": "employment",
+        "survey": "CE",
+        "freq": "monthly",
+    },
+    "nfp_private": {
+        "series_id": "CES0500000001",
+        "name": "Total Private Employment",
+        "category": "employment",
+        "survey": "CE",
+        "freq": "monthly",
+    },
+    "avg_hourly_earnings": {
+        "series_id": "CES0500000003",
+        "name": "Average Hourly Earnings, Private",
+        "category": "employment",
+        "survey": "CE",
+        "freq": "monthly",
+    },
+    "avg_weekly_hours": {
+        "series_id": "CES0500000002",
+        "name": "Average Weekly Hours, Private",
+        "category": "employment",
+        "survey": "CE",
+        "freq": "monthly",
+    },
+    # Current Population Survey — Survey prefix: LN
+    "unemployment_rate": {
+        "series_id": "LNS14000000",
+        "name": "Unemployment Rate",
+        "category": "employment",
+        "survey": "LN",
+        "freq": "monthly",
+    },
+    "labor_force_participation": {
+        "series_id": "LNS11300000",
+        "name": "Labor Force Participation Rate",
+        "category": "employment",
+        "survey": "LN",
+        "freq": "monthly",
+    },
+    # JOLTS — Survey prefix: JT
+    "jolts_openings": {
+        "series_id": "JTS000000000000000JOL",
+        "name": "JOLTS Job Openings",
+        "category": "employment",
+        "survey": "JT",
+        "freq": "monthly",
+    },
+    "jolts_hires": {
+        "series_id": "JTS000000000000000HIL",
+        "name": "JOLTS Hires",
+        "category": "employment",
+        "survey": "JT",
+        "freq": "monthly",
+    },
+    "jolts_quits": {
+        "series_id": "JTS000000000000000QUL",
+        "name": "JOLTS Quits",
+        "category": "employment",
+        "survey": "JT",
+        "freq": "monthly",
+    },
+    # Employment Cost Index — Survey prefix: CI
+    "eci_total": {
+        "series_id": "CIU1010000000000A",
+        "name": "Employment Cost Index, Total Compensation",
+        "category": "employment",
+        "survey": "CI",
+        "freq": "quarterly",
+    },
+    # Productivity — Survey prefix: PR
+    "nfb_productivity": {
+        "series_id": "PRS85006092",
+        "name": "Nonfarm Business Labor Productivity",
+        "category": "productivity",
+        "survey": "PR",
+        "freq": "quarterly",
+    },
+    "nfb_unit_labor_costs": {
+        "series_id": "PRS85006112",
+        "name": "Nonfarm Business Unit Labor Costs",
+        "category": "productivity",
+        "survey": "PR",
+        "freq": "quarterly",
+    },
+}
+
+BLS_SURVEY_PREFIXES = {
+    "CU": "CPI-All Urban Consumers",
+    "CW": "CPI-Urban Wage Earners",
+    "CE": "Current Employment Statistics",
+    "LN": "Current Population Survey",
+    "WP": "PPI-Commodities",
+    "PC": "PPI-Industry",
+    "JT": "JOLTS",
+    "AP": "Average Prices",
+    "CI": "Employment Cost Index",
+    "PR": "Productivity and Costs",
+    "LA": "Local Area Unemployment Statistics",
+    "SM": "State and Metro Area Employment",
+}
+
 IMF_SERIES = {
     "cn_cpi": {
         "dataflow": "CPI", "version": "5.0.0", "key": "CHN.CPI._T.IX.M",
