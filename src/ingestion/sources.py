@@ -433,6 +433,96 @@ BLS_SURVEY_PREFIXES = {
     "SM": "State and Metro Area Employment",
 }
 
+BEA_DATASETS = {
+    # NIPA — National Income and Product Accounts
+    "gdp_summary": {
+        "dataset": "NIPA", "table": "T10101",
+        "name": "GDP Summary", "category": "output", "freq": "Q",
+    },
+    "gdp_contributions": {
+        "dataset": "NIPA", "table": "T10102",
+        "name": "Contributions to GDP Growth", "category": "output", "freq": "Q",
+    },
+    "real_gdp": {
+        "dataset": "NIPA", "table": "T10106",
+        "name": "Real GDP", "category": "output", "freq": "Q",
+    },
+    "pce_price_index": {
+        "dataset": "NIPA", "table": "T20301",
+        "name": "PCE Price Index", "category": "inflation", "freq": "Q",
+    },
+    "pce_categories": {
+        "dataset": "NIPA", "table": "T20305",
+        "name": "PCE by Category", "category": "consumption", "freq": "Q",
+    },
+    "personal_income": {
+        "dataset": "NIPA", "table": "T20100",
+        "name": "Personal Income and Outlays", "category": "income", "freq": "Q",
+    },
+    "corporate_profits": {
+        "dataset": "NIPA", "table": "T61600D",
+        "name": "Corporate Profits by Industry", "category": "profits", "freq": "Q",
+    },
+    "savings_rate": {
+        "dataset": "NIPA", "table": "T20600",
+        "name": "Personal Income and Disposition (Monthly)", "category": "savings", "freq": "M",
+    },
+    "govt_consumption": {
+        "dataset": "NIPA", "table": "T30100",
+        "name": "Government Consumption Expenditures", "category": "government", "freq": "Q",
+    },
+    # GDPbyIndustry
+    "gdp_value_added": {
+        "dataset": "GDPbyIndustry", "table": "1",
+        "name": "Value Added by Industry", "category": "output", "freq": "Q",
+    },
+    "gdp_gross_output": {
+        "dataset": "GDPbyIndustry", "table": "15",
+        "name": "Gross Output by Industry", "category": "output", "freq": "Q",
+    },
+    # Regional
+    "state_gdp": {
+        "dataset": "Regional", "table": "SAGDP2",
+        "name": "State GDP by Industry", "category": "output", "freq": "A",
+    },
+    "state_income": {
+        "dataset": "Regional", "table": "SAINC1",
+        "name": "State Personal Income", "category": "income", "freq": "A",
+    },
+    # FixedAssets
+    "fixed_assets_net_stock": {
+        "dataset": "FixedAssets", "table": "FAAt101",
+        "name": "Net Stock of Fixed Assets", "category": "investment", "freq": "A",
+    },
+    # ITA — International Transactions
+    "trade_balance_goods": {
+        "dataset": "ITA", "table": "BalGds",
+        "name": "Balance on Goods", "category": "trade", "freq": "Q",
+    },
+    "current_account": {
+        "dataset": "ITA", "table": "BalCurrAcct",
+        "name": "Current Account Balance", "category": "trade", "freq": "Q",
+    },
+    # IIP — International Investment Position
+    "net_intl_investment": {
+        "dataset": "IIP", "table": "ALL",
+        "name": "U.S. Net International Investment Position", "category": "trade", "freq": "Q",
+    },
+}
+
+BEA_KNOWN_DATASETS = {
+    "NIPA": "National Income and Product Accounts",
+    "NIUnderlyingDetail": "NIPA Underlying Detail Tables",
+    "FixedAssets": "Fixed Assets",
+    "MNE": "Multinational Enterprises",
+    "GDPbyIndustry": "GDP by Industry",
+    "ITA": "International Transactions",
+    "IIP": "International Investment Position",
+    "Regional": "Regional Economic Accounts",
+    "UnderlyingGDPbyIndustry": "Underlying GDP by Industry",
+    "InputOutput": "Input-Output Statistics",
+}
+
 IMF_SERIES = {
     "cn_cpi": {
         "dataflow": "CPI", "version": "5.0.0", "key": "CHN.CPI._T.IX.M",

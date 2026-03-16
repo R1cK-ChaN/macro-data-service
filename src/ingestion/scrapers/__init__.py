@@ -45,6 +45,16 @@ from ingestion.sdmx.providers.ecb import ECBClient
 from ingestion.sdmx.providers.eurostat import EurostatClient
 from ingestion.sdmx.providers.ilo import ILOClient
 from ingestion.sdmx.providers.unsd import UNSDClient
+from .bea import (
+    BEAAPIError,
+    BEAClient,
+    BEADataset,
+    BEAObservation,
+    BEAParameter,
+    BEAParameterValue,
+    BEARateLimitError,
+    BEAResponseError,
+)
 from .bls import (
     BLSAPIError,
     BLSClient,
@@ -112,6 +122,13 @@ from .weibo import WeiboTrendClient, WeiboTrendItem
 
 __all__ = [
     # Data classes
+    "BEAAPIError",
+    "BEADataset",
+    "BEAObservation",
+    "BEAParameter",
+    "BEAParameterValue",
+    "BEARateLimitError",
+    "BEAResponseError",
     "BLSAPIError",
     "BLSObservation",
     "BLSRateLimitError",
@@ -211,6 +228,7 @@ __all__ = [
     "WeiboTrendItem",
     "WSJArticleClient",
     # Structured Data APIs
+    "BEAClient",
     "BLSClient",
     "BISClient",
     "ECBClient",
