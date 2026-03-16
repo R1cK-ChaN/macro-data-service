@@ -225,6 +225,7 @@ class IngestionSourceDefinition:
 VINTAGE_SERIES = ["GDP", "GDPC1", "CPIAUCSL", "PAYEMS", "UNRATE", "INDPRO", "RSAFS"]
 
 EIA_SERIES = {
+    # -- Petroleum --
     "petroleum_brent": {
         "route": "petroleum/pri/spt/data",
         "params": {"data[]": "value", "facets[product][]": "EPCBRENT", "frequency": "daily"},
@@ -243,18 +244,98 @@ EIA_SERIES = {
         "series_id": "EIA_CRUDE_STOCKS",
         "category": "energy",
     },
+    "petroleum_supply": {
+        "route": "petroleum/sum/snd/data",
+        "params": {"data[]": "value", "frequency": "monthly"},
+        "series_id": "EIA_PETROL_SUPPLY",
+        "category": "energy",
+    },
+    # -- Natural gas --
     "natgas_futures": {
         "route": "natural-gas/pri/fut/data",
         "params": {"data[]": "value", "frequency": "daily"},
         "series_id": "EIA_NATGAS",
         "category": "energy",
     },
-    "petroleum_supply": {
-        "route": "petroleum/sum/snd/data",
-        "params": {"data[]": "value", "frequency": "weekly"},
-        "series_id": "EIA_PETROL_SUPPLY",
+    "natgas_production": {
+        "route": "natural-gas/sum/lsum/data",
+        "params": {"data[]": "value", "frequency": "monthly"},
+        "series_id": "EIA_NATGAS_PROD",
         "category": "energy",
     },
+    # -- Electricity --
+    "elec_retail_sales": {
+        "route": "electricity/retail-sales/data",
+        "params": {"data[]": "revenue", "frequency": "monthly"},
+        "series_id": "EIA_ELEC_RETAIL",
+        "category": "energy",
+    },
+    "elec_generation": {
+        "route": "electricity/electric-power-operational-data/data",
+        "params": {"data[]": "generation", "frequency": "monthly"},
+        "series_id": "EIA_ELEC_GEN",
+        "category": "energy",
+    },
+    "elec_fuel_consumption": {
+        "route": "electricity/electric-power-operational-data/data",
+        "params": {"data[]": "consumption-for-eg", "frequency": "monthly"},
+        "series_id": "EIA_ELEC_FUEL",
+        "category": "energy",
+    },
+    # -- Coal --
+    "coal_production": {
+        "route": "coal/mine-production/data",
+        "params": {"data[]": "production", "frequency": "annual"},
+        "series_id": "EIA_COAL_PROD",
+        "category": "energy",
+    },
+    "coal_consumption": {
+        "route": "coal/consumption-and-quality/data",
+        "params": {"data[]": "consumption", "frequency": "quarterly"},
+        "series_id": "EIA_COAL_CONS",
+        "category": "energy",
+    },
+    # -- Total energy --
+    "total_energy_consumption": {
+        "route": "total-energy/data",
+        "params": {"data[]": "value", "facets[msn][]": "TETCBUS", "frequency": "monthly"},
+        "series_id": "EIA_TOTAL_CONSUMPTION",
+        "category": "energy",
+    },
+    "total_energy_production": {
+        "route": "total-energy/data",
+        "params": {"data[]": "value", "facets[msn][]": "TEPRBUS", "frequency": "monthly"},
+        "series_id": "EIA_TOTAL_PRODUCTION",
+        "category": "energy",
+    },
+    # -- STEO (Short-Term Energy Outlook) --
+    "steo_crude_price": {
+        "route": "steo/data",
+        "params": {"data[]": "value", "facets[seriesId][]": "BREPUUS", "frequency": "monthly"},
+        "series_id": "EIA_STEO_CRUDE",
+        "category": "energy",
+    },
+    # -- International --
+    "intl_crude_production": {
+        "route": "international/data",
+        "params": {"data[]": "value", "facets[productId][]": "57", "frequency": "monthly"},
+        "series_id": "EIA_INTL_CRUDE_PROD",
+        "category": "energy",
+    },
+}
+
+EIA_KNOWN_ROUTES = {
+    "petroleum": "Petroleum data (prices, stocks, supply, production)",
+    "natural-gas": "Natural gas data (prices, production, storage)",
+    "electricity": "Electricity data (generation, sales, fuel consumption)",
+    "coal": "Coal data (production, consumption, quality)",
+    "total-energy": "Total energy data (consumption, production by source)",
+    "steo": "Short-Term Energy Outlook (forecasts)",
+    "aeo": "Annual Energy Outlook (long-term projections)",
+    "international": "International energy data",
+    "nuclear-outages": "Nuclear power plant outages",
+    "crude-oil-imports": "Crude oil imports by country",
+    "densified-biomass": "Densified biomass fuel report",
 }
 
 TREASURY_DATASETS = {

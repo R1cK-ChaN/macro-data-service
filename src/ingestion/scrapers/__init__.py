@@ -74,7 +74,15 @@ from .bls import (
     BLSSeriesInfo,
     BLSSurvey,
 )
-from .eia import EIAClient, EIAObservation
+from .eia import (
+    EIAAPIError,
+    EIAClient,
+    EIAFacet,
+    EIAObservation,
+    EIARateLimitError,
+    EIAResponseError,
+    EIARoute,
+)
 from .forexfactory import ForexFactoryCalendarClient, ForexFactoryNewsClient
 from .fred import (
     FredAPIError,
@@ -162,7 +170,12 @@ __all__ = [
     "ECBRateLimitError",
     "ECBSizeEstimate",
     "ECBStructureSummary",
+    "EIAAPIError",
+    "EIAFacet",
     "EIAObservation",
+    "EIARateLimitError",
+    "EIAResponseError",
+    "EIARoute",
     "EurostatAPIError",
     "EurostatDataStructure",
     "EurostatDataflow",
