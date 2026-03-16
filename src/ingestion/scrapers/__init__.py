@@ -55,6 +55,16 @@ from .bea import (
     BEARateLimitError,
     BEAResponseError,
 )
+from .census import (
+    CensusAPIError,
+    CensusClient,
+    CensusDataset,
+    CensusGeography,
+    CensusObservation,
+    CensusRateLimitError,
+    CensusResponseError,
+    CensusVariable,
+)
 from .bls import (
     BLSAPIError,
     BLSClient,
@@ -129,6 +139,13 @@ __all__ = [
     "BEAParameterValue",
     "BEARateLimitError",
     "BEAResponseError",
+    "CensusAPIError",
+    "CensusDataset",
+    "CensusGeography",
+    "CensusObservation",
+    "CensusRateLimitError",
+    "CensusResponseError",
+    "CensusVariable",
     "BLSAPIError",
     "BLSObservation",
     "BLSRateLimitError",
@@ -229,6 +246,7 @@ __all__ = [
     "WSJArticleClient",
     # Structured Data APIs
     "BEAClient",
+    "CensusClient",
     "BLSClient",
     "BISClient",
     "ECBClient",

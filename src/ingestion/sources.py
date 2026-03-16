@@ -523,6 +523,99 @@ BEA_KNOWN_DATASETS = {
     "InputOutput": "Input-Output Statistics",
 }
 
+CENSUS_DATASETS = {
+    # -- ACS 5-Year: Demographic and socioeconomic structure --
+    "total_population": {
+        "dataset": "acs/acs5", "vintage": 2023, "variable": "B01001_001E",
+        "name": "Total Population", "category": "demographics", "geo_for": "state:*",
+    },
+    "median_household_income": {
+        "dataset": "acs/acs5", "vintage": 2023, "variable": "B19013_001E",
+        "name": "Median Household Income", "category": "income", "geo_for": "state:*",
+    },
+    "total_housing_units": {
+        "dataset": "acs/acs5", "vintage": 2023, "variable": "B25001_001E",
+        "name": "Total Housing Units", "category": "housing", "geo_for": "state:*",
+    },
+    "owner_occupied_units": {
+        "dataset": "acs/acs5", "vintage": 2023, "variable": "B25003_002E",
+        "name": "Owner-Occupied Housing Units", "category": "housing", "geo_for": "state:*",
+    },
+    "labor_force_population": {
+        "dataset": "acs/acs5", "vintage": 2023, "variable": "B23025_002E",
+        "name": "In Labor Force (Population 16+)", "category": "employment", "geo_for": "state:*",
+    },
+    "median_home_value": {
+        "dataset": "acs/acs5", "vintage": 2023, "variable": "B25077_001E",
+        "name": "Median Value of Owner-Occupied Units", "category": "housing", "geo_for": "state:*",
+    },
+    "poverty_population": {
+        "dataset": "acs/acs5", "vintage": 2023, "variable": "B17001_002E",
+        "name": "Income Below Poverty Level", "category": "poverty", "geo_for": "state:*",
+    },
+    "gini_index": {
+        "dataset": "acs/acs5", "vintage": 2023, "variable": "B19083_001E",
+        "name": "Gini Index of Income Inequality", "category": "income", "geo_for": "state:*",
+    },
+    "median_gross_rent": {
+        "dataset": "acs/acs5", "vintage": 2023, "variable": "B25064_001E",
+        "name": "Median Gross Rent", "category": "housing", "geo_for": "state:*",
+    },
+    "health_insurance_coverage": {
+        "dataset": "acs/acs5", "vintage": 2023, "variable": "B27001_001E",
+        "name": "Total Health Insurance Universe", "category": "demographics", "geo_for": "state:*",
+    },
+    # -- ACS 1-Year: More timely versions --
+    "national_population_1yr": {
+        "dataset": "acs/acs1", "vintage": 2023, "variable": "B01001_001E",
+        "name": "Total Population (1-Year)", "category": "demographics", "geo_for": "us:*",
+    },
+    "national_median_income_1yr": {
+        "dataset": "acs/acs1", "vintage": 2023, "variable": "B19013_001E",
+        "name": "Median Household Income (1-Year)", "category": "income", "geo_for": "us:*",
+    },
+    # -- County Business Patterns --
+    "cbp_establishments": {
+        "dataset": "cbp", "vintage": 2022, "variable": "ESTAB",
+        "name": "Number of Establishments", "category": "business", "geo_for": "state:*",
+    },
+    "cbp_employment": {
+        "dataset": "cbp", "vintage": 2022, "variable": "EMP",
+        "name": "Paid Employees (mid-March)", "category": "employment", "geo_for": "state:*",
+    },
+    "cbp_annual_payroll": {
+        "dataset": "cbp", "vintage": 2022, "variable": "PAYANN",
+        "name": "Annual Payroll ($1,000)", "category": "income", "geo_for": "state:*",
+    },
+}
+
+CENSUS_KNOWN_DATASETS = {
+    "acs/acs5": "American Community Survey 5-Year Data",
+    "acs/acs1": "American Community Survey 1-Year Data",
+    "acs/acs5/profile": "ACS 5-Year Data Profiles",
+    "acs/acs5/subject": "ACS 5-Year Subject Tables",
+    "dec/pl": "Decennial Census Redistricting Data",
+    "dec/dhc": "Decennial Census Demographic and Housing",
+    "pep/population": "Population Estimates Program",
+    "pep/charagegroups": "Population Estimates by Age Groups",
+    "cbp": "County Business Patterns",
+    "zbp": "ZIP Code Business Patterns",
+    "ecnbasic": "Economic Census Basic Statistics",
+    "nonemp": "Nonemployer Statistics",
+    "abs/cb": "Annual Business Survey",
+    "acs/flows": "ACS Migration Flows",
+    "timeseries/poverty/histpov2": "Historical Poverty Tables",
+}
+
+# Baseline snapshot for catalog drift detection.
+# Updated: 2026-03-16. Re-run with --update-baseline to refresh.
+CENSUS_CATALOG_BASELINE = {
+    "total_datasets": 1760,
+    "distinct_paths": 564,
+    "distinct_vintages": 41,
+    "acs5_variables": 28295,
+}
+
 IMF_SERIES = {
     "cn_cpi": {
         "dataflow": "CPI", "version": "5.0.0", "key": "CHN.CPI._T.IX.M",
