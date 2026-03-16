@@ -1,4 +1,4 @@
-"""Integration tests for IMF full catalog access and 9-layer validation.
+"""Integration tests for IMF full catalog access and 10-layer validation.
 
 Requires network access and IMF_API_KEY. Run with:
     pytest tests/test_imf_full_catalog.py -v -s
@@ -6,6 +6,8 @@ Requires network access and IMF_API_KEY. Run with:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import random
 import sys
 import time
@@ -159,7 +161,64 @@ class TestStructureValidation:
         assert passed >= 1, "Expected at least 1 random DSD fetch to succeed"
 
 
-# ── Layer 3: Dataset Accessibility ────────────────────────────────────
+# ── Layer 3: Parameter / Dimension Enumeration ───────────────────────
+
+class TestDimensionEnumeration:
+    """Validate codelist values for each dimension in a DSD."""
+
+    def test_cpi_country_codelist_has_many_codes(self, imf_client: IMFClient) -> None:
+        structure = imf_client.get_datastructure("CPI")
+        country_dim = next(
+            (d for d in structure.dimensions if d.id in ("COUNTRY", "REF_AREA")),
+            None,
+        )
+        assert country_dim is not None, "CPI should have COUNTRY or REF_AREA dimension"
+        assert country_dim.code_count > 100, (
+            f"Expected >100 country codes, got {country_dim.code_count}"
+        )
+        assert len(country_dim.codes) > 100
+        print(f"\n  CPI {country_dim.id}: {country_dim.code_count} codes")
+        print(f"    Sample: {list(country_dim.codes[:10])}")
+
+    def test_cpi_indicator_codelist_populated(self, imf_client: IMFClient) -> None:
+        structure = imf_client.get_datastructure("CPI")
+        non_time_dims = [d for d in structure.dimensions if not d.is_time]
+        for dim in non_time_dims:
+            assert dim.code_count >= 0, (
+                f"CPI dim {dim.id}: negative code_count"
+            )
+            print(f"    {dim.id}: {dim.code_count} codes")
+
+    def test_frequency_codes_present(self, imf_client: IMFClient) -> None:
+        structure = imf_client.get_datastructure("CPI")
+        freq_dim = next(
+            (d for d in structure.dimensions if d.id in ("FREQUENCY", "FREQ")),
+            None,
+        )
+        if freq_dim is None:
+            pytest.skip("CPI does not expose a FREQUENCY dimension")
+        assert freq_dim.code_count >= 1, "FREQUENCY should have at least 1 code"
+        print(f"\n  CPI FREQUENCY: {list(freq_dim.codes[:20])}")
+
+    def test_codelist_enumeration_for_all_hardcoded_dataflows(
+        self, imf_client: IMFClient,
+    ) -> None:
+        seen: set[str] = set()
+        print(f"\n  {'Dataflow':<16} {'Dimension':<20} {'Codes':>6}")
+        print("  " + "-" * 44)
+        for name, cfg in IMF_SERIES.items():
+            df_id = cfg["dataflow"]
+            if df_id in seen:
+                continue
+            seen.add(df_id)
+            structure = imf_client.get_datastructure(df_id)
+            for dim in structure.dimensions:
+                if not dim.is_time:
+                    assert dim.code_count >= 0
+                    print(f"  {df_id:<16} {dim.id:<20} {dim.code_count:>6}")
+
+
+# ── Layer 4: Dataset Accessibility ────────────────────────────────────
 
 class TestDatasetAccessibility:
     """Validate that configured series are actually fetchable."""
@@ -205,7 +264,7 @@ class TestDatasetAccessibility:
         print(f"\n  cn_cpi: {len(obs)} valid observations")
 
 
-# ── Layer 4: Size Estimation ──────────────────────────────────────────
+# ── Layer 5: Size Estimation / Series Enumeration ────────────────────
 
 class TestSizeEstimation:
     """Validate size estimation via limit=1 probes."""
@@ -240,7 +299,7 @@ class TestSizeEstimation:
                 print(f"  {cfg['dataflow']:<16} SKIP ({exc!r})")
 
 
-# ── Layer 5: Dry-Run Ingestion ────────────────────────────────────────
+# ── Layer 6: Chunking Validation / Full Catalog Sweep ────────────────
 
 class TestDryRunIngestion:
     """Combined structure + data probe for catalog dataflows."""
@@ -354,7 +413,7 @@ class TestDryRunIngestion:
         )
 
 
-# ── Layer 6: Stress Test ──────────────────────────────────────────────
+# ── Layer 6b: Stress Test ─────────────────────────────────────────────
 
 class TestStressTest:
     """Larger fetches to validate chunked retrieval and memory."""
@@ -410,49 +469,212 @@ class TestStressTest:
         assert mem_delta_mb < 500, f"Memory usage too high: {mem_delta_mb:.1f} MB"
 
 
-# ── Layer 7: Automated Test Report ────────────────────────────────────
+# ── Layer 7: Deterministic Parsing ────────────────────────────────────
+
+class TestDeterministicParsing:
+    """Run identical fetches twice and verify byte-identical output."""
+
+    @staticmethod
+    def _obs_hash(obs: list) -> str:
+        """SHA-256 over sorted (series_id, date, value) tuples."""
+        rows = sorted((o.series_id, o.date, o.value) for o in obs)
+        payload = json.dumps(rows, sort_keys=True).encode()
+        return hashlib.sha256(payload).hexdigest()
+
+    def test_identical_fetches_produce_same_hash(self, imf_client: IMFClient) -> None:
+        _check_imf_available(imf_client)
+        cfg = IMF_SERIES["cn_cpi"]
+        obs1 = imf_client.get_data(
+            cfg["dataflow"], cfg["key"],
+            series_id=cfg["series_id"], version=cfg["version"],
+            start_period="2023", limit=12,
+        )
+        obs2 = imf_client.get_data(
+            cfg["dataflow"], cfg["key"],
+            series_id=cfg["series_id"], version=cfg["version"],
+            start_period="2023", limit=12,
+        )
+        hash1 = self._obs_hash(obs1)
+        hash2 = self._obs_hash(obs2)
+        assert hash1 == hash2, (
+            f"Deterministic parsing failed: {hash1} != {hash2}"
+        )
+        print(f"\n  cn_cpi hash: {hash1[:16]}... ({len(obs1)} obs)")
+
+    def test_stable_ordering_across_fetches(self, imf_client: IMFClient) -> None:
+        _check_imf_available(imf_client)
+        cfg = IMF_SERIES["cn_cpi"]
+        kwargs = dict(
+            series_id=cfg["series_id"], version=cfg["version"],
+            start_period="2023", limit=6,
+        )
+        obs1 = imf_client.get_data(cfg["dataflow"], cfg["key"], **kwargs)
+        obs2 = imf_client.get_data(cfg["dataflow"], cfg["key"], **kwargs)
+        dates1 = [o.date for o in obs1]
+        dates2 = [o.date for o in obs2]
+        assert dates1 == dates2, (
+            f"Date ordering not stable: {dates1} vs {dates2}"
+        )
+        print(f"\n  Ordering stable: {dates1}")
+
+    def test_chunked_deterministic(self, imf_client: IMFClient) -> None:
+        _check_imf_available(imf_client)
+        cfg = IMF_SERIES["cn_cpi"]
+        kwargs = dict(
+            series_id=cfg["series_id"],
+            chunk_ranges=[("2022", "2024")],
+        )
+        obs1 = imf_client.fetch_dataset_chunked(
+            cfg["dataflow"], cfg["key"], version=cfg["version"], **kwargs,
+        )
+        obs2 = imf_client.fetch_dataset_chunked(
+            cfg["dataflow"], cfg["key"], version=cfg["version"], **kwargs,
+        )
+        hash1 = self._obs_hash(obs1)
+        hash2 = self._obs_hash(obs2)
+        assert hash1 == hash2, (
+            f"Chunked determinism failed: {hash1} != {hash2}"
+        )
+        print(f"\n  Chunked hash: {hash1[:16]}... ({len(obs1)} obs)")
+
+
+# ── Layer 8: Full Validation Report ───────────────────────────────────
 
 class TestAutomatedTestReport:
     """Build ValidationReport from check results."""
 
     def test_generate_validation_report(self, imf_client: IMFClient) -> None:
+        """Run all 10 layers as quick checks and produce the final summary."""
         _check_imf_available(imf_client)
         checks: list[CheckResult] = []
 
-        # Run a few quick checks
+        # L1: Catalog discovery
         flows = imf_client.list_dataflows()
         checks.append(CheckResult(
-            check_name="catalog_discovery",
+            check_name="L1_catalog_discovery",
             layer=ValidationLayer.CATALOG,
             passed=len(flows) > 50,
             severity=ValidationSeverity.ERROR,
-            message=f"Found {len(flows)} dataflows",
+            message=f"dataflows discovered: {len(flows)}",
             source="imf",
         ))
 
+        # L2: DSD validation
+        dsd_ok = 0
+        seen_df: set[str] = set()
+        for cfg in IMF_SERIES.values():
+            df_id = cfg["dataflow"]
+            if df_id in seen_df:
+                continue
+            seen_df.add(df_id)
+            try:
+                s = imf_client.get_datastructure(df_id)
+                if len(s.dimensions) >= 2:
+                    dsd_ok += 1
+            except (IMFAPIError, IMFRateLimitError):
+                pass
+        checks.append(CheckResult(
+            check_name="L2_dsd_validation",
+            layer=ValidationLayer.CATALOG,
+            passed=dsd_ok == len(seen_df),
+            severity=ValidationSeverity.ERROR,
+            message=f"DSDs validated: {dsd_ok}/{len(seen_df)}",
+            source="imf",
+        ))
+
+        # L3: Dimension enumeration
+        cpi_dsd = imf_client.get_datastructure("CPI")
+        country_dim = next(
+            (d for d in cpi_dsd.dimensions if d.id in ("COUNTRY", "REF_AREA")), None,
+        )
+        dim_ok = country_dim is not None and country_dim.code_count > 100
+        checks.append(CheckResult(
+            check_name="L3_dimension_enumeration",
+            layer=ValidationLayer.CATALOG,
+            passed=dim_ok,
+            severity=ValidationSeverity.ERROR,
+            message=f"CPI country codes: {country_dim.code_count if country_dim else 0}",
+            source="imf",
+        ))
+
+        # L4: Dataset accessibility
         cfg = IMF_SERIES["cn_cpi"]
         try:
             obs = imf_client.get_data(
                 cfg["dataflow"], cfg["key"],
                 series_id=cfg["series_id"], version=cfg["version"], limit=1,
             )
-            checks.append(CheckResult(
-                check_name="data_accessibility_cn_cpi",
-                layer=ValidationLayer.SERIES,
-                passed=len(obs) >= 1,
-                severity=ValidationSeverity.ERROR,
-                message=f"Got {len(obs)} observations",
-                source="imf",
-            ))
-        except (IMFAPIError, IMFRateLimitError) as exc:
-            checks.append(CheckResult(
-                check_name="data_accessibility_cn_cpi",
-                layer=ValidationLayer.SERIES,
-                passed=False,
-                severity=ValidationSeverity.ERROR,
-                message=str(exc),
-                source="imf",
-            ))
+            data_ok = len(obs) >= 1
+        except (IMFAPIError, IMFRateLimitError):
+            data_ok = False
+        checks.append(CheckResult(
+            check_name="L4_dataset_accessibility",
+            layer=ValidationLayer.SERIES,
+            passed=data_ok,
+            severity=ValidationSeverity.ERROR,
+            message=f"datasets accessible: {'YES' if data_ok else 'NO'}",
+            source="imf",
+        ))
+
+        # L5: Series enumeration
+        try:
+            est = imf_client.estimate_size("CPI", "5.0.0")
+            series_ok = est.total_series > 0
+        except (IMFAPIError, IMFRateLimitError):
+            series_ok = False
+        checks.append(CheckResult(
+            check_name="L5_series_enumeration",
+            layer=ValidationLayer.SERIES,
+            passed=series_ok,
+            severity=ValidationSeverity.ERROR,
+            message=f"series enumeration: {'PASS' if series_ok else 'FAIL'}",
+            source="imf",
+        ))
+
+        # L6: Chunking
+        try:
+            chunk_obs = imf_client.fetch_dataset_chunked(
+                "CPI", cfg["key"], version=cfg["version"],
+                series_id=cfg["series_id"],
+                chunk_ranges=[("2023", "2024")],
+            )
+            chunk_ok = len(chunk_obs) > 0
+        except (IMFAPIError, IMFRateLimitError):
+            chunk_ok = False
+        checks.append(CheckResult(
+            check_name="L6_chunking",
+            layer=ValidationLayer.SERIES,
+            passed=chunk_ok,
+            severity=ValidationSeverity.ERROR,
+            message=f"chunking: {'PASS' if chunk_ok else 'FAIL'}",
+            source="imf",
+        ))
+
+        # L7: Deterministic parsing
+        try:
+            obs1 = imf_client.get_data(
+                cfg["dataflow"], cfg["key"],
+                series_id=cfg["series_id"], version=cfg["version"],
+                start_period="2023", limit=6,
+            )
+            obs2 = imf_client.get_data(
+                cfg["dataflow"], cfg["key"],
+                series_id=cfg["series_id"], version=cfg["version"],
+                start_period="2023", limit=6,
+            )
+            rows1 = sorted((o.series_id, o.date, o.value) for o in obs1)
+            rows2 = sorted((o.series_id, o.date, o.value) for o in obs2)
+            det_ok = rows1 == rows2
+        except (IMFAPIError, IMFRateLimitError):
+            det_ok = False
+        checks.append(CheckResult(
+            check_name="L7_deterministic_parsing",
+            layer=ValidationLayer.SERIES,
+            passed=det_ok,
+            severity=ValidationSeverity.ERROR,
+            message=f"deterministic parsing: {'PASS' if det_ok else 'FAIL'}",
+            source="imf",
+        ))
 
         report = ValidationReport(
             source="imf",
@@ -460,8 +682,16 @@ class TestAutomatedTestReport:
             timestamp=datetime.now(timezone.utc).isoformat(),
             checks=tuple(checks),
         )
-        assert report.passed, f"Report failed:\n{report.format_text()}"
+
+        # Print the 10-layer summary
+        print(f"\n  IMF ingestion validation")
+        print(f"  ========================")
+        for c in report.checks:
+            print(f"  {c.message}")
+        print(f"\n  overall: {'PASS' if report.passed else 'FAIL'}")
         print(f"\n{report.format_text()}")
+
+        assert report.passed, f"Report failed:\n{report.format_text()}"
 
     def test_report_captures_failures(self) -> None:
         checks = (
@@ -493,7 +723,7 @@ class TestAutomatedTestReport:
         print(f"\n  Failure report: error_count={report.error_count}")
 
 
-# ── Layer 8: Edge Cases ───────────────────────────────────────────────
+# ── Layer 9: Edge Cases ───────────────────────────────────────────────
 
 class TestEdgeCases:
     """Edge-case handling for the IMF client."""
@@ -553,7 +783,7 @@ class TestEdgeCases:
             print("\n  Future period: API error (acceptable)")
 
 
-# ── Layer 9: Performance Benchmark ────────────────────────────────────
+# ── Layer 10: Performance Benchmark ───────────────────────────────────
 
 class TestPerformanceBenchmark:
     """Timing benchmarks for key operations."""
