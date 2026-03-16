@@ -18,14 +18,14 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.ingestion.scrapers.imf import (
+from ingestion.scrapers.imf import (
     IMFAPIError,
     IMFClient,
     IMFRateLimitError,
     _build_decade_chunks,
 )
-from analyst.ingestion.sources import IMF_SERIES
-from analyst.ingestion.validation._types import (
+from ingestion.sources import IMF_SERIES
+from ingestion.validation._types import (
     CheckResult,
     ValidationLayer,
     ValidationReport,

@@ -21,15 +21,15 @@ import requests
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.ingestion.scrapers.fred import (
+from ingestion.scrapers.fred import (
     FredAPIError,
     FredClient,
     FredObservation,
     FredRateLimitError,
     FredVintageObservation,
 )
-from analyst.ingestion.sources import MACRO_SERIES, VINTAGE_SERIES
-from analyst.ingestion.validation._types import (
+from ingestion.sources import MACRO_SERIES, VINTAGE_SERIES
+from ingestion.validation._types import (
     CheckResult,
     ValidationLayer,
     ValidationReport,

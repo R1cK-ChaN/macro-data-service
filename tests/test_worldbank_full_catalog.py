@@ -17,11 +17,11 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.ingestion.scrapers.worldbank import (
+from ingestion.scrapers.worldbank import (
     WorldBankClient,
     WorldBankRateLimitError,
 )
-from analyst.ingestion.sources import (
+from ingestion.sources import (
     WorldBankIngestionClient,
     WorldBankSeriesConfig,
     _WorldBankRateLimiter,

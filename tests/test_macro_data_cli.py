@@ -12,10 +12,10 @@ from unittest.mock import Mock, patch
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.ingestion.scrapers.oecd import OECDDataflow, OECDStructureSummary
-from analyst.ingestion.sources import OECDSeriesConfig
-from analyst.macro_data.cli import main
-from analyst.storage.sqlite import default_engine_db_path
+from ingestion.scrapers.oecd import OECDDataflow, OECDStructureSummary
+from ingestion.sources import OECDSeriesConfig
+from macro_data.cli import main
+from storage.sqlite import default_engine_db_path
 
 
 class MacroDataCLITest(unittest.TestCase):
@@ -30,7 +30,7 @@ class MacroDataCLITest(unittest.TestCase):
                 name="Composite leading indicators",
             )
         ]
-        with patch("analyst.macro_data.cli.OECDIngestionClient", return_value=fake_ingestion):
+        with patch("macro_data.cli.OECDIngestionClient", return_value=fake_ingestion):
             with redirect_stdout(output):
                 rc = main(["oecd-dataflows", "--limit", "1"])
 
@@ -52,7 +52,7 @@ class MacroDataCLITest(unittest.TestCase):
             code_counts={"REF_AREA": 2},
             defaults={"FREQ": "M"},
         )
-        with patch("analyst.macro_data.cli.OECDIngestionClient", return_value=fake_ingestion):
+        with patch("macro_data.cli.OECDIngestionClient", return_value=fake_ingestion):
             with redirect_stdout(output):
                 rc = main(["oecd-structure", "--dataflow", "DSD_STES@DF_CLI"])
 
@@ -74,7 +74,7 @@ class MacroDataCLITest(unittest.TestCase):
                 filters={"REF_AREA": "USA", "FREQ": "M"},
             )
         }
-        with patch("analyst.macro_data.cli.OECDIngestionClient", return_value=fake_ingestion):
+        with patch("macro_data.cli.OECDIngestionClient", return_value=fake_ingestion):
             with redirect_stdout(output):
                 rc = main(["oecd-generate-configs", "--dataflow-limit", "1", "--series-per-dataflow", "1"])
 
@@ -87,8 +87,8 @@ class MacroDataCLITest(unittest.TestCase):
         fake_ingestion = Mock()
         fake_ingestion.refresh_catalog.return_value = Mock(source="oecd_catalog", count=12)
         fake_store = Mock()
-        with patch("analyst.macro_data.cli.OECDIngestionClient", return_value=fake_ingestion):
-            with patch("analyst.storage.SQLiteEngineStore", return_value=fake_store):
+        with patch("macro_data.cli.OECDIngestionClient", return_value=fake_ingestion):
+            with patch("storage.SQLiteEngineStore", return_value=fake_store):
                 with redirect_stdout(output):
                     rc = main(["oecd-refresh-catalog", "--dataflow-limit", "1", "--sleep-seconds", "0"])
 
@@ -110,7 +110,7 @@ class MacroDataCLITest(unittest.TestCase):
             "error": "",
             "ok": True,
         }
-        with patch("analyst.macro_data.factory.build_local_macro_data_service", return_value=fake_service):
+        with patch("macro_data.factory.build_local_macro_data_service", return_value=fake_service):
             with redirect_stdout(output):
                 rc = main(["refresh-source", "--source", "news"])
 
@@ -135,7 +135,7 @@ class MacroDataCLITest(unittest.TestCase):
             "error": "",
             "ok": True,
         }
-        with patch("analyst.macro_data.factory.build_local_macro_data_service", return_value=fake_service):
+        with patch("macro_data.factory.build_local_macro_data_service", return_value=fake_service):
             with redirect_stdout(output):
                 rc = main(["refresh-source", "--source", "reddit_trends"])
 
@@ -160,7 +160,7 @@ class MacroDataCLITest(unittest.TestCase):
             "error": "",
             "ok": True,
         }
-        with patch("analyst.macro_data.factory.build_local_macro_data_service", return_value=fake_service):
+        with patch("macro_data.factory.build_local_macro_data_service", return_value=fake_service):
             with redirect_stdout(output):
                 rc = main(["refresh-source", "--source", "weibo_trends"])
 

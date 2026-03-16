@@ -9,16 +9,16 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.ingestion.scrapers.reddit import RedditTrendPost
-from analyst.ingestion.scrapers.weibo import WeiboTrendItem
-from analyst.ingestion.sources import (
+from ingestion.scrapers.reddit import RedditTrendPost
+from ingestion.scrapers.weibo import WeiboTrendItem
+from ingestion.sources import (
     RawTrendEntry,
     RedditTrendIngestionClient,
     RedditTrendSourceConfig,
     WeiboTrendIngestionClient,
 )
-from analyst.macro_data.service import LocalMacroDataService
-from analyst.storage import SQLiteEngineStore, TrendTopicRecord
+from macro_data.service import LocalMacroDataService
+from storage import SQLiteEngineStore, TrendTopicRecord
 
 
 class _FakeRedditClient:

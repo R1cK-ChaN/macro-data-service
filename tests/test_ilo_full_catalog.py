@@ -19,14 +19,11 @@ import requests
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.ingestion.scrapers.ilo import (
-    ILOAPIError,
-    ILOClient,
-    ILORateLimitError,
-    _build_decade_chunks,
-)
-from analyst.ingestion.sources import ILO_SERIES
-from analyst.ingestion.validation._types import (
+from ingestion.sdmx._errors import ILOAPIError, ILORateLimitError
+from ingestion.sdmx._parsing import build_decade_chunks as _build_decade_chunks
+from ingestion.sdmx.providers.ilo import ILOClient
+from ingestion.sources import ILO_SERIES
+from ingestion.validation._types import (
     CheckResult,
     ValidationLayer,
     ValidationReport,

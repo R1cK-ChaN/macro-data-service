@@ -11,7 +11,7 @@ import pytest
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from analyst.ingestion.validation import (
+from ingestion.validation import (
     CheckResult,
     ValidationConfig,
     ValidationEngine,
@@ -287,7 +287,7 @@ class TestSchemaValidation:
         s.close()
 
     def test_first_run_captures_baseline(self, store: ValidationStore):
-        from analyst.ingestion.validation._schema import check_schema
+        from ingestion.validation._schema import check_schema
 
         items = [
             {"date": "2023", "value": 1.0, "country": "USA"},
@@ -302,7 +302,7 @@ class TestSchemaValidation:
         assert baseline is not None
 
     def test_consistent_schema(self, store: ValidationStore):
-        from analyst.ingestion.validation._schema import check_schema
+        from ingestion.validation._schema import check_schema
 
         items = [{"date": "2023", "value": 1.0, "country": "USA"}]
         check_schema("worldbank", "indicators", items, store)
@@ -312,7 +312,7 @@ class TestSchemaValidation:
         assert all(r.passed for r in results)
 
     def test_field_removed(self, store: ValidationStore):
-        from analyst.ingestion.validation._schema import check_schema
+        from ingestion.validation._schema import check_schema
 
         items_v1 = [{"date": "2023", "value": 1.0, "country": "USA"}]
         check_schema("worldbank", "indicators", items_v1, store)
@@ -325,7 +325,7 @@ class TestSchemaValidation:
         assert "country" in removed[0].details.get("removed_fields", [])
 
     def test_field_added(self, store: ValidationStore):
-        from analyst.ingestion.validation._schema import check_schema
+        from ingestion.validation._schema import check_schema
 
         items_v1 = [{"date": "2023", "value": 1.0}]
         check_schema("worldbank", "indicators", items_v1, store)
@@ -342,14 +342,14 @@ class TestSchemaValidation:
 
 class TestSeriesValidation:
     def test_empty_series(self):
-        from analyst.ingestion.validation._series import check_series_integrity
+        from ingestion.validation._series import check_series_integrity
 
         results = check_series_integrity("worldbank", "TEST", [])
         assert any(r.check_name == "series_empty" for r in results)
         assert any(not r.passed for r in results)
 
     def test_row_count_match(self):
-        from analyst.ingestion.validation._series import check_series_integrity
+        from ingestion.validation._series import check_series_integrity
 
         obs = [{"date": f"2023-0{i}-01", "value": float(i)} for i in range(1, 6)]
         results = check_series_integrity("worldbank", "TEST", obs, expected_count=5)
@@ -358,7 +358,7 @@ class TestSeriesValidation:
         assert row_check[0].passed is True
 
     def test_row_count_mismatch(self):
-        from analyst.ingestion.validation._series import check_series_integrity
+        from ingestion.validation._series import check_series_integrity
 
         obs = [{"date": "2023-01-01", "value": 1.0}]
         results = check_series_integrity("worldbank", "TEST", obs, expected_count=5)
@@ -366,7 +366,7 @@ class TestSeriesValidation:
         assert row_check[0].passed is False
 
     def test_missing_rate(self):
-        from analyst.ingestion.validation._series import check_series_integrity
+        from ingestion.validation._series import check_series_integrity
 
         obs = [
             {"date": "2023-01-01", "value": 1.0},
@@ -379,7 +379,7 @@ class TestSeriesValidation:
         assert missing[0].passed is False  # 33% > 20%
 
     def test_year_coverage(self):
-        from analyst.ingestion.validation._series import check_series_integrity
+        from ingestion.validation._series import check_series_integrity
 
         obs = [{"date": f"{y}-01-01", "value": 1.0} for y in range(1960, 2024)]
         results = check_series_integrity(
@@ -401,7 +401,7 @@ class TestAnomalyDetection:
         s.close()
 
     def test_first_run_captures_baseline(self, store: ValidationStore):
-        from analyst.ingestion.validation._anomaly import (
+        from ingestion.validation._anomaly import (
             check_anomalies,
             compute_series_profile,
         )
@@ -413,7 +413,7 @@ class TestAnomalyDetection:
         assert results[0].check_name == "anomaly_baseline_captured"
 
     def test_no_anomaly(self, store: ValidationStore):
-        from analyst.ingestion.validation._anomaly import (
+        from ingestion.validation._anomaly import (
             check_anomalies,
             compute_series_profile,
         )
@@ -426,7 +426,7 @@ class TestAnomalyDetection:
         assert all(r.passed for r in results)
 
     def test_mean_shift_detected(self, store: ValidationStore):
-        from analyst.ingestion.validation._anomaly import (
+        from ingestion.validation._anomaly import (
             check_anomalies,
             compute_series_profile,
         )
@@ -443,7 +443,7 @@ class TestAnomalyDetection:
         assert mean_shift[0].passed is False
 
     def test_compute_profile(self):
-        from analyst.ingestion.validation._anomaly import compute_series_profile
+        from ingestion.validation._anomaly import compute_series_profile
 
         obs = [
             {"date": "2023-01-01", "value": 10.0},
@@ -465,7 +465,7 @@ class TestAnomalyDetection:
 
 class TestCatalogCompleteness:
     def test_matching_counts(self):
-        from analyst.ingestion.validation._catalog import (
+        from ingestion.validation._catalog import (
             CatalogExpectation,
             check_catalog_completeness,
         )
@@ -478,7 +478,7 @@ class TestCatalogCompleteness:
         assert all(r.passed for r in results)
 
     def test_missing_items(self):
-        from analyst.ingestion.validation._catalog import (
+        from ingestion.validation._catalog import (
             CatalogExpectation,
             check_catalog_completeness,
         )
@@ -491,7 +491,7 @@ class TestCatalogCompleteness:
         assert results[0].passed is False
 
     def test_tolerance(self):
-        from analyst.ingestion.validation._catalog import (
+        from ingestion.validation._catalog import (
             CatalogExpectation,
             check_catalog_completeness,
         )
@@ -503,7 +503,7 @@ class TestCatalogCompleteness:
         assert results[0].passed is True
 
     def test_api_error_handled(self):
-        from analyst.ingestion.validation._catalog import (
+        from ingestion.validation._catalog import (
             CatalogExpectation,
             check_catalog_completeness,
         )
@@ -523,7 +523,7 @@ class TestCatalogCompleteness:
 
 class TestCrossSource:
     def test_matching_values(self):
-        from analyst.ingestion.validation._cross_source import (
+        from ingestion.validation._cross_source import (
             CrossSourcePair,
             check_cross_source,
         )
@@ -537,7 +537,7 @@ class TestCrossSource:
         assert level[0].passed is True
 
     def test_divergent_values(self):
-        from analyst.ingestion.validation._cross_source import (
+        from ingestion.validation._cross_source import (
             CrossSourcePair,
             check_cross_source,
         )
@@ -550,7 +550,7 @@ class TestCrossSource:
         assert level[0].passed is False
 
     def test_direction_agreement(self):
-        from analyst.ingestion.validation._cross_source import (
+        from ingestion.validation._cross_source import (
             CrossSourcePair,
             check_cross_source,
         )
@@ -572,7 +572,7 @@ class TestCrossSource:
         assert direction[0].passed is True
 
     def test_empty_data(self):
-        from analyst.ingestion.validation._cross_source import (
+        from ingestion.validation._cross_source import (
             CrossSourcePair,
             check_cross_source,
         )
@@ -588,7 +588,7 @@ class TestCrossSource:
 
 class TestDataDiff:
     def test_identical_data(self):
-        from analyst.ingestion.validation._diff import check_data_diff
+        from ingestion.validation._diff import check_data_diff
 
         obs = [{"date": "2023-01-01", "value": 1.0}, {"date": "2023-02-01", "value": 2.0}]
         results = check_data_diff("worldbank", "TEST", obs, obs)
@@ -597,7 +597,7 @@ class TestDataDiff:
         assert len(results) == 1  # only hash match, no diff results
 
     def test_revision_detected(self):
-        from analyst.ingestion.validation._diff import check_data_diff
+        from ingestion.validation._diff import check_data_diff
 
         api = [{"date": "2023-01-01", "value": 1.5}]
         db = [{"date": "2023-01-01", "value": 1.0}]
@@ -606,7 +606,7 @@ class TestDataDiff:
         assert len(revised) == 1
 
     def test_new_dates(self):
-        from analyst.ingestion.validation._diff import check_data_diff
+        from ingestion.validation._diff import check_data_diff
 
         api = [
             {"date": "2023-01-01", "value": 1.0},
@@ -618,7 +618,7 @@ class TestDataDiff:
         assert len(new) == 1
 
     def test_removed_dates(self):
-        from analyst.ingestion.validation._diff import check_data_diff
+        from ingestion.validation._diff import check_data_diff
 
         api = [{"date": "2023-01-01", "value": 1.0}]
         db = [
@@ -642,7 +642,7 @@ class TestVolumeChecks:
         s.close()
 
     def test_volume_in_range(self):
-        from analyst.ingestion.validation._volume import VolumeExpectation, check_volume
+        from ingestion.validation._volume import VolumeExpectation, check_volume
 
         exp = VolumeExpectation("fred", min_rows=100, max_rows=10000)
         results = check_volume("fred", 500, expectation=exp)
@@ -651,7 +651,7 @@ class TestVolumeChecks:
         assert results[0].check_name == "volume_in_range"
 
     def test_volume_below_minimum(self):
-        from analyst.ingestion.validation._volume import VolumeExpectation, check_volume
+        from ingestion.validation._volume import VolumeExpectation, check_volume
 
         exp = VolumeExpectation("fred", min_rows=1000)
         results = check_volume("fred", 50, expectation=exp)
@@ -660,7 +660,7 @@ class TestVolumeChecks:
         assert below[0].passed is False
 
     def test_volume_above_maximum(self):
-        from analyst.ingestion.validation._volume import VolumeExpectation, check_volume
+        from ingestion.validation._volume import VolumeExpectation, check_volume
 
         exp = VolumeExpectation("fred", min_rows=100, max_rows=1000)
         results = check_volume("fred", 5000, expectation=exp)
@@ -669,7 +669,7 @@ class TestVolumeChecks:
         assert above[0].passed is False
 
     def test_volume_regression_detected(self, store: ValidationStore):
-        from analyst.ingestion.validation._volume import check_volume
+        from ingestion.validation._volume import check_volume
 
         # First run: establish baseline
         check_volume("fred", 1000, validation_store=store)
@@ -680,7 +680,7 @@ class TestVolumeChecks:
         assert regression[0].passed is False  # 50% < 80% threshold
 
     def test_volume_no_regression(self, store: ValidationStore):
-        from analyst.ingestion.validation._volume import check_volume
+        from ingestion.validation._volume import check_volume
 
         check_volume("fred", 1000, validation_store=store)
         results = check_volume("fred", 950, validation_store=store)
@@ -689,7 +689,7 @@ class TestVolumeChecks:
         assert regression[0].passed is True  # 95% > 80% threshold
 
     def test_volume_batch(self):
-        from analyst.ingestion.validation._volume import (
+        from ingestion.validation._volume import (
             VolumeExpectation,
             check_volume_batch,
         )
@@ -714,7 +714,7 @@ class TestVolumeChecks:
 class TestFreshnessChecks:
     def test_fresh_data(self):
         from datetime import datetime as dt, timedelta, UTC as _UTC
-        from analyst.ingestion.validation._freshness import (
+        from ingestion.validation._freshness import (
             FreshnessExpectation,
             check_freshness,
         )
@@ -726,7 +726,7 @@ class TestFreshnessChecks:
         assert results[0].passed is True
 
     def test_stale_data(self):
-        from analyst.ingestion.validation._freshness import (
+        from ingestion.validation._freshness import (
             FreshnessExpectation,
             check_freshness,
         )
@@ -737,7 +737,7 @@ class TestFreshnessChecks:
         assert results[0].passed is False
 
     def test_no_date(self):
-        from analyst.ingestion.validation._freshness import check_freshness
+        from ingestion.validation._freshness import check_freshness
 
         results = check_freshness("fred", "")
         assert any(r.check_name == "freshness_no_data" for r in results)
@@ -745,7 +745,7 @@ class TestFreshnessChecks:
 
     def test_annual_data_with_long_threshold(self):
         from datetime import datetime as dt, timedelta, UTC as _UTC
-        from analyst.ingestion.validation._freshness import (
+        from ingestion.validation._freshness import (
             FreshnessExpectation,
             check_freshness,
         )
@@ -758,7 +758,7 @@ class TestFreshnessChecks:
 
     def test_freshness_batch(self):
         from datetime import datetime as dt, timedelta, UTC as _UTC
-        from analyst.ingestion.validation._freshness import (
+        from ingestion.validation._freshness import (
             FreshnessExpectation,
             check_freshness_batch,
         )
@@ -789,14 +789,14 @@ class TestRevisionMonitoring:
         s.close()
 
     def test_no_vintages(self):
-        from analyst.ingestion.validation._revision import check_revisions
+        from ingestion.validation._revision import check_revisions
 
         results = check_revisions("fred", "GDP", [])
         assert len(results) == 1
         assert results[0].check_name == "revision_no_vintages"
 
     def test_no_revisions(self):
-        from analyst.ingestion.validation._revision import check_revisions
+        from ingestion.validation._revision import check_revisions
 
         vintages = [
             {"observation_date": "2023-01-01", "vintage_date": "2023-02-01", "value": 100.0},
@@ -809,7 +809,7 @@ class TestRevisionMonitoring:
         assert "0 %" in rate[0].message or "0%" in rate[0].message
 
     def test_revisions_detected(self):
-        from analyst.ingestion.validation._revision import check_revisions
+        from ingestion.validation._revision import check_revisions
 
         vintages = [
             {"observation_date": "2023-01-01", "vintage_date": "2023-02-01", "value": 100.0},
@@ -824,7 +824,7 @@ class TestRevisionMonitoring:
         assert magnitude[0].details["max_magnitude"] == 5.0
 
     def test_revision_summary(self):
-        from analyst.ingestion.validation._revision import compute_revision_summary
+        from ingestion.validation._revision import compute_revision_summary
 
         vintages = [
             {"observation_date": "2023-01-01", "vintage_date": "2023-02-01", "value": 100.0},
@@ -840,7 +840,7 @@ class TestRevisionMonitoring:
         assert summary.latest_vintage_date == "2023-08-01"
 
     def test_revision_rate_spike(self, store: ValidationStore):
-        from analyst.ingestion.validation._revision import check_revisions
+        from ingestion.validation._revision import check_revisions
 
         # First run: low revision rate
         vintages_v1 = [
@@ -863,7 +863,7 @@ class TestRevisionMonitoring:
         assert spike[0].passed is False
 
     def test_magnitude_threshold(self):
-        from analyst.ingestion.validation._revision import check_revisions
+        from ingestion.validation._revision import check_revisions
 
         vintages = [
             {"observation_date": "2023-01-01", "vintage_date": "2023-02-01", "value": 100.0},
@@ -880,7 +880,7 @@ class TestRevisionMonitoring:
 
 class TestLineageValidation:
     def test_complete_lineage(self):
-        from analyst.ingestion.validation._lineage import check_lineage
+        from ingestion.validation._lineage import check_lineage
 
         obs = [
             {"source": "fred", "series_id": "CPIAUCSL", "date": "2023-01-01", "value": 100.0},
@@ -890,7 +890,7 @@ class TestLineageValidation:
         assert all(r.passed for r in results)
 
     def test_missing_source(self):
-        from analyst.ingestion.validation._lineage import check_lineage
+        from ingestion.validation._lineage import check_lineage
 
         obs = [
             {"source": "", "series_id": "CPIAUCSL", "date": "2023-01-01", "value": 100.0},
@@ -902,7 +902,7 @@ class TestLineageValidation:
         assert src[0].passed is False
 
     def test_missing_series_id(self):
-        from analyst.ingestion.validation._lineage import check_lineage
+        from ingestion.validation._lineage import check_lineage
 
         obs = [
             {"source": "fred", "series_id": "", "date": "2023-01-01", "value": 100.0},
@@ -912,7 +912,7 @@ class TestLineageValidation:
         assert sid[0].passed is False
 
     def test_missing_date(self):
-        from analyst.ingestion.validation._lineage import check_lineage
+        from ingestion.validation._lineage import check_lineage
 
         obs = [
             {"source": "fred", "series_id": "CPIAUCSL", "date": "", "value": 100.0},
@@ -922,7 +922,7 @@ class TestLineageValidation:
         assert d[0].passed is False
 
     def test_invalid_date_format(self):
-        from analyst.ingestion.validation._lineage import check_lineage
+        from ingestion.validation._lineage import check_lineage
 
         obs = [
             {"source": "fred", "series_id": "CPIAUCSL", "date": "abc", "value": 100.0},
@@ -932,7 +932,7 @@ class TestLineageValidation:
         assert d[0].passed is False
 
     def test_family_id_required(self):
-        from analyst.ingestion.validation._lineage import check_lineage
+        from ingestion.validation._lineage import check_lineage
 
         obs = [
             {"source": "fred", "series_id": "CPIAUCSL", "date": "2023-01-01", "value": 100.0, "obs_family_id": None},
@@ -943,7 +943,7 @@ class TestLineageValidation:
         assert fid[0].passed is False
 
     def test_family_id_present(self):
-        from analyst.ingestion.validation._lineage import check_lineage
+        from ingestion.validation._lineage import check_lineage
 
         obs = [
             {"source": "fred", "series_id": "CPIAUCSL", "date": "2023-01-01",
@@ -954,7 +954,7 @@ class TestLineageValidation:
         assert fid[0].passed is True
 
     def test_empty_list(self):
-        from analyst.ingestion.validation._lineage import check_lineage
+        from ingestion.validation._lineage import check_lineage
 
         results = check_lineage("fred", [])
         assert results == []
@@ -965,7 +965,7 @@ class TestLineageValidation:
 
 class TestDimensionValidation:
     def test_valid_dimensions(self):
-        from analyst.ingestion.validation._dimensions import check_dimensions
+        from ingestion.validation._dimensions import check_dimensions
 
         families = [
             {
@@ -989,7 +989,7 @@ class TestDimensionValidation:
         assert all(r.passed for r in results)
 
     def test_invalid_frequency(self):
-        from analyst.ingestion.validation._dimensions import check_dimensions
+        from ingestion.validation._dimensions import check_dimensions
 
         families = [
             {
@@ -1006,7 +1006,7 @@ class TestDimensionValidation:
         assert freq[0].passed is False
 
     def test_invalid_unit(self):
-        from analyst.ingestion.validation._dimensions import check_dimensions
+        from ingestion.validation._dimensions import check_dimensions
 
         families = [
             {
@@ -1023,7 +1023,7 @@ class TestDimensionValidation:
         assert unit[0].passed is False
 
     def test_invalid_seasonal_adjustment(self):
-        from analyst.ingestion.validation._dimensions import check_dimensions
+        from ingestion.validation._dimensions import check_dimensions
 
         families = [
             {
@@ -1040,7 +1040,7 @@ class TestDimensionValidation:
         assert sa[0].passed is False
 
     def test_unrecognized_country_code(self):
-        from analyst.ingestion.validation._dimensions import check_dimensions
+        from ingestion.validation._dimensions import check_dimensions
 
         families = [
             {
@@ -1057,7 +1057,7 @@ class TestDimensionValidation:
         assert cc[0].passed is False
 
     def test_invalid_source_id(self):
-        from analyst.ingestion.validation._dimensions import check_dimensions
+        from ingestion.validation._dimensions import check_dimensions
 
         families = [
             {
@@ -1074,13 +1074,13 @@ class TestDimensionValidation:
         assert sid[0].passed is False
 
     def test_empty_families(self):
-        from analyst.ingestion.validation._dimensions import check_dimensions
+        from ingestion.validation._dimensions import check_dimensions
 
         results = check_dimensions("fred", [])
         assert results == []
 
     def test_multiple_errors(self):
-        from analyst.ingestion.validation._dimensions import check_dimensions
+        from ingestion.validation._dimensions import check_dimensions
 
         families = [
             {

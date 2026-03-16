@@ -28,14 +28,14 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.ingestion.sdmx import SDMXAPIError, SDMXRateLimitError
-from analyst.ingestion.sdmx.providers.bis import BISClient as NewBIS
-from analyst.ingestion.sdmx.providers.ecb import ECBClient as NewECB
-from analyst.ingestion.sdmx.providers.eurostat import EurostatClient as NewEurostat
-from analyst.ingestion.sdmx.providers.ilo import ILOClient as NewILO
-from analyst.ingestion.sdmx.providers.unsd import UNSDClient as NewUNSD
-from analyst.ingestion.sources import BIS_SERIES, ECB_SERIES, EUROSTAT_SERIES
-from analyst.ingestion.validation._types import (
+from ingestion.sdmx import SDMXAPIError, SDMXRateLimitError
+from ingestion.sdmx.providers.bis import BISClient as NewBIS
+from ingestion.sdmx.providers.ecb import ECBClient as NewECB
+from ingestion.sdmx.providers.eurostat import EurostatClient as NewEurostat
+from ingestion.sdmx.providers.ilo import ILOClient as NewILO
+from ingestion.sdmx.providers.unsd import UNSDClient as NewUNSD
+from ingestion.sources import BIS_SERIES, ECB_SERIES, EUROSTAT_SERIES
+from ingestion.validation._types import (
     CheckResult,
     ValidationLayer,
     ValidationReport,

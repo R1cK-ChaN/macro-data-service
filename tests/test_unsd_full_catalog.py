@@ -19,13 +19,10 @@ import requests
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.ingestion.scrapers.unsd import (
-    UNSDAPIError,
-    UNSDClient,
-    UNSDRateLimitError,
-    _build_decade_chunks,
-)
-from analyst.ingestion.validation._types import (
+from ingestion.sdmx._errors import UNSDAPIError, UNSDRateLimitError
+from ingestion.sdmx._parsing import build_decade_chunks as _build_decade_chunks
+from ingestion.sdmx.providers.unsd import UNSDClient
+from ingestion.validation._types import (
     CheckResult,
     ValidationLayer,
     ValidationReport,

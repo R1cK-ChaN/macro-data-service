@@ -30,7 +30,7 @@ import requests
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.ingestion.scrapers.worldbank import WorldBankClient
+from ingestion.scrapers.worldbank import WorldBankClient
 
 pytestmark = pytest.mark.integration
 

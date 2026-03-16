@@ -8,8 +8,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.macro_data.service import LocalMacroDataService
-from analyst.storage import MarketPriceRecord, SQLiteEngineStore
+from macro_data.service import LocalMacroDataService
+from storage import MarketPriceRecord, SQLiteEngineStore
 
 
 class MacroOntologyServiceTest(unittest.TestCase):

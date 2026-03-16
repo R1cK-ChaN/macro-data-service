@@ -17,12 +17,12 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.ingestion.scrapers.oecd import (
+from ingestion.scrapers.oecd import (
     OECDClient,
     OECDRateLimitError,
     _build_decade_chunks,
 )
-from analyst.ingestion.sources import (
+from ingestion.sources import (
     OECDIngestionClient,
     OECDSeriesConfig,
     _OECDRateLimiter,

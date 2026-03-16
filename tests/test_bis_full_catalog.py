@@ -19,14 +19,11 @@ import requests
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.ingestion.scrapers.bis import (
-    BISAPIError,
-    BISClient,
-    BISRateLimitError,
-    _build_decade_chunks,
-)
-from analyst.ingestion.sources import BIS_SERIES
-from analyst.ingestion.validation._types import (
+from ingestion.sdmx._errors import BISAPIError, BISRateLimitError
+from ingestion.sdmx._parsing import build_decade_chunks as _build_decade_chunks
+from ingestion.sdmx.providers.bis import BISClient
+from ingestion.sources import BIS_SERIES
+from ingestion.validation._types import (
     CheckResult,
     ValidationLayer,
     ValidationReport,

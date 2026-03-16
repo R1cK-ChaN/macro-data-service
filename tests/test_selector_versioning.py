@@ -7,9 +7,9 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.ingestion.scrapers.forexfactory import ForexFactoryNewsClient
-from analyst.ingestion.scrapers.investing import InvestingNewsClient
-from analyst.ingestion.scrapers._selector_versioning import (
+from ingestion.scrapers.forexfactory import ForexFactoryNewsClient
+from ingestion.scrapers.investing import InvestingNewsClient
+from ingestion.scrapers._selector_versioning import (
     dom_structure_fingerprint,
     extract_with_selector_versions,
     reset_dom_fingerprint_cache,
@@ -110,7 +110,7 @@ class SelectorVersioningTest(unittest.TestCase):
         """
 
         client = InvestingNewsClient.__new__(InvestingNewsClient)
-        with self.assertLogs("analyst.ingestion.scrapers.investing", level="WARNING") as captured:
+        with self.assertLogs("ingestion.scrapers.investing", level="WARNING") as captured:
             items = client._parse_news_html(html, "stock-market-news")
 
         self.assertEqual(len(items), 2)
@@ -158,7 +158,7 @@ class SelectorVersioningTest(unittest.TestCase):
         first_items = client._parse_news_html(html_v1)
         self.assertEqual(first_items[0].raw_json["selector_version"], "news-block-v1")
 
-        with self.assertLogs("analyst.ingestion.scrapers.forexfactory", level="WARNING") as captured:
+        with self.assertLogs("ingestion.scrapers.forexfactory", level="WARNING") as captured:
             second_items = client._parse_news_html(html_v2)
 
         self.assertEqual(len(second_items), 1)

@@ -19,14 +19,11 @@ import requests
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from analyst.ingestion.scrapers.eurostat import (
-    EurostatAPIError,
-    EurostatClient,
-    EurostatRateLimitError,
-    _build_decade_chunks,
-)
-from analyst.ingestion.sources import EUROSTAT_SERIES
-from analyst.ingestion.validation._types import (
+from ingestion.sdmx._errors import EurostatAPIError, EurostatRateLimitError
+from ingestion.sdmx._parsing import build_decade_chunks as _build_decade_chunks
+from ingestion.sdmx.providers.eurostat import EurostatClient
+from ingestion.sources import EUROSTAT_SERIES
+from ingestion.validation._types import (
     CheckResult,
     ValidationLayer,
     ValidationReport,
@@ -570,7 +567,7 @@ class TestEdgeCases:
             print("\n  Future period: API error (acceptable)")
 
     def test_nuts_code_filtering(self) -> None:
-        from analyst.ingestion.scrapers.eurostat import _filter_nuts_codes
+        from ingestion.sdmx.providers.eurostat import _filter_nuts_codes
 
         codes = ("AT", "AT1", "AT11", "AT111", "DE", "DE1", "DE11")
         level0 = _filter_nuts_codes(codes, level=0)
@@ -580,7 +577,7 @@ class TestEdgeCases:
         print(f"\n  NUTS filtering: level0={level0}, level1={level1}")
 
     def test_geo_chunking_helpers(self) -> None:
-        from analyst.ingestion.scrapers.eurostat import (
+        from ingestion.sdmx.providers.eurostat import (
             _build_geo_chunks,
             _inject_geo_into_key,
         )
