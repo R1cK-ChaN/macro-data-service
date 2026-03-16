@@ -859,16 +859,23 @@ with configured series, and probes random catalog series for accessibility.
 ## 12. EIA — Energy Information Administration (`eia.py`)
 
 > **Transport:** Plain `requests.Session` — official public API v2.
+> Route-tree architecture: `GET /v2/` returns top-level routes, each
+> navigable via sub-routes down to leaf data endpoints.
 
 ### EIAClient
 
-Fetches **US energy data** (oil, gas, electricity, renewables) from the
-EIA Open Data API v2.
+Fetches **US energy data** (oil, gas, electricity, coal, total energy,
+international) from the EIA Open Data API v2.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
+| `list_routes(parent="")` | `list[EIARoute]` | Discover child routes at a level |
+| `get_facets(route)` | `list[EIAFacet]` | Extract facet definitions from a dataset route |
+| `count_routes(parent="")` | `int` | Number of child routes at a level |
 | `get_series(route, *, params, series_id, start=None, limit=100)` | `list[EIAObservation]` | Observations from a dataset route |
 | `get_metadata(route)` | `dict` | Dataset metadata/facets |
+
+**Exceptions:** `EIAAPIError` (base), `EIARateLimitError` (HTTP 429), `EIAResponseError` (error in JSON body).
 
 **`EIAObservation` fields:**
 
@@ -877,23 +884,40 @@ EIA Open Data API v2.
 | `series_id` | `str` | `"EIA_BRENT"` |
 | `date` | `str` | `"2026-03-10"` |
 | `value` | `float` | `72.50` |
-| `unit` | `str` | `"$/bbl"` |
+| `unit` | `str` | `"$/BBL"` |
+
+**`EIARoute` fields:** `route_id`, `name`, `description`.
+**`EIAFacet` fields:** `facet_id`, `description`.
 
 **Auth:** `EIA_API_KEY` environment variable.
-**Rate limit:** 0.5 s delay between requests.
+**Rate limit:** 0.5 s delay between requests (enforced by `_throttle()`).
 **Max rows:** 5000 per request.
 
-**Key series configured in `sources.py`:**
+**Key series configured in `sources.py` (15 entries):**
 
 | Key | Series ID | Description |
 |-----|-----------|-------------|
-| `petroleum_brent` | `EIA_BRENT` | Brent crude oil spot prices |
-| `petroleum_wti` | `EIA_WTI` | WTI crude oil spot prices |
+| `petroleum_brent` | `EIA_BRENT` | Brent crude oil spot prices (daily) |
+| `petroleum_wti` | `EIA_WTI` | WTI crude oil spot prices (daily) |
 | `petroleum_stocks` | `EIA_CRUDE_STOCKS` | Weekly petroleum stocks |
-| `natgas_futures` | `EIA_NATGAS` | Natural gas futures |
-| `petroleum_supply` | `EIA_PETROL_SUPPLY` | US petroleum supply & disposition |
+| `petroleum_supply` | `EIA_PETROL_SUPPLY` | US petroleum supply & disposition (monthly) |
+| `natgas_futures` | `EIA_NATGAS` | Natural gas futures (daily) |
+| `natgas_production` | `EIA_NATGAS_PROD` | Natural gas production summary (monthly) |
+| `elec_retail_sales` | `EIA_ELEC_RETAIL` | Electricity retail sales revenue (monthly) |
+| `elec_generation` | `EIA_ELEC_GEN` | Utility-scale electricity generation (monthly) |
+| `elec_fuel_consumption` | `EIA_ELEC_FUEL` | Fuel consumption for electricity generation (monthly) |
+| `coal_production` | `EIA_COAL_PROD` | Coal mine production (annual) |
+| `coal_consumption` | `EIA_COAL_CONS` | Coal consumption & quality (quarterly) |
+| `total_energy_consumption` | `EIA_TOTAL_CONSUMPTION` | Total energy consumption — TETCBUS (monthly) |
+| `total_energy_production` | `EIA_TOTAL_PRODUCTION` | Total energy production — TEPRBUS (monthly) |
+| `steo_crude_price` | `EIA_STEO_CRUDE` | STEO crude oil price forecast (monthly) |
+| `intl_crude_production` | `EIA_INTL_CRUDE_PROD` | International crude oil production (monthly) |
+
+**Known routes:** 11 top-level route descriptions in `EIA_KNOWN_ROUTES` (petroleum, natural-gas, electricity, coal, total-energy, steo, aeo, international, nuclear-outages, crude-oil-imports, densified-biomass).
 
 **Storage:** `indicators` table (source `eia`).
+
+**Tests:** `tests/test_eia_full_catalog.py` — 30 tests across 10 layers (route discovery, structure validation, facet enumeration, data accessibility, dry-run ingestion, stress test, automated report, edge cases, performance benchmark, full catalog crawl).
 
 ---
 
@@ -928,11 +952,14 @@ total public debt, Treasury General Account balance, and average interest rates.
 
 ---
 
-## 14. IMF — SDMX 3.0 API (`imf.py`)
+## 14. IMF — SDMX 3.0 API (`sdmx/providers/imf.py`)
 
-> **Transport:** Plain `requests.Session` — Azure-hosted API, requires
+> **Transport:** Unified SDMX layer (`SDMXClient` base) — Azure-hosted API, requires
 > `Ocp-Apim-Subscription-Key` header.  SDMX 3.0 supports JSON responses
 > and point-in-time vintage queries via the `asOf` parameter.
+>
+> **Note:** Formerly `scrapers/imf.py` (standalone 692-line client). Now a thin
+> wrapper around the unified SDMX base client at `src/ingestion/sdmx/providers/imf.py`.
 
 ### IMFClient
 
@@ -1114,9 +1141,15 @@ money supply (M1/M2/M3), deposit facility rate, and EUR/USD exchange rate.
 
 ---
 
-## 18. OECD — SDMX REST v2 API (`oecd.py`)
+## 18. OECD — SDMX REST v2 API (`sdmx/providers/oecd.py`)
 
 > **Transport:** Plain `requests.Session` — official public API, no key required.
+> Uses XML for structure endpoints, JSON for data, with v2 URL fallback.
+>
+> **Note:** Formerly `scrapers/oecd.py` (standalone 1,136-line client). Now lives in
+> the unified SDMX layer at `src/ingestion/sdmx/providers/oecd.py`. Error classes
+> use the SDMX hierarchy (`OECDAPIError`, `OECDRateLimitError`, `OECDResponseFormatError`
+> from `sdmx/_errors.py`).
 
 ### OECDClient
 
