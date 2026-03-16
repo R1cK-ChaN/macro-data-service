@@ -211,6 +211,51 @@ class BLSClient:
             ))
         return surveys
 
+    # -- Catalog methods (flat-file based) ------------------------------------
+
+    _CATALOG_BASE = "https://download.bls.gov/pub/time.series"
+
+    def get_survey_series_catalog(
+        self,
+        survey_prefix: str,
+    ) -> list[str]:
+        """Download the full series list for a survey from BLS flat files.
+
+        BLS publishes tab-delimited catalog files at
+        download.bls.gov/pub/time.series/{prefix}/{prefix}.series.
+        This does NOT count against the 500 queries/day API limit.
+        """
+        prefix = survey_prefix.lower()
+        url = f"{self._CATALOG_BASE}/{prefix}/{prefix}.series"
+        try:
+            response = self.session.get(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; MacroDataService/1.0)",
+                    "Accept": "text/plain,*/*",
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logger.warning("Failed to fetch catalog for %s: %s", survey_prefix, exc)
+            return []
+        lines = response.text.strip().split("\n")
+        if len(lines) <= 1:
+            return []
+        series_ids: list[str] = []
+        for line in lines[1:]:  # skip header
+            parts = line.split("\t")
+            if parts:
+                sid = parts[0].strip()
+                if sid:
+                    series_ids.append(sid)
+        return series_ids
+
+    def count_survey_series(self, survey_prefix: str) -> int:
+        """Return the total series count for a survey (from flat-file catalog)."""
+        return len(self.get_survey_series_catalog(survey_prefix))
+
     # -- Internal methods ----------------------------------------------------
 
     def _post_timeseries(

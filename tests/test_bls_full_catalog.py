@@ -648,3 +648,75 @@ class TestFullCatalogCrawl:
 
         assert coverage >= 0.90, f"Coverage {coverage:.0%} < 90%"
         time.sleep(_BLS_REQUEST_DELAY)
+
+    def test_flat_file_catalog_enumeration(self, bls_client: BLSClient) -> None:
+        """Enumerate all series across major surveys via BLS flat-file catalogs.
+
+        BLS publishes tab-delimited series lists at download.bls.gov.
+        These files contain ALL series IDs for each survey — no API
+        quota consumed. This proves access to the full BLS catalog.
+        """
+        surveys_to_enumerate = [
+            "CU", "CW", "CE", "LN", "WP", "PC", "JT",
+            "AP", "CI", "PR", "LA", "SM", "BD",
+        ]
+        survey_counts: list[tuple[str, str, int]] = []
+        total = 0
+
+        print(f"\n  Enumerating BLS flat-file catalogs...")
+        print(f"  {'Survey':<6} {'Name':<35} {'Series':>10}")
+        print("  " + "-" * 53)
+
+        for prefix in surveys_to_enumerate:
+            count = bls_client.count_survey_series(prefix)
+            name = BLS_SURVEY_PREFIXES.get(prefix, prefix)
+            survey_counts.append((prefix, name, count))
+            total += count
+            print(f"  {prefix:<6} {name:<35} {count:>10,}")
+
+        print(f"\n  ── Flat-File Catalog Report ──")
+        print(f"  Surveys enumerated:  {len(surveys_to_enumerate)}")
+        print(f"  Total series:        {total:,}")
+
+        assert total > 100_000, (
+            f"Expected >100k series across surveys, got {total:,}"
+        )
+
+    def test_configured_series_in_catalog(self, bls_client: BLSClient) -> None:
+        """Verify all BLS_SERIES entries appear in the flat-file catalogs."""
+        configured_surveys = {meta["survey"] for meta in BLS_SERIES.values()}
+        catalog_ids: set[str] = set()
+        for prefix in configured_surveys:
+            catalog_ids.update(bls_client.get_survey_series_catalog(prefix))
+
+        all_configured = [meta["series_id"] for meta in BLS_SERIES.values()]
+        missing = [sid for sid in all_configured if sid not in catalog_ids]
+
+        print(f"\n  Catalog coverage: {len(all_configured) - len(missing)}/{len(all_configured)} configured series in flat-file catalogs")
+        if missing:
+            print(f"  Missing from catalog: {missing}")
+        assert len(missing) <= 2, f"Too many configured series missing from catalog: {missing}"
+
+    def test_catalog_sample_accessibility(self, bls_client: BLSClient) -> None:
+        """Probe random series from catalogs to verify they return data."""
+        import random
+        _check_bls_available(bls_client)
+
+        # Get CPI + CES catalogs and sample 30 random series
+        cpi_catalog = bls_client.get_survey_series_catalog("CU")
+        ces_catalog = bls_client.get_survey_series_catalog("CE")
+        combined = cpi_catalog + ces_catalog
+        if not combined:
+            pytest.skip("No catalog series found")
+
+        sample = random.sample(combined, min(30, len(combined)))
+        results = bls_client.get_series(sample, start_year=2024, end_year=2024)
+        accessible = sum(1 for obs in results.values() if obs)
+        rate = accessible / len(sample) if sample else 0
+
+        print(f"\n  ── Catalog Sample Accessibility ──")
+        print(f"  Sampled:     {len(sample)} series (from CPI + CES catalogs)")
+        print(f"  Accessible:  {accessible} ({rate:.0%})")
+
+        assert rate >= 0.50, f"Catalog sample accessibility {rate:.0%} < 50%"
+        time.sleep(_BLS_REQUEST_DELAY)
