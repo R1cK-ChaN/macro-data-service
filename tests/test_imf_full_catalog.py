@@ -18,12 +18,9 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from ingestion.scrapers.imf import (
-    IMFAPIError,
-    IMFClient,
-    IMFRateLimitError,
-    _build_decade_chunks,
-)
+from ingestion.sdmx._errors import IMFAPIError, IMFRateLimitError
+from ingestion.sdmx._parsing import build_decade_chunks as _build_decade_chunks
+from ingestion.sdmx.providers.imf import IMFClient
 from ingestion.sources import IMF_SERIES
 from ingestion.validation._types import (
     CheckResult,

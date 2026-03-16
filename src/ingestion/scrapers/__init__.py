@@ -91,7 +91,9 @@ from .fred import (
     FredRateLimitError,
     FredVintageObservation,
 )
-from .imf import IMFClient, IMFObservation, IMFVintageObservation
+from ingestion.sdmx._errors import IMFAPIError, IMFRateLimitError
+from ingestion.sdmx._types import SDMXObservation as IMFObservation
+from ingestion.sdmx.providers.imf import IMFClient, IMFVintageObservation
 from .investing import InvestingCalendarClient, InvestingNewsClient
 from .oecd import (
     OECDAPIError,
@@ -201,7 +203,9 @@ __all__ = [
     "FredVintageObservation",
     "GovReportClient",
     "GovReportItem",
+    "IMFAPIError",
     "IMFObservation",
+    "IMFRateLimitError",
     "IMFVintageObservation",
     "NYFedRate",
     "OECDAPIError",

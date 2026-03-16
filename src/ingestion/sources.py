@@ -35,7 +35,7 @@ from ingestion.sdmx.providers.ecb import ECBClient
 from ingestion.scrapers.eia import EIAClient
 from ingestion.sdmx.providers.eurostat import EurostatClient
 from ingestion.scrapers.fred import FredClient
-from ingestion.scrapers.imf import IMFClient
+from ingestion.sdmx.providers.imf import IMFClient
 from ingestion.scrapers.oecd import OECDClient, OECDRateLimitError
 from ingestion.scrapers.reddit import RedditTrendClient, RedditTrendPost
 from ingestion.scrapers.weibo import WeiboTrendClient, WeiboTrendItem
