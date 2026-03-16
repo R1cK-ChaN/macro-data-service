@@ -5,7 +5,7 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 
-from ingestion.scrapers.oecd import OECDClient
+from ingestion.sdmx.providers.oecd import OECDClient
 from ingestion.sources import (
     OECDIngestionClient,
     WorldBankIngestionClient,

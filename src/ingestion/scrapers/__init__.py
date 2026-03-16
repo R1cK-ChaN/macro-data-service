@@ -95,16 +95,14 @@ from ingestion.sdmx._errors import IMFAPIError, IMFRateLimitError
 from ingestion.sdmx._types import SDMXObservation as IMFObservation
 from ingestion.sdmx.providers.imf import IMFClient, IMFVintageObservation
 from .investing import InvestingCalendarClient, InvestingNewsClient
-from .oecd import (
-    OECDAPIError,
+from ingestion.sdmx._errors import OECDAPIError, OECDRateLimitError, OECDResponseFormatError
+from ingestion.sdmx.providers.oecd import (
     OECDClient,
     OECDCode,
     OECDDataStructure,
     OECDDataflow,
     OECDDimension,
     OECDObservation,
-    OECDRateLimitError,
-    OECDResponseFormatError,
     OECDSeries,
     OECDStructureSummary,
 )

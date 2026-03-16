@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from ingestion.scrapers.oecd import OECDDataflow, OECDStructureSummary
+from ingestion.sdmx.providers.oecd import OECDDataflow, OECDStructureSummary
 from ingestion.sources import OECDSeriesConfig
 from macro_data.cli import main
 from storage.sqlite import default_engine_db_path

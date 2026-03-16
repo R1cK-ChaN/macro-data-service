@@ -35,3 +35,4 @@ class ILORateLimitError(ILOAPIError, SDMXRateLimitError): pass  # noqa: E701
 
 class OECDAPIError(SDMXAPIError): pass         # noqa: E701
 class OECDRateLimitError(OECDAPIError, SDMXRateLimitError): pass  # noqa: E701
+class OECDResponseFormatError(OECDAPIError): pass  # noqa: E701
