@@ -46,17 +46,20 @@ class OECDFetcher:
         return self._fetch_one(cfg)
 
     def _fetch_one(self, cfg: OECDSeriesConfig) -> RawSeries | None:
+        # OECD SDMX REST API rejects "latest" as a version in the URL path;
+        # pass None to let the server use its default version.
+        version = cfg.version if cfg.version != "latest" else None
         try:
             if cfg.key is not None:
                 obs_list = self.client.fetch_series(
                     cfg.dataflow, cfg.key,
-                    agency_id=cfg.agency_id, version=cfg.version,
+                    agency_id=cfg.agency_id, version=version,
                     series_id=cfg.series_id, limit=100,
                 )
             else:
                 obs_list = self.client.fetch_data(
                     cfg.dataflow,
-                    agency_id=cfg.agency_id, version=cfg.version,
+                    agency_id=cfg.agency_id, version=version,
                     filters=cfg.filters, series_id=cfg.series_id, limit=100,
                 )
         except Exception:

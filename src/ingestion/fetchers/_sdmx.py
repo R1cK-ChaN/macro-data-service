@@ -53,9 +53,20 @@ class SDMXFetcher:
         version = cfg.get("version", "")
         series_id = cfg.get("series_id", "")
         try:
-            obs_list = self.client.get_data(
-                dataflow, version, key, series_id=series_id, limit=30,
-            )
+            # OECD uses (dataflow, version, key) positional signature;
+            # BIS/IMF/base use (dataflow, key) with version as kwarg.
+            if version and self.source_name == "oecd":
+                obs_list = self.client.get_data(
+                    dataflow, version, key, series_id=series_id, limit=30,
+                )
+            elif version:
+                obs_list = self.client.get_data(
+                    dataflow, key, series_id=series_id, version=version, limit=30,
+                )
+            else:
+                obs_list = self.client.get_data(
+                    dataflow, key, series_id=series_id, limit=30,
+                )
         except Exception:
             return None
         raw_obs = tuple(
