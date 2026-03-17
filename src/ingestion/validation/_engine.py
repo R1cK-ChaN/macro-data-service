@@ -261,6 +261,181 @@ class ValidationEngine:
         checks = check_dimensions(source, families)
         return self._finalize_report(source, checks, started)
 
+    # ── Concept-level validation ─────────────────────────────────
+
+    def validate_concept(
+        self,
+        concept_id: str,
+        store: Any,
+        *,
+        max_staleness_days: int = 90,
+        value_tolerance_pct: float = 1.0,
+        lookback_periods: int = 12,
+    ) -> ValidationReport:
+        """Validate a single concept across all its mapped sources.
+
+        Checks completeness, freshness, and cross-source consistency using
+        concept_map mappings rather than hardcoded pairs.
+        """
+        from ._types import ValidationLayer
+
+        started = time.perf_counter()
+        checks: list[CheckResult] = []
+        now = datetime.now(UTC).isoformat()
+
+        mappings = store.get_concept_series(concept_id)
+        if not mappings:
+            checks.append(
+                CheckResult(
+                    check_name="concept_exists",
+                    layer=ValidationLayer.CONCEPT,
+                    passed=False,
+                    severity=ValidationSeverity.ERROR,
+                    message=f"Concept '{concept_id}' not found in concept_map",
+                    source=concept_id,
+                    timestamp=now,
+                )
+            )
+            return self._finalize_report(f"concept:{concept_id}", checks, started)
+
+        checks.append(
+            CheckResult(
+                check_name="concept_exists",
+                layer=ValidationLayer.CONCEPT,
+                passed=True,
+                severity=ValidationSeverity.INFO,
+                message=f"Concept '{concept_id}' has {len(mappings)} source mapping(s)",
+                source=concept_id,
+                timestamp=now,
+            )
+        )
+
+        # Per-source completeness and freshness
+        source_stats: list[dict[str, Any]] = store.get_concept_stats(concept_id)
+        sources_with_data = 0
+
+        for stats in source_stats:
+            source = stats["source"]
+            series_id = stats["series_id"]
+            count = stats["count"]
+            label = f"{source}/{series_id}"
+
+            # Completeness: does this source have data?
+            has_data = count > 0
+            if has_data:
+                sources_with_data += 1
+            checks.append(
+                CheckResult(
+                    check_name="concept_completeness",
+                    layer=ValidationLayer.CONCEPT,
+                    passed=has_data,
+                    severity=ValidationSeverity.WARNING if not has_data else ValidationSeverity.INFO,
+                    message=(
+                        f"{label}: {count} observations"
+                        if has_data
+                        else f"{label}: no data found"
+                    ),
+                    source=concept_id,
+                    series_id=series_id,
+                    timestamp=now,
+                    details={
+                        "source": source,
+                        "series_id": series_id,
+                        "count": count,
+                        "min_date": stats.get("min_date"),
+                        "max_date": stats.get("max_date"),
+                    },
+                )
+            )
+
+            # Freshness: is the latest date recent enough?
+            max_date = stats.get("max_date")
+            if max_date:
+                freshness_results = check_freshness(
+                    source,
+                    max_date,
+                    FreshnessExpectation(
+                        source=source,
+                        max_staleness_days=max_staleness_days,
+                        series_id=series_id,
+                        description=f"{concept_id} via {label}",
+                    ),
+                )
+                checks.extend(freshness_results)
+
+        # Overall completeness
+        checks.append(
+            CheckResult(
+                check_name="concept_source_coverage",
+                layer=ValidationLayer.CONCEPT,
+                passed=sources_with_data > 0,
+                severity=(
+                    ValidationSeverity.ERROR
+                    if sources_with_data == 0
+                    else ValidationSeverity.INFO
+                ),
+                message=f"{concept_id}: {sources_with_data}/{len(mappings)} sources have data",
+                source=concept_id,
+                timestamp=now,
+                details={
+                    "sources_with_data": sources_with_data,
+                    "total_sources": len(mappings),
+                },
+            )
+        )
+
+        # Cross-source consistency for multi-source concepts
+        if sources_with_data >= 2:
+            obs_by_family: dict[str, list[dict[str, Any]]] = {}
+            obs = store.get_concept_observations(concept_id)
+            for source_val, series_id_val, date_val, value_val in obs:
+                fam_key = f"{source_val}/{series_id_val}"
+                obs_by_family.setdefault(fam_key, []).append(
+                    {"date": date_val, "value": value_val}
+                )
+
+            family_keys = list(obs_by_family.keys())
+            for i in range(len(family_keys)):
+                for j in range(i + 1, len(family_keys)):
+                    key_a, key_b = family_keys[i], family_keys[j]
+                    pair = CrossSourcePair(
+                        family_id_a=key_a,
+                        family_id_b=key_b,
+                        comparison_type="level",
+                        tolerance_pct=value_tolerance_pct,
+                        description=f"{concept_id}: {key_a} vs {key_b}",
+                    )
+                    obs_a = sorted(obs_by_family[key_a], key=lambda o: o["date"], reverse=True)
+                    obs_b = sorted(obs_by_family[key_b], key=lambda o: o["date"], reverse=True)
+                    checks.extend(
+                        check_cross_source(pair, obs_a, obs_b, lookback_periods=lookback_periods)
+                    )
+
+        return self._finalize_report(f"concept:{concept_id}", checks, started)
+
+    def validate_all_concepts(
+        self,
+        store: Any,
+        *,
+        max_staleness_days: int = 90,
+        value_tolerance_pct: float = 1.0,
+        lookback_periods: int = 12,
+        country_code: str | None = None,
+    ) -> list[ValidationReport]:
+        """Validate every concept in the concept_map."""
+        concepts = store.list_concepts(country_code=country_code)
+        reports: list[ValidationReport] = []
+        for concept_id in concepts:
+            report = self.validate_concept(
+                concept_id,
+                store,
+                max_staleness_days=max_staleness_days,
+                value_tolerance_pct=value_tolerance_pct,
+                lookback_periods=lookback_periods,
+            )
+            reports.append(report)
+        return reports
+
     # ── Full validation (CLI / scheduled) ────────────────────────
 
     def validate_full(

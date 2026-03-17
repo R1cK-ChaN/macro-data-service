@@ -9,7 +9,9 @@ import pytest
 
 from ingestion.normalization import Normalizer, normalize_observation_date
 from ingestion.types import CanonicalRow, RawObservation, RawSeries
-from storage.sqlite import ConceptMapRecord, ObsFamilyRecord, SQLiteEngineStore
+from ingestion.validation import ValidationEngine, ValidationStore
+from ingestion.validation._types import ValidationLayer, ValidationSeverity
+from storage.sqlite import ConceptMapRecord, IndicatorObservationRecord, ObsFamilyRecord, SQLiteEngineStore
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────
@@ -350,3 +352,177 @@ class TestNormalizerDateIntegration:
         fred_rows = normalizer.normalize(fred_series)
         imf_rows = normalizer.normalize(imf_series)
         assert fred_rows[0].date == imf_rows[0].date == "2024-01-01"
+
+
+# ── Helpers ───────────────────────────────────────────────────────────
+
+
+def _insert_obs(store: SQLiteEngineStore, series_id: str, source: str, date: str, value: float) -> None:
+    store.upsert_indicator_observation(
+        IndicatorObservationRecord(series_id=series_id, source=source, date=date, value=value)
+    )
+
+
+# ── Series stats tests ───────────────────────────────────────────────
+
+
+class TestSeriesStats:
+    def test_get_series_stats_empty(self, store):
+        stats = store.get_series_stats("fred", "CPIAUCSL")
+        assert stats["count"] == 0
+        assert stats["min_date"] is None
+        assert stats["max_date"] is None
+        assert stats["latest_value"] is None
+
+    def test_get_series_stats_with_data(self, store):
+        _insert_obs(store, "CPIAUCSL", "fred", "2024-01-01", 312.3)
+        _insert_obs(store, "CPIAUCSL", "fred", "2024-02-01", 313.1)
+        _insert_obs(store, "CPIAUCSL", "fred", "2024-03-01", 314.0)
+        stats = store.get_series_stats("fred", "CPIAUCSL")
+        assert stats["count"] == 3
+        assert stats["min_date"] == "2024-01-01"
+        assert stats["max_date"] == "2024-03-01"
+        assert stats["latest_value"] == 314.0
+
+    def test_get_concept_stats(self, store):
+        store.seed_concept_map()
+        _insert_obs(store, "CPIAUCSL", "fred", "2024-01-01", 312.3)
+        stats = store.get_concept_stats("CPI_US")
+        assert len(stats) == 2  # fred + bls
+        fred_stat = next(s for s in stats if s["source"] == "fred")
+        assert fred_stat["count"] == 1
+        assert fred_stat["series_id"] == "CPIAUCSL"
+        bls_stat = next(s for s in stats if s["source"] == "bls")
+        assert bls_stat["count"] == 0
+
+
+# ── Concept validation E2E tests ─────────────────────────────────────
+
+
+@pytest.fixture()
+def validation_engine(store):
+    validation_store = ValidationStore(str(store.db_path))
+    return ValidationEngine(validation_store)
+
+
+class TestValidateConceptNotFound:
+    def test_unknown_concept_fails(self, store, validation_engine):
+        store.seed_concept_map()
+        report = validation_engine.validate_concept("NONEXISTENT", store)
+        assert not report.passed
+        assert report.error_count >= 1
+        assert report.source == "concept:NONEXISTENT"
+        assert any(c.check_name == "concept_exists" and not c.passed for c in report.checks)
+
+    def test_report_format(self, store, validation_engine):
+        store.seed_concept_map()
+        report = validation_engine.validate_concept("NONEXISTENT", store)
+        text = report.format_text()
+        assert "NONEXISTENT" in text
+        assert "FAIL" in text
+
+
+class TestValidateConceptEmptyDB:
+    def test_concept_with_no_data(self, store, validation_engine):
+        store.seed_concept_map()
+        report = validation_engine.validate_concept("CPI_US", store)
+        assert report.source == "concept:CPI_US"
+        # concept_exists should pass (it's in the map)
+        exists_check = next(c for c in report.checks if c.check_name == "concept_exists")
+        assert exists_check.passed
+        # completeness checks should show no data
+        completeness = [c for c in report.checks if c.check_name == "concept_completeness"]
+        assert len(completeness) == 2  # fred + bls
+        assert all(not c.passed for c in completeness)
+        # coverage should fail (0 sources with data)
+        coverage = next(c for c in report.checks if c.check_name == "concept_source_coverage")
+        assert not coverage.passed
+        assert coverage.details["sources_with_data"] == 0
+
+    def test_concept_with_partial_data(self, store, validation_engine):
+        store.seed_concept_map()
+        _insert_obs(store, "CPIAUCSL", "fred", "2024-01-01", 312.3)
+        report = validation_engine.validate_concept("CPI_US", store)
+        # coverage should pass (at least 1 source)
+        coverage = next(c for c in report.checks if c.check_name == "concept_source_coverage")
+        assert coverage.passed
+        assert coverage.details["sources_with_data"] == 1
+
+
+class TestValidateConceptWithData:
+    def test_concept_full_data_both_sources(self, store, validation_engine):
+        store.seed_concept_map()
+        # FRED CPI
+        for i, v in enumerate([312.3, 313.1, 314.0], start=1):
+            _insert_obs(store, "CPIAUCSL", "fred", f"2024-0{i}-01", v)
+        # BLS CPI
+        for i, v in enumerate([312.0, 312.8, 313.5], start=1):
+            _insert_obs(store, "CUUR0000SA0", "bls", f"2024-0{i}-01", v)
+
+        report = validation_engine.validate_concept("CPI_US", store)
+        assert report.source == "concept:CPI_US"
+
+        # Both completeness checks pass
+        completeness = [c for c in report.checks if c.check_name == "concept_completeness"]
+        assert all(c.passed for c in completeness)
+
+        # Coverage passes
+        coverage = next(c for c in report.checks if c.check_name == "concept_source_coverage")
+        assert coverage.passed
+        assert coverage.details["sources_with_data"] == 2
+
+        # Cross-source check should be present
+        cross = [c for c in report.checks if c.layer == ValidationLayer.CROSS_SOURCE]
+        assert len(cross) > 0
+
+    def test_cross_source_divergent_values(self, store, validation_engine):
+        store.seed_concept_map()
+        # FRED CPI: 300
+        _insert_obs(store, "CPIAUCSL", "fred", "2024-01-01", 300.0)
+        # BLS CPI: 400 (very different!)
+        _insert_obs(store, "CUUR0000SA0", "bls", "2024-01-01", 400.0)
+
+        report = validation_engine.validate_concept(
+            "CPI_US", store, value_tolerance_pct=1.0,
+        )
+        cross = [c for c in report.checks if c.layer == ValidationLayer.CROSS_SOURCE]
+        # Should flag the divergence
+        assert any(not c.passed for c in cross)
+
+
+class TestValidateConceptFreshness:
+    def test_stale_data_flagged(self, store, validation_engine):
+        store.seed_concept_map()
+        # Very old data
+        _insert_obs(store, "CPIAUCSL", "fred", "2020-01-01", 260.0)
+
+        report = validation_engine.validate_concept(
+            "CPI_US", store, max_staleness_days=90,
+        )
+        freshness = [c for c in report.checks if c.check_name == "freshness_check"]
+        assert len(freshness) >= 1
+        assert any(not c.passed for c in freshness)
+
+
+class TestValidateAllConcepts:
+    def test_validates_all(self, store, validation_engine):
+        store.seed_concept_map()
+        reports = validation_engine.validate_all_concepts(store)
+        concepts = store.list_concepts()
+        assert len(reports) == len(concepts)
+        assert all(r.source.startswith("concept:") for r in reports)
+
+    def test_filter_by_country(self, store, validation_engine):
+        store.seed_concept_map()
+        reports = validation_engine.validate_all_concepts(store, country_code="US")
+        assert len(reports) > 0
+        assert all("_US" in r.source for r in reports)
+
+    def test_to_dict_round_trip(self, store, validation_engine):
+        store.seed_concept_map()
+        reports = validation_engine.validate_all_concepts(store)
+        for report in reports:
+            d = report.to_dict()
+            assert "source" in d
+            assert "checks" in d
+            assert isinstance(d["checks"], list)

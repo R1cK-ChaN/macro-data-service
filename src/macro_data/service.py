@@ -99,6 +99,57 @@ class LocalMacroDataService:
                 "available_sources": self._ingestion.list_sources(),
             }
 
+    def _op_validate_concept(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        from ingestion.validation import ValidationEngine, ValidationStore
+
+        concept_id = (arguments.get("concept_id") or "").strip()
+        if not concept_id:
+            return {"error": "concept_id is required"}
+        max_staleness = int(arguments.get("max_staleness_days", 90))
+        tolerance = float(arguments.get("value_tolerance_pct", 1.0))
+        lookback = int(arguments.get("lookback_periods", 12))
+
+        db_path = getattr(self._store, "db_path", ".macro-data/engine.db")
+        validation_store = ValidationStore(str(db_path))
+        engine = ValidationEngine(validation_store)
+        self._store.seed_concept_map()
+
+        report = engine.validate_concept(
+            concept_id,
+            self._store,
+            max_staleness_days=max_staleness,
+            value_tolerance_pct=tolerance,
+            lookback_periods=lookback,
+        )
+        return report.to_dict()
+
+    def _op_validate_all_concepts(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        from ingestion.validation import ValidationEngine, ValidationStore
+
+        country_code = (arguments.get("country_code") or "").strip() or None
+        max_staleness = int(arguments.get("max_staleness_days", 90))
+        tolerance = float(arguments.get("value_tolerance_pct", 1.0))
+        lookback = int(arguments.get("lookback_periods", 12))
+
+        db_path = getattr(self._store, "db_path", ".macro-data/engine.db")
+        validation_store = ValidationStore(str(db_path))
+        engine = ValidationEngine(validation_store)
+        self._store.seed_concept_map()
+
+        reports = engine.validate_all_concepts(
+            self._store,
+            max_staleness_days=max_staleness,
+            value_tolerance_pct=tolerance,
+            lookback_periods=lookback,
+            country_code=country_code,
+        )
+        return {
+            "total_concepts": len(reports),
+            "passed": sum(1 for r in reports if r.passed),
+            "failed": sum(1 for r in reports if not r.passed),
+            "reports": [r.to_dict() for r in reports],
+        }
+
     def _op_get_recent_releases(self, arguments: dict[str, Any]) -> dict[str, Any]:
         events = self._store.list_recent_events(
             limit=int(arguments.get("limit", 10)),

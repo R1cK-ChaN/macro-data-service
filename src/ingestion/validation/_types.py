@@ -20,6 +20,7 @@ class ValidationLayer(str, Enum):
     ANOMALY = "anomaly"
     CROSS_SOURCE = "cross_source"
     DATA_DIFF = "data_diff"
+    CONCEPT = "concept"
 
 
 @dataclass(frozen=True)

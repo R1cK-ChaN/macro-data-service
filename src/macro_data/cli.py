@@ -108,6 +108,16 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--json", action="store_true", dest="json_output", help="JSON output")
     validate.add_argument("--db-path", default=None)
 
+    validate_concept = subparsers.add_parser("validate-concept")
+    validate_concept.add_argument("concept_id", nargs="?", default=None, help="Concept ID (e.g. CPI_US)")
+    validate_concept.add_argument("--all", action="store_true", dest="all_concepts", help="Validate all concepts")
+    validate_concept.add_argument("--country", default=None, help="Filter by country code")
+    validate_concept.add_argument("--max-staleness-days", type=int, default=90, help="Freshness threshold")
+    validate_concept.add_argument("--tolerance-pct", type=float, default=1.0, help="Cross-source value tolerance %%")
+    validate_concept.add_argument("--lookback", type=int, default=12, help="Lookback periods for cross-source")
+    validate_concept.add_argument("--json", action="store_true", dest="json_output", help="JSON output")
+    validate_concept.add_argument("--db-path", default=None)
+
     return parser
 
 
@@ -306,6 +316,64 @@ def _run_validate(args: argparse.Namespace) -> int:
     return 0 if report.passed else 1
 
 
+def _run_validate_concept(args: argparse.Namespace) -> int:
+    from ingestion.validation import ValidationEngine, ValidationStore
+    from storage import SQLiteEngineStore
+
+    db_path = args.db_path or ".macro-data/engine.db"
+    store = SQLiteEngineStore(db_path=Path(db_path))
+    store.seed_concept_map()
+    validation_store = ValidationStore(db_path)
+    engine = ValidationEngine(validation_store)
+
+    if args.all_concepts or (not args.concept_id and not args.country):
+        reports = engine.validate_all_concepts(
+            store,
+            max_staleness_days=args.max_staleness_days,
+            value_tolerance_pct=args.tolerance_pct,
+            lookback_periods=args.lookback,
+            country_code=args.country,
+        )
+        if args.json_output:
+            print(json.dumps([r.to_dict() for r in reports], ensure_ascii=False, indent=2))
+        else:
+            for report in reports:
+                print(report.format_text())
+                print()
+        failed = sum(1 for r in reports if not r.passed)
+        return 1 if failed > 0 else 0
+
+    if args.country and not args.concept_id:
+        reports = engine.validate_all_concepts(
+            store,
+            max_staleness_days=args.max_staleness_days,
+            value_tolerance_pct=args.tolerance_pct,
+            lookback_periods=args.lookback,
+            country_code=args.country,
+        )
+        if args.json_output:
+            print(json.dumps([r.to_dict() for r in reports], ensure_ascii=False, indent=2))
+        else:
+            for report in reports:
+                print(report.format_text())
+                print()
+        failed = sum(1 for r in reports if not r.passed)
+        return 1 if failed > 0 else 0
+
+    report = engine.validate_concept(
+        args.concept_id,
+        store,
+        max_staleness_days=args.max_staleness_days,
+        value_tolerance_pct=args.tolerance_pct,
+        lookback_periods=args.lookback,
+    )
+    if args.json_output:
+        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(report.format_text())
+    return 0 if report.passed else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -331,6 +399,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_wb_generate_configs(args)
     if args.command == "wb-refresh-catalog":
         return _run_wb_refresh_catalog(args)
+
+    # Concept validation (no service needed)
+    if args.command == "validate-concept":
+        return _run_validate_concept(args)
 
     from macro_data.factory import build_local_macro_data_service
 
