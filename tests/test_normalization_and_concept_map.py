@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ingestion.normalization import Normalizer
+from ingestion.normalization import Normalizer, normalize_observation_date
 from ingestion.types import CanonicalRow, RawObservation, RawSeries
 from storage.sqlite import ConceptMapRecord, ObsFamilyRecord, SQLiteEngineStore
 
@@ -198,3 +198,155 @@ class TestConceptMapQueries:
         store.seed_concept_map()
         obs = store.get_concept_observations("CPI_US")
         assert obs == []
+
+
+# ── Date normalization tests ─────────────────────────────────────────
+
+
+class TestNormalizeObservationDateDaily:
+    def test_passthrough(self):
+        assert normalize_observation_date("2024-01-15", "daily") == "2024-01-15"
+
+    def test_passthrough_weekday(self):
+        assert normalize_observation_date("2024-03-22", "daily") == "2024-03-22"
+
+
+class TestNormalizeObservationDateMonthly:
+    def test_already_first_of_month(self):
+        assert normalize_observation_date("2024-01-01", "monthly") == "2024-01-01"
+
+    def test_mid_month_snaps_to_first(self):
+        assert normalize_observation_date("2024-01-15", "monthly") == "2024-01-01"
+
+    def test_yyyy_mm_format(self):
+        assert normalize_observation_date("2024-01", "monthly") == "2024-01-01"
+
+    def test_imf_format(self):
+        assert normalize_observation_date("2025-M09", "monthly") == "2025-09-01"
+
+    def test_eurostat_no_dash(self):
+        assert normalize_observation_date("2024M01", "monthly") == "2024-01-01"
+
+
+class TestNormalizeObservationDateQuarterly:
+    def test_quarter_format_dash(self):
+        assert normalize_observation_date("2024-Q1", "quarterly") == "2024-01-01"
+        assert normalize_observation_date("2024-Q2", "quarterly") == "2024-04-01"
+        assert normalize_observation_date("2024-Q3", "quarterly") == "2024-07-01"
+        assert normalize_observation_date("2024-Q4", "quarterly") == "2024-10-01"
+
+    def test_quarter_format_no_dash(self):
+        assert normalize_observation_date("2024Q1", "quarterly") == "2024-01-01"
+        assert normalize_observation_date("2024Q3", "quarterly") == "2024-07-01"
+
+    def test_bea_quarter_end_to_start(self):
+        """BEA returns quarter-end dates (03-31, 06-30, etc.)."""
+        assert normalize_observation_date("2024-03-31", "quarterly") == "2024-01-01"
+        assert normalize_observation_date("2024-06-30", "quarterly") == "2024-04-01"
+        assert normalize_observation_date("2024-09-30", "quarterly") == "2024-07-01"
+        assert normalize_observation_date("2024-12-31", "quarterly") == "2024-10-01"
+
+    def test_already_quarter_start(self):
+        assert normalize_observation_date("2024-01-01", "quarterly") == "2024-01-01"
+        assert normalize_observation_date("2024-04-01", "quarterly") == "2024-04-01"
+
+
+class TestNormalizeObservationDateAnnual:
+    def test_bare_year(self):
+        assert normalize_observation_date("2023", "annual") == "2023-01-01"
+
+    def test_full_date_snaps_to_jan1(self):
+        assert normalize_observation_date("2024-12-31", "annual") == "2024-01-01"
+        assert normalize_observation_date("2024-06-15", "annual") == "2024-01-01"
+
+    def test_already_jan1(self):
+        assert normalize_observation_date("2024-01-01", "annual") == "2024-01-01"
+
+
+class TestNormalizeObservationDateWeekly:
+    def test_iso_week(self):
+        # 2024-W01 Monday is 2024-01-01
+        assert normalize_observation_date("2024-W01", "weekly") == "2024-01-01"
+
+    def test_iso_week_mid_year(self):
+        # 2024-W26 Monday is 2024-06-24
+        assert normalize_observation_date("2024-W26", "weekly") == "2024-06-24"
+
+    def test_daily_date_passthrough_for_weekly(self):
+        assert normalize_observation_date("2024-01-15", "weekly") == "2024-01-15"
+
+
+class TestNormalizeObservationDateSemester:
+    def test_semester(self):
+        assert normalize_observation_date("2024-S1", "") == "2024-01-01"
+        assert normalize_observation_date("2024-S2", "") == "2024-07-01"
+
+
+class TestNormalizeObservationDateEdgeCases:
+    def test_empty_string(self):
+        assert normalize_observation_date("", "monthly") == ""
+
+    def test_whitespace(self):
+        assert normalize_observation_date("  2024-01  ", "monthly") == "2024-01-01"
+
+    def test_unknown_format_passthrough(self):
+        assert normalize_observation_date("not-a-date", "monthly") == "not-a-date"
+
+
+class TestNormalizerDateIntegration:
+    """Verify the Normalizer actually applies date normalization."""
+
+    def test_monthly_dates_normalized(self, sample_family):
+        """BLS sends 2024-01-15, normalizer should snap to 2024-01-01."""
+        lookup = {("fred", "CPIAUCSL"): sample_family}
+        normalizer = Normalizer(family_lookup=lookup)
+        series = RawSeries(
+            source="fred",
+            series_id="CPIAUCSL",
+            observations=(
+                RawObservation(date="2024-01-15", value=312.3),
+            ),
+            fetched_at="",
+            series_metadata={},
+        )
+        rows = normalizer.normalize(series)
+        # sample_family.frequency == "monthly" → snaps to first of month
+        assert rows[0].date == "2024-01-01"
+
+    def test_quarterly_bea_end_to_start(self):
+        """BEA sends 2024-03-31 for Q1, normalizer should snap to 2024-01-01."""
+        family = ObsFamilyRecord(
+            family_id="us.growth.gdp_real", source_id="fred",
+            provider_series_id="GDPC1", canonical_name="Real GDP",
+            short_name="GDP", unit="billions_usd", frequency="quarterly",
+            seasonal_adjustment="saar", country_code="US",
+            topic_code="growth", category="output",
+            is_active=True, has_vintages=True,
+        )
+        normalizer = Normalizer(family_lookup={("fred", "GDPC1"): family})
+        series = RawSeries(
+            source="fred", series_id="GDPC1",
+            observations=(RawObservation(date="2024-03-31", value=22000.0),),
+            fetched_at="", series_metadata={},
+        )
+        rows = normalizer.normalize(series)
+        assert rows[0].date == "2024-01-01"
+
+    def test_cross_source_dates_align(self):
+        """CPI from FRED (2024-01-01) and IMF (2024-M01) should align."""
+        normalizer = Normalizer(family_lookup={})
+
+        fred_series = RawSeries(
+            source="fred", series_id="CPIAUCSL",
+            observations=(RawObservation(date="2024-01-01", value=312.3),),
+            fetched_at="", series_metadata={"freq": "monthly"},
+        )
+        imf_series = RawSeries(
+            source="imf", series_id="IMF_CN_CPI",
+            observations=(RawObservation(date="2024-M01", value=102.5),),
+            fetched_at="", series_metadata={"freq": "monthly"},
+        )
+
+        fred_rows = normalizer.normalize(fred_series)
+        imf_rows = normalizer.normalize(imf_series)
+        assert fred_rows[0].date == imf_rows[0].date == "2024-01-01"
