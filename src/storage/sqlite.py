@@ -187,6 +187,44 @@ class ResolvedObservation:
 
 
 @dataclass(frozen=True)
+class ReleaseScheduleRecord:
+    concept_id: str           # PK, FK to concept_map
+    rule_type: str            # "day_of_month", "weekday_of_month", "quarter_lag",
+                              # "daily", "weekly", "fixed_dates", "approximate_window"
+    rule_json: dict[str, Any] # type-specific params
+    frequency: str            # "daily", "weekly", "monthly", "quarterly", "annual"
+    release_time_utc: str     # "12:30", "14:00", "" if unknown
+    timezone: str             # "America/New_York", "" if unknown
+    source_authority: str     # "manual", "fred_api", "calendar_events"
+    confidence: str           # "exact", "pattern", "approximate"
+    next_expected: str        # ISO datetime, precomputed
+    last_released: str        # ISO datetime, updated after successful fetch
+    last_checked: str         # ISO datetime, updated on every check
+    is_active: bool = True
+    notes: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+@dataclass(frozen=True)
+class ReleaseStatusRecord:
+    """Tracks per-release availability status with retry state."""
+    concept_id: str
+    release_date: str           # expected release date (ISO)
+    status: str                 # PENDING, WAITING, FETCHED, CONFIRMED, STALE, FAILED
+    attempt_count: int = 0
+    next_retry: str = ""        # ISO datetime for next retry
+    last_attempt: str = ""      # ISO datetime of last fetch attempt
+    source_used: str = ""       # source_id that provided data
+    data_date: str = ""         # latest observation date actually fetched
+    expected_period: str = ""   # minimum expected observation date
+    provisional: bool = False   # True if using fallback source
+    error: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+@dataclass(frozen=True)
 class NewsArticleRecord:
     url_hash: str
     source_feed: str
@@ -1861,6 +1899,68 @@ class SQLiteEngineStore:
                 connection.execute("ALTER TABLE concept_map ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
             except sqlite3.OperationalError:
                 pass  # column already exists
+
+            # ── Release schedule ──────────────────────────────────────
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS release_schedule (
+                    concept_id        TEXT PRIMARY KEY,
+                    rule_type         TEXT NOT NULL,
+                    rule_json         TEXT NOT NULL DEFAULT '{}',
+                    frequency         TEXT NOT NULL DEFAULT 'monthly',
+                    release_time_utc  TEXT NOT NULL DEFAULT '',
+                    timezone          TEXT NOT NULL DEFAULT '',
+                    source_authority  TEXT NOT NULL DEFAULT 'manual',
+                    confidence        TEXT NOT NULL DEFAULT 'pattern'
+                        CHECK (confidence IN ('exact','pattern','approximate')),
+                    next_expected     TEXT NOT NULL DEFAULT '',
+                    last_released     TEXT NOT NULL DEFAULT '',
+                    last_checked      TEXT NOT NULL DEFAULT '',
+                    is_active         INTEGER NOT NULL DEFAULT 1,
+                    notes             TEXT NOT NULL DEFAULT '',
+                    created_at        TEXT NOT NULL,
+                    updated_at        TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_release_schedule_next "
+                "ON release_schedule(next_expected) WHERE is_active = 1"
+            )
+
+            # ── Release status (availability tracking) ────────────────
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS release_status (
+                    concept_id      TEXT NOT NULL,
+                    release_date    TEXT NOT NULL,
+                    status          TEXT NOT NULL DEFAULT 'PENDING'
+                        CHECK (status IN (
+                            'PENDING','WAITING','FETCHED','CONFIRMED','STALE','FAILED'
+                        )),
+                    attempt_count   INTEGER NOT NULL DEFAULT 0,
+                    next_retry      TEXT NOT NULL DEFAULT '',
+                    last_attempt    TEXT NOT NULL DEFAULT '',
+                    source_used     TEXT NOT NULL DEFAULT '',
+                    data_date       TEXT NOT NULL DEFAULT '',
+                    expected_period TEXT NOT NULL DEFAULT '',
+                    provisional     INTEGER NOT NULL DEFAULT 0,
+                    error           TEXT NOT NULL DEFAULT '',
+                    created_at      TEXT NOT NULL,
+                    updated_at      TEXT NOT NULL,
+                    PRIMARY KEY (concept_id, release_date)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_release_status_retry "
+                "ON release_status(next_retry) "
+                "WHERE status IN ('PENDING','WAITING')"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_release_status_concept "
+                "ON release_status(concept_id, status)"
+            )
 
             # ── Calendar indicator normalization tables ───────────────
             connection.execute(
@@ -6083,6 +6183,409 @@ class SQLiteEngineStore:
             unit=row["unit"],
             obs_family_id=row["obs_family_id"],
             is_active=bool(row["is_active"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    # ── Release schedule CRUD ─────────────────────────────────────────
+
+    # (concept_id, rule_type, rule_json_dict, frequency, release_time_utc, timezone, confidence, notes)
+    _RELEASE_SCHEDULE_DEFS: list[tuple[str, str, dict[str, Any], str, str, str, str, str]] = [
+        # ── US Inflation ──────────────────────────────────────────────
+        ("CPI_US",              "day_of_month",     {"day": 12, "tolerance_days": 3},       "monthly",  "12:30", "America/New_York", "pattern", "BLS CPI release ~12th"),
+        ("CORE_CPI_US",         "day_of_month",     {"day": 12, "tolerance_days": 3},       "monthly",  "12:30", "America/New_York", "pattern", "Released with CPI"),
+        ("CPI_FOOD_US",         "day_of_month",     {"day": 12, "tolerance_days": 3},       "monthly",  "12:30", "America/New_York", "pattern", "Released with CPI"),
+        ("CPI_ENERGY_US",       "day_of_month",     {"day": 12, "tolerance_days": 3},       "monthly",  "12:30", "America/New_York", "pattern", "Released with CPI"),
+        ("CPI_SHELTER_US",      "day_of_month",     {"day": 12, "tolerance_days": 3},       "monthly",  "12:30", "America/New_York", "pattern", "Released with CPI"),
+        ("PPI_US",              "day_of_month",     {"day": 14, "tolerance_days": 3},       "monthly",  "12:30", "America/New_York", "pattern", "BLS PPI release ~14th"),
+        ("PPI_CORE_US",         "day_of_month",     {"day": 14, "tolerance_days": 3},       "monthly",  "12:30", "America/New_York", "pattern", "Released with PPI"),
+        ("CORE_PCE_US",         "day_of_month",     {"day": 28, "tolerance_days": 3},       "monthly",  "12:30", "America/New_York", "pattern", "BEA PCE release ~28th"),
+        ("BREAKEVEN_5Y_US",     "daily",            {},                                     "daily",    "",      "",                 "pattern", "TIPS-derived, daily"),
+        ("BREAKEVEN_10Y_US",    "daily",            {},                                     "daily",    "",      "",                 "pattern", "TIPS-derived, daily"),
+        # ── US Employment ─────────────────────────────────────────────
+        ("NFP_US",              "weekday_of_month", {"weekday": 4, "ordinal": 1},           "monthly",  "12:30", "America/New_York", "pattern", "1st Friday of month"),
+        ("NFP_PRIVATE_US",      "weekday_of_month", {"weekday": 4, "ordinal": 1},           "monthly",  "12:30", "America/New_York", "pattern", "Released with NFP"),
+        ("AVG_HOURLY_EARN_US",  "weekday_of_month", {"weekday": 4, "ordinal": 1},           "monthly",  "12:30", "America/New_York", "pattern", "Released with NFP"),
+        ("AVG_WEEKLY_HOURS_US", "weekday_of_month", {"weekday": 4, "ordinal": 1},           "monthly",  "12:30", "America/New_York", "pattern", "Released with NFP"),
+        ("UNEMP_US",            "weekday_of_month", {"weekday": 4, "ordinal": 1},           "monthly",  "12:30", "America/New_York", "pattern", "Released with NFP"),
+        ("LFPR_US",             "weekday_of_month", {"weekday": 4, "ordinal": 1},           "monthly",  "12:30", "America/New_York", "pattern", "Released with NFP"),
+        ("JOLTS_OPENINGS_US",   "approximate_window", {"month_offset": 2, "window_days": 10}, "monthly", "14:00", "America/New_York", "approximate", "JOLTS ~2 month lag"),
+        ("JOLTS_HIRES_US",      "approximate_window", {"month_offset": 2, "window_days": 10}, "monthly", "14:00", "America/New_York", "approximate", "Released with JOLTS"),
+        ("JOLTS_QUITS_US",      "approximate_window", {"month_offset": 2, "window_days": 10}, "monthly", "14:00", "America/New_York", "approximate", "Released with JOLTS"),
+        ("ECI_US",              "quarter_lag",      {"lag_days": 35},                       "quarterly","12:30", "America/New_York", "pattern", "BLS ECI ~T+35 after Q"),
+        ("INITIAL_CLAIMS_US",   "weekly",           {"weekday": 3},                         "weekly",   "12:30", "America/New_York", "pattern", "Thursday weekly"),
+        ("CONTINUING_CLAIMS_US","weekly",           {"weekday": 3},                         "weekly",   "12:30", "America/New_York", "pattern", "Thursday weekly"),
+        # ── US Productivity ───────────────────────────────────────────
+        ("PRODUCTIVITY_US",     "quarter_lag",      {"lag_days": 35},                       "quarterly","12:30", "America/New_York", "pattern", "BLS quarterly"),
+        ("UNIT_LABOR_COST_US",  "quarter_lag",      {"lag_days": 35},                       "quarterly","12:30", "America/New_York", "pattern", "Released with productivity"),
+        # ── US Growth ─────────────────────────────────────────────────
+        ("GDP_NOMINAL_US",      "quarter_lag",      {"lag_days": 30},                       "quarterly","12:30", "America/New_York", "pattern", "BEA advance GDP ~T+30"),
+        ("GDP_REAL_US",         "quarter_lag",      {"lag_days": 30},                       "quarterly","12:30", "America/New_York", "pattern", "BEA advance GDP ~T+30"),
+        ("RETAIL_SALES_US",     "day_of_month",     {"day": 15, "tolerance_days": 3},       "monthly",  "12:30", "America/New_York", "pattern", "Census ~15th"),
+        ("INDPRO_US",           "day_of_month",     {"day": 16, "tolerance_days": 3},       "monthly",  "13:15", "America/New_York", "pattern", "Fed ~16th"),
+        ("GDP_GROWTH_WB_US",    "approximate_window", {"month_offset": 6, "window_days": 60}, "annual",  "",     "",                 "approximate", "World Bank annual"),
+        # ── US Rates ──────────────────────────────────────────────────
+        ("POLICY_RATE_US",      "daily",            {},                                     "daily",    "",      "",                 "pattern", "NY Fed EFFR daily"),
+        ("SOFR_US",             "daily",            {},                                     "daily",    "",      "",                 "pattern", "SOFR daily"),
+        ("OBFR_US",             "daily",            {},                                     "daily",    "",      "",                 "pattern", "OBFR daily"),
+        ("TREASURY_2Y_US",      "daily",            {},                                     "daily",    "",      "",                 "pattern", "Constant maturity daily"),
+        ("TREASURY_10Y_US",     "daily",            {},                                     "daily",    "",      "",                 "pattern", "Constant maturity daily"),
+        ("TREASURY_30Y_US",     "daily",            {},                                     "daily",    "",      "",                 "pattern", "Constant maturity daily"),
+        ("REAL_YIELD_10Y_US",   "daily",            {},                                     "daily",    "",      "",                 "pattern", "TIPS daily"),
+        ("SPREAD_10Y2Y_US",     "daily",            {},                                     "daily",    "",      "",                 "pattern", "Yield curve daily"),
+        # ── US Liquidity ──────────────────────────────────────────────
+        ("FED_BALANCE_SHEET_US","weekly",           {"weekday": 3},                         "weekly",   "16:30", "America/New_York", "pattern", "Thursday weekly"),
+        ("M2_US",               "day_of_month",     {"day": 22, "tolerance_days": 5},       "monthly",  "",      "",                 "pattern", "Fed ~22nd"),
+        ("REVERSE_REPO_US",     "daily",            {},                                     "daily",    "",      "",                 "pattern", "Daily ON RRP"),
+        ("TGA_US",              "daily",            {},                                     "daily",    "",      "",                 "pattern", "Treasury daily/weekly"),
+        # ── US FX ─────────────────────────────────────────────────────
+        ("DOLLAR_INDEX_US",     "daily",            {},                                     "daily",    "",      "",                 "pattern", "Trade-weighted daily"),
+        ("CNYUSD",              "daily",            {},                                     "daily",    "",      "",                 "pattern", "FX daily"),
+        # ── US Credit ─────────────────────────────────────────────────
+        ("HY_OAS_US",           "daily",            {},                                     "daily",    "",      "",                 "pattern", "ICE BofA daily"),
+        ("CREDIT_GAP_US",       "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
+        # ── US Property ───────────────────────────────────────────────
+        ("PROPERTY_US",         "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
+        # ── US Fiscal ─────────────────────────────────────────────────
+        ("DEBT_US",             "daily",            {},                                     "daily",    "",      "",                 "pattern", "Treasury daily"),
+        ("AVG_INTEREST_RATE_US","day_of_month",     {"day": 1, "tolerance_days": 5},        "monthly",  "",      "",                 "pattern", "Treasury ~1st"),
+        # ── US Energy ─────────────────────────────────────────────────
+        ("BRENT_CRUDE",         "daily",            {},                                     "daily",    "",      "",                 "pattern", "EIA daily spot"),
+        ("WTI_CRUDE",           "daily",            {},                                     "daily",    "",      "",                 "pattern", "EIA daily spot"),
+        ("CRUDE_STOCKS_US",     "weekly",           {"weekday": 2},                         "weekly",   "14:30", "America/New_York", "pattern", "EIA Wednesday"),
+        ("NATGAS_US",           "daily",            {},                                     "daily",    "",      "",                 "pattern", "Henry Hub daily"),
+        ("PETROLEUM_SUPPLY_US", "weekly",           {"weekday": 2},                         "weekly",   "14:30", "America/New_York", "pattern", "EIA Wednesday"),
+        # ── US Trade ──────────────────────────────────────────────────
+        ("EXPORTS_US",          "approximate_window", {"month_offset": 3, "window_days": 30}, "quarterly","",    "",                 "approximate", "IMF quarterly lag"),
+        ("CURRENT_ACCOUNT_US",  "approximate_window", {"month_offset": 6, "window_days": 60}, "annual",  "",     "",                 "approximate", "World Bank annual"),
+        # ── US Sentiment ──────────────────────────────────────────────
+        ("CONSUMER_CONF_US",    "monthly_lag",      {"lag_months": 1, "day": 10, "tolerance_days": 10}, "monthly","",  "",           "approximate", "OECD monthly lag"),
+        ("BUSINESS_CONF_US",    "monthly_lag",      {"lag_months": 1, "day": 10, "tolerance_days": 10}, "monthly","",  "",           "approximate", "OECD monthly lag"),
+        ("CLI_US",              "monthly_lag",      {"lag_months": 2, "day": 10, "tolerance_days": 15}, "monthly","",  "",           "approximate", "OECD CLI ~2 month lag"),
+        # ── US Development ────────────────────────────────────────────
+        ("GDP_PER_CAPITA_US",   "approximate_window", {"month_offset": 6, "window_days": 60}, "annual",  "",     "",                 "approximate", "World Bank annual"),
+        # ── China ─────────────────────────────────────────────────────
+        ("CPI_CN",              "approximate_window", {"month_offset": 3, "window_days": 30}, "quarterly","",    "",                 "approximate", "IMF quarterly lag"),
+        ("GDP_REAL_CN",         "approximate_window", {"month_offset": 3, "window_days": 30}, "quarterly","",    "",                 "approximate", "IMF quarterly lag"),
+        ("FX_RESERVES_CN",      "approximate_window", {"month_offset": 3, "window_days": 30}, "quarterly","",    "",                 "approximate", "IMF quarterly lag"),
+        ("POLICY_RATE_CN",      "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
+        ("CREDIT_GAP_CN",       "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
+        ("PROPERTY_CN",         "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
+        ("EER_CN",              "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
+        ("CLI_CN",              "monthly_lag",      {"lag_months": 2, "day": 10, "tolerance_days": 15}, "monthly","",  "",           "approximate", "OECD CLI ~2 month lag"),
+        ("GDP_PER_CAPITA_CN",   "approximate_window", {"month_offset": 6, "window_days": 60}, "annual",  "",     "",                 "approximate", "World Bank annual"),
+        # ── Japan ─────────────────────────────────────────────────────
+        ("CPI_JP",              "approximate_window", {"month_offset": 3, "window_days": 30}, "quarterly","",    "",                 "approximate", "IMF quarterly lag"),
+        ("GDP_REAL_JP",         "approximate_window", {"month_offset": 3, "window_days": 30}, "quarterly","",    "",                 "approximate", "IMF quarterly lag"),
+        ("POLICY_RATE_JP",      "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
+        ("CLI_JP",              "monthly_lag",      {"lag_months": 2, "day": 10, "tolerance_days": 15}, "monthly","",  "",           "approximate", "OECD CLI ~2 month lag"),
+        # ── Euro Area ─────────────────────────────────────────────────
+        ("CPI_EU",              "monthly_lag",      {"lag_months": 1, "day": 15, "tolerance_days": 10}, "monthly","",  "",           "pattern",     "Eurostat HICP flash ~15th"),
+        ("GDP_EU",              "monthly_lag",      {"lag_months": 1, "day": 15, "tolerance_days": 10}, "monthly","",  "",           "pattern",     "Eurostat GDP ~45 day lag"),
+        ("UNEMP_EU",            "monthly_lag",      {"lag_months": 1, "day": 15, "tolerance_days": 10}, "monthly","",  "",           "pattern",     "Eurostat unemployment"),
+        ("INDPRO_EU",           "monthly_lag",      {"lag_months": 1, "day": 15, "tolerance_days": 10}, "monthly","",  "",           "pattern",     "Eurostat industrial prod"),
+        ("ESI_EU",              "monthly_lag",      {"lag_months": 1, "day": 15, "tolerance_days": 10}, "monthly","",  "",           "pattern",     "Eurostat ESI"),
+        ("POLICY_RATE_EU",      "monthly_lag",      {"lag_months": 1, "day": 1, "tolerance_days": 10},  "monthly","",  "",           "pattern",     "ECB deposit rate"),
+        ("M1_EU",               "monthly_lag",      {"lag_months": 1, "day": 1, "tolerance_days": 10},  "monthly","",  "",           "pattern",     "ECB monetary aggregate"),
+        ("M2_EU",               "monthly_lag",      {"lag_months": 1, "day": 1, "tolerance_days": 10},  "monthly","",  "",           "pattern",     "ECB monetary aggregate"),
+        ("M3_EU",               "monthly_lag",      {"lag_months": 1, "day": 1, "tolerance_days": 10},  "monthly","",  "",           "pattern",     "ECB monetary aggregate"),
+        ("M3_GROWTH_EU",        "monthly_lag",      {"lag_months": 1, "day": 1, "tolerance_days": 10},  "monthly","",  "",           "pattern",     "ECB M3 YoY"),
+        ("EURUSD",              "monthly_lag",      {"lag_months": 1, "day": 1, "tolerance_days": 10},  "monthly","",  "",           "pattern",     "ECB reference rate"),
+        ("EER_EU",              "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
+        ("CLI_EU",              "monthly_lag",      {"lag_months": 2, "day": 10, "tolerance_days": 15}, "monthly","",  "",           "approximate", "OECD CLI ~2 month lag"),
+        # ── UK ────────────────────────────────────────────────────────
+        ("POLICY_RATE_GB",      "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
+    ]
+
+    def seed_release_schedules(self) -> None:
+        """Populate the release_schedule table from built-in definitions."""
+        now = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            for (concept_id, rule_type, rule_json_dict, frequency,
+                 release_time_utc, tz, confidence, notes) in self._RELEASE_SCHEDULE_DEFS:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO release_schedule
+                        (concept_id, rule_type, rule_json, frequency,
+                         release_time_utc, timezone, source_authority, confidence,
+                         next_expected, last_released, last_checked,
+                         is_active, notes, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, '', '', '', 1, ?, ?, ?)
+                    """,
+                    (concept_id, rule_type,
+                     json.dumps(rule_json_dict, sort_keys=True),
+                     frequency, release_time_utc, tz, confidence, notes, now, now),
+                )
+
+    def upsert_release_schedule(self, record: ReleaseScheduleRecord) -> None:
+        """INSERT OR REPLACE a release schedule record."""
+        now = utc_now().isoformat()
+        rule_json_str = (
+            json.dumps(record.rule_json, sort_keys=True)
+            if isinstance(record.rule_json, dict)
+            else record.rule_json
+        )
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO release_schedule
+                    (concept_id, rule_type, rule_json, frequency,
+                     release_time_utc, timezone, source_authority, confidence,
+                     next_expected, last_released, last_checked,
+                     is_active, notes, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (record.concept_id, record.rule_type, rule_json_str,
+                 record.frequency, record.release_time_utc, record.timezone,
+                 record.source_authority, record.confidence,
+                 record.next_expected, record.last_released, record.last_checked,
+                 int(record.is_active), record.notes,
+                 record.created_at or now, record.updated_at or now),
+            )
+
+    def get_release_schedule(self, concept_id: str) -> ReleaseScheduleRecord | None:
+        """Lookup a single release schedule by concept_id."""
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM release_schedule WHERE concept_id = ?",
+                (concept_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._row_to_release_schedule(row)
+
+    def list_release_schedules(
+        self,
+        *,
+        is_active: bool | None = None,
+        due_before: str | None = None,
+    ) -> list[ReleaseScheduleRecord]:
+        """List release schedules, optionally filtered."""
+        clauses: list[str] = []
+        params: list[Any] = []
+        if is_active is not None:
+            clauses.append("is_active = ?")
+            params.append(int(is_active))
+        if due_before is not None:
+            clauses.append("next_expected <= ? AND next_expected != ''")
+            params.append(due_before)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                f"SELECT * FROM release_schedule{where} ORDER BY next_expected",
+                params,
+            ).fetchall()
+            return [self._row_to_release_schedule(r) for r in rows]
+
+    def update_release_timestamps(
+        self,
+        concept_id: str,
+        *,
+        next_expected: str = "",
+        last_released: str = "",
+        last_checked: str = "",
+    ) -> None:
+        """Lightweight partial update for scheduler loop."""
+        sets: list[str] = []
+        params: list[Any] = []
+        if next_expected:
+            sets.append("next_expected = ?")
+            params.append(next_expected)
+        if last_released:
+            sets.append("last_released = ?")
+            params.append(last_released)
+        if last_checked:
+            sets.append("last_checked = ?")
+            params.append(last_checked)
+        if not sets:
+            return
+        sets.append("updated_at = ?")
+        params.append(utc_now().isoformat())
+        params.append(concept_id)
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                f"UPDATE release_schedule SET {', '.join(sets)} WHERE concept_id = ?",
+                params,
+            )
+
+    def _row_to_release_schedule(self, row: sqlite3.Row) -> ReleaseScheduleRecord:
+        rj = row["rule_json"]
+        try:
+            rule_json = json.loads(rj) if isinstance(rj, str) else rj
+        except (json.JSONDecodeError, TypeError):
+            rule_json = {}
+        return ReleaseScheduleRecord(
+            concept_id=row["concept_id"],
+            rule_type=row["rule_type"],
+            rule_json=rule_json,
+            frequency=row["frequency"],
+            release_time_utc=row["release_time_utc"],
+            timezone=row["timezone"],
+            source_authority=row["source_authority"],
+            confidence=row["confidence"],
+            next_expected=row["next_expected"],
+            last_released=row["last_released"],
+            last_checked=row["last_checked"],
+            is_active=bool(row["is_active"]),
+            notes=row["notes"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    # ── Release status CRUD ───────────────────────────────────────────
+
+    def upsert_release_status(self, record: ReleaseStatusRecord) -> None:
+        """INSERT OR REPLACE a release status tracking record."""
+        now = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO release_status
+                    (concept_id, release_date, status, attempt_count,
+                     next_retry, last_attempt, source_used, data_date,
+                     expected_period, provisional, error, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (record.concept_id, record.release_date, record.status,
+                 record.attempt_count, record.next_retry, record.last_attempt,
+                 record.source_used, record.data_date, record.expected_period,
+                 int(record.provisional), record.error,
+                 record.created_at or now, record.updated_at or now),
+            )
+
+    def get_release_status(
+        self, concept_id: str, release_date: str,
+    ) -> ReleaseStatusRecord | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM release_status WHERE concept_id = ? AND release_date = ?",
+                (concept_id, release_date),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._row_to_release_status(row)
+
+    def get_latest_release_status(
+        self, concept_id: str,
+    ) -> ReleaseStatusRecord | None:
+        """Return the most recent release_status row for a concept."""
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM release_status WHERE concept_id = ? "
+                "ORDER BY release_date DESC LIMIT 1",
+                (concept_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._row_to_release_status(row)
+
+    def list_release_statuses(
+        self,
+        *,
+        status: str | None = None,
+        pending_retry_before: str | None = None,
+    ) -> list[ReleaseStatusRecord]:
+        """List release status records, with optional filters."""
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        if pending_retry_before is not None:
+            clauses.append("next_retry != '' AND next_retry <= ?")
+            params.append(pending_retry_before)
+            clauses.append("status IN ('PENDING','WAITING')")
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                f"SELECT * FROM release_status{where} "
+                "ORDER BY release_date DESC, concept_id",
+                params,
+            ).fetchall()
+            return [self._row_to_release_status(r) for r in rows]
+
+    def list_all_latest_release_statuses(self) -> list[ReleaseStatusRecord]:
+        """Return the most recent release_status row per concept_id."""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT rs.* FROM release_status rs
+                INNER JOIN (
+                    SELECT concept_id, MAX(release_date) AS max_rd
+                    FROM release_status GROUP BY concept_id
+                ) latest ON rs.concept_id = latest.concept_id
+                    AND rs.release_date = latest.max_rd
+                ORDER BY rs.concept_id
+                """
+            ).fetchall()
+            return [self._row_to_release_status(r) for r in rows]
+
+    def update_release_status(
+        self,
+        concept_id: str,
+        release_date: str,
+        *,
+        status: str = "",
+        attempt_count: int | None = None,
+        next_retry: str = "",
+        last_attempt: str = "",
+        source_used: str = "",
+        data_date: str = "",
+        provisional: bool | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Partial update of a release_status row."""
+        sets: list[str] = []
+        params: list[Any] = []
+        if status:
+            sets.append("status = ?")
+            params.append(status)
+        if attempt_count is not None:
+            sets.append("attempt_count = ?")
+            params.append(attempt_count)
+        if next_retry:
+            sets.append("next_retry = ?")
+            params.append(next_retry)
+        if last_attempt:
+            sets.append("last_attempt = ?")
+            params.append(last_attempt)
+        if source_used:
+            sets.append("source_used = ?")
+            params.append(source_used)
+        if data_date:
+            sets.append("data_date = ?")
+            params.append(data_date)
+        if provisional is not None:
+            sets.append("provisional = ?")
+            params.append(int(provisional))
+        if error is not None:
+            sets.append("error = ?")
+            params.append(error)
+        if not sets:
+            return
+        sets.append("updated_at = ?")
+        params.append(utc_now().isoformat())
+        params.extend([concept_id, release_date])
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                f"UPDATE release_status SET {', '.join(sets)} "
+                "WHERE concept_id = ? AND release_date = ?",
+                params,
+            )
+
+    def _row_to_release_status(self, row: sqlite3.Row) -> ReleaseStatusRecord:
+        return ReleaseStatusRecord(
+            concept_id=row["concept_id"],
+            release_date=row["release_date"],
+            status=row["status"],
+            attempt_count=row["attempt_count"],
+            next_retry=row["next_retry"],
+            last_attempt=row["last_attempt"],
+            source_used=row["source_used"],
+            data_date=row["data_date"],
+            expected_period=row["expected_period"],
+            provisional=bool(row["provisional"]),
+            error=row["error"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

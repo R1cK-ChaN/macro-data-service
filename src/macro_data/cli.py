@@ -29,7 +29,15 @@ def build_parser() -> argparse.ArgumentParser:
     refresh = subparsers.add_parser("refresh")
     refresh.add_argument("--db-path", default=None)
 
-    subparsers.add_parser("schedule")
+    schedule = subparsers.add_parser("schedule")
+    schedule.add_argument("--show", action="store_true", help="Show all concepts with next expected release")
+    schedule.add_argument("--due", action="store_true", help="Show concepts due for refresh now")
+    schedule.add_argument("--status", action="store_true", help="Show availability status per concept")
+    schedule.add_argument("--run", action="store_true", help="Run release-aware scheduler")
+    schedule.add_argument("--window", type=int, default=120, help="Due window in minutes")
+    schedule.add_argument("--poll-interval", type=int, default=300, help="Poll interval seconds")
+    schedule.add_argument("--json", action="store_true", dest="json_output")
+    schedule.add_argument("--db-path", default=None)
 
     news_refresh = subparsers.add_parser("news-refresh")
     news_refresh.add_argument("--category", default=None)
@@ -285,6 +293,70 @@ def _run_wb_refresh_catalog(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_schedule_command(args: argparse.Namespace) -> int:
+    from ingestion.sources import IngestionOrchestrator
+    from storage import SQLiteEngineStore
+
+    store = SQLiteEngineStore(db_path=Path(args.db_path) if args.db_path else None)
+    orchestrator = IngestionOrchestrator(store)
+
+    if args.show:
+        status = orchestrator.get_schedule_status()
+        if args.json_output:
+            print(json.dumps(status, ensure_ascii=False, indent=2))
+        else:
+            for s in status:
+                last = f"last={s['last_released']}" if s["last_released"] else "last=never"
+                print(f"  {s['concept_id']:<25} {s['frequency']:<12} "
+                      f"{s['rule_type']:<20} {s['next_expected']:<22} "
+                      f"{s['confidence']:<12} {last}")
+        return 0
+
+    if args.due:
+        from ingestion.release_schedule import is_due
+        status = orchestrator.get_schedule_status()
+        due = [s for s in status if is_due(s["next_expected"], window_minutes=args.window)]
+        if args.json_output:
+            print(json.dumps(due, ensure_ascii=False, indent=2))
+        else:
+            if not due:
+                print("No concepts due within window.")
+            for s in due:
+                last = f"last={s['last_released']}" if s["last_released"] else "last=never"
+                print(f"  {s['concept_id']:<25} {s['frequency']:<12} "
+                      f"{s['rule_type']:<20} {s['next_expected']:<22} "
+                      f"{s['confidence']:<12} {last}")
+        return 0
+
+    if args.status:
+        avail = orchestrator.get_availability_status()
+        if args.json_output:
+            print(json.dumps(avail, ensure_ascii=False, indent=2))
+        else:
+            if not avail:
+                print("No release status data yet. Run --run first.")
+            for a in avail:
+                prov = " [provisional]" if a["provisional"] else ""
+                retry = f"  retry={a['next_retry']}" if a["next_retry"] else ""
+                err = f"  err={a['error']}" if a["error"] else ""
+                data = f"data={a['data_date']}" if a["data_date"] else "data=none"
+                src = f"src={a['source_used']}" if a["source_used"] else ""
+                print(f"  {a['concept_id']:<25} {a['status']:<12} "
+                      f"{a['frequency']:<12} {data:<18} {src}{prov}{retry}{err}")
+        return 0
+
+    if args.run:
+        orchestrator.run_release_schedule(
+            poll_interval_seconds=args.poll_interval,
+            due_window_minutes=args.window,
+        )
+        return 0
+
+    # No flag: show help
+    print("Use --show, --due, --status, or --run. See --help for details.")
+    return 0
+
+
 def _run_validate(args: argparse.Namespace) -> int:
     from ingestion.validation import ValidationEngine, ValidationStore
 
@@ -494,6 +566,12 @@ def main(argv: list[str] | None = None) -> int:
     # Concept validation (no service needed)
     if args.command == "validate-concept":
         return _run_validate_concept(args)
+
+    # Release schedule (no service needed for --show/--due/--status/--run)
+    if args.command == "schedule":
+        if args.show or args.due or args.status or args.run:
+            return _run_schedule_command(args)
+        # Legacy: fall through to service-based run_schedule
 
     from macro_data.factory import build_local_macro_data_service
 

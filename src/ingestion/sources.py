@@ -55,6 +55,7 @@ from storage import (
     IndicatorVintageRecord,
     MarketPriceRecord,
     NewsArticleRecord,
+    ReleaseStatusRecord,
     SQLiteEngineStore,
     StoredEventRecord,
     TrendTopicRecord,
@@ -999,3 +1000,291 @@ class IngestionOrchestrator:
                     self.run_source(job_name)
                     next_run[job_name] = now + float(job.interval_seconds or 0)
             time.sleep(poll_interval_seconds)
+
+    # ── Release-calendar-aware scheduler ──────────────────────────────
+
+    def run_release_schedule(
+        self,
+        *,
+        poll_interval_seconds: int = 300,
+        due_window_minutes: int = 120,
+    ) -> None:
+        """Release-calendar-aware scheduler loop with retry."""
+        self._ensure_obs_seed()
+        self.store.seed_concept_map()
+        self.store.seed_release_schedules()
+        self._recompute_all_next_expected()
+
+        logger.info("release scheduler started  poll=%ds  window=%dm",
+                     poll_interval_seconds, due_window_minutes)
+        while True:
+            # Phase 1: process newly-due concepts
+            reports = self._refresh_due_concepts(window_minutes=due_window_minutes)
+            for r in reports:
+                status = "OK" if not r.error else "ERROR"
+                logger.info("  %s  %s  stored=%d", r.source, status, r.stored)
+            # Phase 2: process pending retries
+            retry_reports = self._process_retries()
+            for r in retry_reports:
+                status = "OK" if not r.error else "ERROR"
+                logger.info("  retry %s  %s  stored=%d", r.source, status, r.stored)
+            time.sleep(poll_interval_seconds)
+
+    def _recompute_all_next_expected(self) -> int:
+        """Recompute and persist next_expected for all active schedules."""
+        from ingestion.release_schedule import next_expected_release
+        import json as _json
+
+        schedules = self.store.list_release_schedules(is_active=True)
+        updated = 0
+        for s in schedules:
+            rule = s.rule_json if isinstance(s.rule_json, dict) else _json.loads(s.rule_json)
+            nxt = next_expected_release(s.rule_type, rule)
+            if nxt is not None:
+                self.store.update_release_timestamps(
+                    s.concept_id, next_expected=nxt.isoformat(),
+                )
+                updated += 1
+        logger.info("recomputed next_expected for %d/%d schedules", updated, len(schedules))
+        return updated
+
+    def _refresh_due_concepts(
+        self, *, window_minutes: int = 120,
+    ) -> list[IngestionRunReport]:
+        """Check due concepts, fetch, verify availability, schedule retries."""
+        from ingestion.release_schedule import (
+            next_expected_release, expected_reference_period,
+            is_data_fresh, compute_next_retry,
+            STATUS_PENDING, STATUS_WAITING, STATUS_FETCHED,
+            STATUS_CONFIRMED, STATUS_STALE,
+        )
+        from datetime import timezone as _tz
+        import json as _json
+
+        now = datetime.now(_tz.utc)
+        due_before = (now + timedelta(minutes=window_minutes)).isoformat()
+        due = self.store.list_release_schedules(due_before=due_before)
+
+        reports: list[IngestionRunReport] = []
+        for schedule in due:
+            release_date = schedule.next_expected
+            self.store.update_release_timestamps(
+                schedule.concept_id, last_checked=now.isoformat(),
+            )
+
+            # Create initial status record
+            exp_period = expected_reference_period(schedule.frequency, reference=now)
+            self.store.upsert_release_status(ReleaseStatusRecord(
+                concept_id=schedule.concept_id,
+                release_date=release_date,
+                status=STATUS_PENDING,
+                expected_period=exp_period,
+                created_at=now.isoformat(),
+                updated_at=now.isoformat(),
+            ))
+
+            # Attempt fetch
+            report = self._fetch_with_availability(
+                schedule.concept_id, schedule.frequency,
+                release_date, exp_period, attempt=0,
+            )
+            reports.append(report)
+
+            # Recompute next_expected regardless of outcome
+            rule = (schedule.rule_json if isinstance(schedule.rule_json, dict)
+                    else _json.loads(schedule.rule_json))
+            nxt = next_expected_release(schedule.rule_type, rule)
+            ts_kwargs: dict[str, str] = {}
+            if nxt is not None:
+                ts_kwargs["next_expected"] = nxt.isoformat()
+            if report.stored and report.stored > 0:
+                ts_kwargs["last_released"] = now.isoformat()
+            if ts_kwargs:
+                self.store.update_release_timestamps(schedule.concept_id, **ts_kwargs)
+
+        return reports
+
+    def _fetch_with_availability(
+        self,
+        concept_id: str,
+        frequency: str,
+        release_date: str,
+        expected_period: str,
+        attempt: int,
+    ) -> IngestionRunReport:
+        """Fetch data, check freshness, set status + schedule retry if needed."""
+        from ingestion.release_schedule import (
+            is_data_fresh, compute_next_retry,
+            STATUS_WAITING, STATUS_FETCHED, STATUS_CONFIRMED,
+            STATUS_STALE, STATUS_FAILED,
+        )
+        from datetime import timezone as _tz
+
+        now = datetime.now(_tz.utc)
+
+        try:
+            report = self.refresh_indicator(concept_id)
+        except Exception as exc:
+            report = IngestionRunReport(
+                source=f"indicator:{concept_id}",
+                stored=0, error=str(exc),
+            )
+
+        # Determine latest observation date from resolved data
+        resolved = self.store.resolve_indicator(concept_id)
+        latest_date = resolved.date if resolved else ""
+        source_used = resolved.source_id if resolved else ""
+        is_provisional = (resolved.priority > 1) if resolved else False
+
+        if report.error and report.stored == 0:
+            # Fetch failed entirely — schedule retry
+            nxt = compute_next_retry(attempt, reference=now)
+            if nxt is not None:
+                self.store.update_release_status(
+                    concept_id, release_date,
+                    status=STATUS_WAITING,
+                    attempt_count=attempt + 1,
+                    next_retry=nxt.isoformat(),
+                    last_attempt=now.isoformat(),
+                    error=report.error,
+                )
+            else:
+                self.store.update_release_status(
+                    concept_id, release_date,
+                    status=STATUS_FAILED,
+                    attempt_count=attempt + 1,
+                    next_retry="",
+                    last_attempt=now.isoformat(),
+                    error=report.error,
+                )
+            return report
+
+        # Check if data is fresh enough
+        fresh = is_data_fresh(latest_date, frequency, reference=now)
+        if fresh:
+            # Data is available — check if from primary source
+            if is_provisional:
+                status = STATUS_FETCHED  # got data, but from fallback source
+            else:
+                status = STATUS_CONFIRMED  # primary source, fresh data
+            self.store.update_release_status(
+                concept_id, release_date,
+                status=status,
+                attempt_count=attempt + 1,
+                next_retry="",
+                last_attempt=now.isoformat(),
+                source_used=source_used,
+                data_date=latest_date,
+                provisional=is_provisional,
+                error="",
+            )
+        else:
+            # Data fetched but not fresh — API hasn't updated yet
+            nxt = compute_next_retry(attempt, reference=now)
+            if nxt is not None:
+                self.store.update_release_status(
+                    concept_id, release_date,
+                    status=STATUS_WAITING,
+                    attempt_count=attempt + 1,
+                    next_retry=nxt.isoformat(),
+                    last_attempt=now.isoformat(),
+                    source_used=source_used,
+                    data_date=latest_date,
+                    error="data not fresh yet",
+                )
+            else:
+                self.store.update_release_status(
+                    concept_id, release_date,
+                    status=STATUS_STALE,
+                    attempt_count=attempt + 1,
+                    next_retry="",
+                    last_attempt=now.isoformat(),
+                    source_used=source_used,
+                    data_date=latest_date,
+                    error=f"stale after {attempt + 1} attempts",
+                )
+
+        return report
+
+    def _process_retries(self) -> list[IngestionRunReport]:
+        """Pick up WAITING/PENDING rows whose next_retry has arrived."""
+        from datetime import timezone as _tz
+
+        now = datetime.now(_tz.utc)
+        pending = self.store.list_release_statuses(
+            pending_retry_before=now.isoformat(),
+        )
+
+        reports: list[IngestionRunReport] = []
+        for rs in pending:
+            schedule = self.store.get_release_schedule(rs.concept_id)
+            freq = schedule.frequency if schedule else "monthly"
+            report = self._fetch_with_availability(
+                rs.concept_id, freq,
+                rs.release_date, rs.expected_period,
+                attempt=rs.attempt_count,
+            )
+            reports.append(report)
+        return reports
+
+    def get_schedule_status(self) -> list[dict[str, Any]]:
+        """Return schedule status for all concepts (for CLI --show)."""
+        self.store.seed_release_schedules()
+        self._recompute_all_next_expected()
+        schedules = self.store.list_release_schedules()
+        return [
+            {
+                "concept_id": s.concept_id,
+                "frequency": s.frequency,
+                "rule_type": s.rule_type,
+                "next_expected": s.next_expected,
+                "confidence": s.confidence,
+                "last_released": s.last_released,
+                "last_checked": s.last_checked,
+                "is_active": s.is_active,
+                "notes": s.notes,
+            }
+            for s in schedules
+        ]
+
+    def get_availability_status(self) -> list[dict[str, Any]]:
+        """Return per-concept availability status (for CLI --status)."""
+        self.store.seed_release_schedules()
+        statuses = self.store.list_all_latest_release_statuses()
+        schedules_by_id = {
+            s.concept_id: s
+            for s in self.store.list_release_schedules()
+        }
+        result: list[dict[str, Any]] = []
+        for rs in statuses:
+            sched = schedules_by_id.get(rs.concept_id)
+            result.append({
+                "concept_id": rs.concept_id,
+                "status": rs.status,
+                "release_date": rs.release_date,
+                "data_date": rs.data_date,
+                "source_used": rs.source_used,
+                "provisional": rs.provisional,
+                "attempt_count": rs.attempt_count,
+                "next_retry": rs.next_retry,
+                "error": rs.error,
+                "frequency": sched.frequency if sched else "",
+            })
+        # Also add concepts with schedules but no status yet
+        seen = {rs.concept_id for rs in statuses}
+        for cid, sched in schedules_by_id.items():
+            if cid not in seen:
+                result.append({
+                    "concept_id": cid,
+                    "status": "NOT_RELEASED",
+                    "release_date": sched.next_expected,
+                    "data_date": "",
+                    "source_used": "",
+                    "provisional": False,
+                    "attempt_count": 0,
+                    "next_retry": "",
+                    "error": "",
+                    "frequency": sched.frequency,
+                })
+        result.sort(key=lambda x: x["concept_id"])
+        return result

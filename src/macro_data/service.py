@@ -188,6 +188,46 @@ class LocalMacroDataService:
             "observations": [asdict(r) for r in results],
         }
 
+    def _op_get_release_schedule(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        concept_id = (arguments.get("concept_id") or "").strip() or None
+        due_only = bool(arguments.get("due_only", False))
+        limit = int(arguments.get("limit", 100))
+
+        self._store.seed_release_schedules()
+
+        if concept_id:
+            rec = self._store.get_release_schedule(concept_id)
+            if rec is None:
+                return {"error": f"no schedule for {concept_id}", "schedules": []}
+            from dataclasses import asdict
+            return {"schedules": [asdict(rec)]}
+
+        schedules = self._store.list_release_schedules(is_active=True)
+        if due_only:
+            from ingestion.release_schedule import check_due_concepts
+            schedules = check_due_concepts(schedules)
+
+        from dataclasses import asdict
+        items = [asdict(s) for s in schedules[:limit]]
+        return {"total": len(items), "schedules": items}
+
+    def _op_get_release_status(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        concept_id = (arguments.get("concept_id") or "").strip() or None
+        status_filter = (arguments.get("status") or "").strip() or None
+        limit = int(arguments.get("limit", 100))
+
+        if concept_id:
+            rec = self._store.get_latest_release_status(concept_id)
+            if rec is None:
+                return {"error": f"no status for {concept_id}", "statuses": []}
+            from dataclasses import asdict
+            return {"statuses": [asdict(rec)]}
+
+        statuses = self._store.list_release_statuses(status=status_filter)
+        from dataclasses import asdict
+        items = [asdict(s) for s in statuses[:limit]]
+        return {"total": len(items), "statuses": items}
+
     def _op_get_recent_releases(self, arguments: dict[str, Any]) -> dict[str, Any]:
         events = self._store.list_recent_events(
             limit=int(arguments.get("limit", 10)),
