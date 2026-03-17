@@ -629,6 +629,29 @@ _WORLDBANK_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "WB_CA_GDP_US":     ("us.trade.current_account_gdp",   "US Current Account % GDP", "percent", "annual", "none"),
 }
 
+_BLS_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
+    "CUUR0000SA0":              ("us.inflation.cpi_bls",               "CPI-U All Items (BLS)",                   "index",     "monthly",   "nsa"),
+    "CUUR0000SA0L1E":           ("us.inflation.cpi_core_bls",          "Core CPI-U (BLS)",                        "index",     "monthly",   "nsa"),
+    "CUUR0000SAF1":             ("us.inflation.cpi_food_bls",          "CPI-U Food (BLS)",                        "index",     "monthly",   "nsa"),
+    "CUUR0000SA0E":             ("us.inflation.cpi_energy_bls",        "CPI-U Energy (BLS)",                      "index",     "monthly",   "nsa"),
+    "CUUR0000SAH1":             ("us.inflation.cpi_shelter_bls",       "CPI-U Shelter (BLS)",                     "index",     "monthly",   "nsa"),
+    "WPSFD4":                   ("us.inflation.ppi_final_demand_bls",  "PPI Final Demand (BLS)",                  "index",     "monthly",   "nsa"),
+    "WPSFD49116":               ("us.inflation.ppi_core_bls",          "PPI Core (BLS)",                          "index",     "monthly",   "nsa"),
+    "CES0000000001":            ("us.employment.nfp_bls",              "Total Nonfarm Payrolls (BLS CES)",        "thousands", "monthly",   "sa"),
+    "CES0500000001":            ("us.employment.nfp_private_bls",      "Total Private Employment (BLS CES)",      "thousands", "monthly",   "sa"),
+    "CES0500000003":            ("us.employment.avg_hourly_earnings_bls", "Avg Hourly Earnings Private (BLS CES)", "usd",     "monthly",   "sa"),
+    "CES0500000002":            ("us.employment.avg_weekly_hours_bls", "Avg Weekly Hours Private (BLS CES)",      "hours",     "monthly",   "sa"),
+    "LNS14000000":              ("us.employment.unemployment_bls",     "Unemployment Rate (BLS CPS)",             "percent",   "monthly",   "sa"),
+    "LNS11300000":              ("us.employment.lfpr_bls",             "Labor Force Participation Rate (BLS CPS)","percent",   "monthly",   "sa"),
+    "JTS000000000000000JOL":    ("us.employment.jolts_openings_bls",   "JOLTS Job Openings (BLS)",                "thousands", "monthly",   "sa"),
+    "JTS000000000000000HIL":    ("us.employment.jolts_hires_bls",      "JOLTS Hires (BLS)",                       "thousands", "monthly",   "sa"),
+    "JTS000000000000000QUL":    ("us.employment.jolts_quits_bls",      "JOLTS Quits (BLS)",                       "thousands", "monthly",   "sa"),
+    "CIU1010000000000A":        ("us.employment.eci_total_bls",        "Employment Cost Index Total (BLS)",       "index",     "quarterly", "sa"),
+    "PRS85006092":              ("us.productivity.nfb_productivity_bls","NFB Labor Productivity (BLS)",            "index",     "quarterly", "sa"),
+    "PRS85006112":              ("us.productivity.nfb_ulc_bls",        "NFB Unit Labor Costs (BLS)",              "index",     "quarterly", "sa"),
+}
+
 _VINTAGE_FAMILY_IDS = {"GDP", "GDPC1", "CPIAUCSL", "PAYEMS", "UNRATE", "INDPRO", "RSAFS", "IMF_CN_GDP", "IMF_JP_GDP"}
 
 _OBS_DOC_LINKS: list[tuple[str, str, str]] = [
@@ -661,6 +684,7 @@ _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
     ("ecb",             "ecb",             "European Central Bank",             "central_bank",     "EU", "https://www.ecb.europa.eu",                                      "https://data-api.ecb.europa.eu/service/data"),
     ("oecd",            "oecd",            "Organisation for Economic Co-operation", "data_aggregator", "XX", "https://www.oecd.org",                                      "https://sdmx.oecd.org/public/rest/v2"),
     ("worldbank",       "worldbank",       "World Bank",                        "data_aggregator",  "XX", "https://www.worldbank.org",                                      "https://api.worldbank.org/v2"),
+    ("bls",             "bls",             "Bureau of Labor Statistics",         "government_agency", "US", "https://www.bls.gov",                                            "https://api.bls.gov/publicAPI/v2"),
 ]
 
 # ── Calendar indicator seed data ──────────────────────────────────────
@@ -5344,6 +5368,7 @@ class SQLiteEngineStore:
             ("ecb", _ECB_FAMILY_MAP),
             ("oecd", _OECD_FAMILY_MAP),
             ("worldbank", _WORLDBANK_FAMILY_MAP),
+            ("bls", _BLS_FAMILY_MAP),
         ]
         for source_id, family_map in source_maps:
             for series_id, (fam_id, canon_name, unit, freq, sa) in family_map.items():
