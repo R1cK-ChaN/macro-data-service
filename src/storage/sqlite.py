@@ -161,6 +161,18 @@ class ObsFamilyDocumentRecord:
 
 
 @dataclass(frozen=True)
+class ConceptMapRecord:
+    """Cross-source indicator mapping — groups equivalent series under one concept."""
+    concept_id: str             # 'CPI_US', 'GDP_REAL_US'
+    source_id: str              # 'fred', 'bls', 'imf'
+    provider_series_id: str     # 'CPIAUCSL', 'CUUR0000SA0'
+    obs_family_id: str          # FK to obs_family.family_id (may be empty)
+    role: str                   # primary, secondary, cross_check
+    notes: str = ""
+    created_at: str = ""
+
+
+@dataclass(frozen=True)
 class NewsArticleRecord:
     url_hash: str
     source_feed: str
@@ -1805,6 +1817,31 @@ class SQLiteEngineStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_obs_family_doc_release "
                 "ON obs_family_document(release_family_id)"
+            )
+
+            # ── Cross-source concept map ───────────────────────────
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS concept_map (
+                    concept_id         TEXT NOT NULL,
+                    source_id          TEXT NOT NULL,
+                    provider_series_id TEXT NOT NULL,
+                    obs_family_id      TEXT NOT NULL DEFAULT '',
+                    role               TEXT NOT NULL DEFAULT 'primary'
+                        CHECK (role IN ('primary','secondary','cross_check')),
+                    notes              TEXT NOT NULL DEFAULT '',
+                    created_at         TEXT NOT NULL,
+                    PRIMARY KEY (concept_id, source_id, provider_series_id)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_concept_map_concept "
+                "ON concept_map(concept_id)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_concept_map_series "
+                "ON concept_map(source_id, provider_series_id)"
             )
 
             # ── Calendar indicator normalization tables ───────────────
@@ -5449,6 +5486,117 @@ class SQLiteEngineStore:
         """Build a lookup dict mapping (source_id, provider_series_id) -> family_id."""
         families = self.list_obs_families(active_only=False)
         return {(f.source_id, f.provider_series_id): f.family_id for f in families}
+
+    # ── Cross-source concept map ─────────────────────────────────────
+
+    _CONCEPT_MAP_DEFS: list[tuple[str, str, str, str, str, str]] = [
+        # (concept_id, source_id, provider_series_id, obs_family_id, role, notes)
+        # -- US CPI --
+        ("CPI_US",          "fred",  "CPIAUCSL",      "us.inflation.cpi_all",          "primary",     "SA, all urban"),
+        ("CPI_US",          "bls",   "CUUR0000SA0",   "us.inflation.cpi_bls",          "primary",     "NSA, all urban"),
+        # -- US Core CPI --
+        ("CORE_CPI_US",     "fred",  "CPILFESL",      "us.inflation.cpi_core",         "primary",     "SA, less food & energy"),
+        ("CORE_CPI_US",     "bls",   "CUUR0000SA0L1E","us.inflation.cpi_core_bls",     "primary",     "NSA, less food & energy"),
+        # -- US Unemployment --
+        ("UNEMP_US",        "fred",  "UNRATE",        "us.employment.unemployment",    "primary",     "SA, BLS CPS"),
+        ("UNEMP_US",        "bls",   "LNS14000000",   "us.employment.unemployment_bls","primary",     "SA, BLS CPS"),
+        ("UNEMP_US",        "oecd",  "OECD_UNEMP_US", "us.employment.unemployment_oecd","cross_check","OECD KEI"),
+        # -- US Nonfarm Payrolls --
+        ("NFP_US",          "fred",  "PAYEMS",        "us.employment.nonfarm_payrolls","primary",     "SA, BLS CES"),
+        ("NFP_US",          "bls",   "CES0000000001", "us.employment.nfp_bls",         "primary",     "SA, BLS CES"),
+        # -- US GDP --
+        ("GDP_REAL_US",     "fred",  "GDPC1",         "us.growth.gdp_real",            "primary",     "SAAR, chained 2017 dollars"),
+        # -- US Policy Rate --
+        ("POLICY_RATE_US",  "fred",  "DFF",           "us.rates.fed_funds",            "primary",     "Daily effective rate"),
+        ("POLICY_RATE_US",  "nyfed", "NYFED_EFFR",    "us.rates.effr",                 "cross_check", "NY Fed EFFR"),
+        ("POLICY_RATE_US",  "bis",   "BIS_POLICY_US", "us.rates.policy_bis",           "cross_check", "BIS central bank policy"),
+        # -- US 10Y Treasury --
+        ("TREASURY_10Y_US", "fred",  "DGS10",         "us.rates.treasury_10y",         "primary",     "Daily constant maturity"),
+        # -- China CPI --
+        ("CPI_CN",          "imf",   "IMF_CN_CPI",    "cn.inflation.cpi",              "primary",     "IMF SDMX CPI index"),
+        # -- Japan CPI --
+        ("CPI_JP",          "imf",   "IMF_JP_CPI",    "jp.inflation.cpi",              "primary",     "IMF SDMX CPI index"),
+        # -- Euro Area CPI --
+        ("CPI_EU",          "imf",   "IMF_EU_CPI",    "eu.inflation.cpi_imf",          "primary",     "IMF SDMX HICP"),
+        ("CPI_EU",          "eurostat","ESTAT_HICP",   "eu.inflation.hicp",             "primary",     "Eurostat HICP YoY"),
+    ]
+
+    def seed_concept_map(self) -> None:
+        """Populate the concept_map table from the built-in definitions."""
+        now = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            for concept_id, source_id, series_id, fam_id, role, notes in self._CONCEPT_MAP_DEFS:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO concept_map
+                        (concept_id, source_id, provider_series_id,
+                         obs_family_id, role, notes, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (concept_id, source_id, series_id, fam_id, role, notes, now),
+                )
+
+    def get_concept_series(self, concept_id: str) -> list[ConceptMapRecord]:
+        """Return all source mappings for a given concept."""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                "SELECT * FROM concept_map WHERE concept_id = ? ORDER BY role, source_id",
+                (concept_id,),
+            ).fetchall()
+            return [
+                ConceptMapRecord(
+                    concept_id=r["concept_id"],
+                    source_id=r["source_id"],
+                    provider_series_id=r["provider_series_id"],
+                    obs_family_id=r["obs_family_id"],
+                    role=r["role"],
+                    notes=r["notes"],
+                    created_at=r["created_at"],
+                )
+                for r in rows
+            ]
+
+    def list_concepts(self, *, country_code: str | None = None) -> list[str]:
+        """Return distinct concept_ids, optionally filtered by country suffix."""
+        with self._connection(commit=False) as connection:
+            if country_code:
+                suffix = f"_{country_code.upper()}"
+                rows = connection.execute(
+                    "SELECT DISTINCT concept_id FROM concept_map "
+                    "WHERE concept_id LIKE ? ORDER BY concept_id",
+                    (f"%{suffix}",),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT DISTINCT concept_id FROM concept_map ORDER BY concept_id"
+                ).fetchall()
+            return [r["concept_id"] for r in rows]
+
+    def get_concept_observations(
+        self,
+        concept_id: str,
+        *,
+        start_date: str | None = None,
+    ) -> list[tuple[str, str, str, float]]:
+        """Return (source, series_id, date, value) tuples across all sources for a concept."""
+        mappings = self.get_concept_series(concept_id)
+        if not mappings:
+            return []
+        results: list[tuple[str, str, str, float]] = []
+        with self._connection(commit=False) as connection:
+            for m in mappings:
+                sql = (
+                    "SELECT source, series_id, date, value FROM indicators "
+                    "WHERE source = ? AND series_id = ?"
+                )
+                params: list[Any] = [m.source_id, m.provider_series_id]
+                if start_date:
+                    sql += " AND date >= ?"
+                    params.append(start_date)
+                sql += " ORDER BY date"
+                for row in connection.execute(sql, params).fetchall():
+                    results.append((row["source"], row["series_id"], row["date"], row["value"]))
+        return results
 
     # ── Calendar indicator normalization ──────────────────────────────
 
