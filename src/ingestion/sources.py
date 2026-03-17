@@ -3197,6 +3197,61 @@ class IngestionOrchestrator:
             unique.append(item)
         return unique
 
+    # ── v2 pipeline: Fetcher → Normalizer → store ──────────────────
+
+    def _ensure_normalizer(self) -> None:
+        """Lazy-initialise the shared Normalizer (requires obs families to be seeded)."""
+        if hasattr(self, "_normalizer"):
+            return
+        self._ensure_obs_seed()
+        from ingestion.normalization import Normalizer
+        families = self.store.list_obs_families(active_only=False)
+        self._normalizer = Normalizer(
+            family_lookup=Normalizer.build_family_lookup(families),
+        )
+
+    def _raw_series_to_records(
+        self, raw_series_list: list[Any],
+    ) -> list[IndicatorObservationRecord]:
+        """Convert list[RawSeries] → list[IndicatorObservationRecord] via Normalizer."""
+        self._ensure_normalizer()
+        records: list[IndicatorObservationRecord] = []
+        for rs in raw_series_list:
+            for row in self._normalizer.normalize(rs):
+                records.append(
+                    IndicatorObservationRecord(
+                        series_id=row.series_id,
+                        source=row.source,
+                        date=row.date,
+                        value=row.value,
+                        metadata={
+                            k: v for k, v in row.metadata.items()
+                            if k not in ("name",)
+                        },
+                        obs_family_id=row.obs_family_id,
+                    )
+                )
+        return records
+
+    def _build_fetcher_source(
+        self,
+        name: str,
+        fetcher: Any,
+        *,
+        interval_seconds: int | None = 86_400,
+        lookback_days: int = 365,
+    ) -> IngestionSourceDefinition:
+        """Create an IngestionSourceDefinition from a Fetcher adapter."""
+        return IngestionSourceDefinition(
+            name=name,
+            interval_seconds=interval_seconds,
+            prepare=self._ensure_obs_seed,
+            fetch=lambda: fetcher.fetch(lookback_days=lookback_days),
+            normalize=self._raw_series_to_records,
+            deduplicate=self._deduplicate_observations,
+            store=self._store_indicator_observations,
+        )
+
     def _build_calendar_source(self) -> IngestionSourceDefinition:
         return IngestionSourceDefinition(
             name="calendar",
@@ -3383,44 +3438,10 @@ class IngestionOrchestrator:
         )
 
     def _build_nyfed_rates_source(self) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="nyfed_rates",
-            interval_seconds=86_400,
-            prepare=self._ensure_obs_seed,
-            fetch=self._fetch_nyfed_rate_observations,
-            deduplicate=self._deduplicate_observations,
-            store=self._store_indicator_observations,
+        from ingestion.fetchers._nyfed import NYFedFetcher
+        return self._build_fetcher_source(
+            "nyfed_rates", NYFedFetcher(client=self.nyfed),
         )
-
-    def _fetch_nyfed_rate_observations(self) -> list[IndicatorObservationRecord]:
-        observations: list[IndicatorObservationRecord] = []
-        for rate in self.nyfed.fetch_all_rates(last_n=5):
-            metadata: dict[str, Any] = {}
-            if rate.percentile_1 is not None:
-                metadata["percentile_1"] = rate.percentile_1
-            if rate.percentile_25 is not None:
-                metadata["percentile_25"] = rate.percentile_25
-            if rate.percentile_75 is not None:
-                metadata["percentile_75"] = rate.percentile_75
-            if rate.percentile_99 is not None:
-                metadata["percentile_99"] = rate.percentile_99
-            if rate.volume_billions is not None:
-                metadata["volume_billions"] = rate.volume_billions
-            if rate.target_rate_from is not None:
-                metadata["target_range"] = f"{rate.target_rate_from}-{rate.target_rate_to}"
-            series_id = f"NYFED_{rate.type}"
-            fam_id = self._family_lookup.get(("nyfed", series_id)) if self._family_lookup else None
-            observations.append(
-                IndicatorObservationRecord(
-                    series_id=series_id,
-                    source="nyfed",
-                    date=rate.date,
-                    value=rate.rate,
-                    metadata=metadata,
-                    obs_family_id=fam_id,
-                )
-            )
-        return observations
 
     def _build_gov_reports_source(self) -> IngestionSourceDefinition:
         return IngestionSourceDefinition(
@@ -3440,39 +3461,25 @@ class IngestionOrchestrator:
         return self._deduplicate_by_key(items, lambda item: canonicalize_url(item.url))
 
     def _build_eia_source(self) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="eia",
-            interval_seconds=86_400,
-            prepare=self._ensure_obs_seed,
-            execute=lambda: self.eia.refresh(
-                self.store,
-                family_lookup=self._family_lookup or None,
-            ).count,
+        from ingestion.fetchers._eia import EIAFetcher
+        return self._build_fetcher_source(
+            "eia", EIAFetcher(client=self.eia.client),
         )
 
     def _build_treasury_fiscal_source(self) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="treasury_fiscal",
-            interval_seconds=86_400,
-            prepare=self._ensure_obs_seed,
-            execute=lambda: self.treasury_fiscal.refresh(
-                self.store,
-                family_lookup=self._family_lookup or None,
-            ).count,
+        from ingestion.fetchers._treasury import TreasuryFetcher
+        return self._build_fetcher_source(
+            "treasury_fiscal", TreasuryFetcher(client=self.treasury_fiscal.client),
         )
 
     def _build_imf_source(self) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="imf",
-            interval_seconds=86_400,
-            prepare=self._ensure_obs_seed,
-            execute=lambda: self.imf.refresh(
-                self.store,
-                family_lookup=self._family_lookup or None,
-            ).count,
+        from ingestion.fetchers._sdmx import SDMXFetcher
+        return self._build_fetcher_source(
+            "imf", SDMXFetcher(self.imf.client, "imf", IMF_SERIES),
         )
 
     def _build_imf_vintages_source(self) -> IngestionSourceDefinition:
+        # Vintages use a specialised refresh path — keep the legacy client
         return IngestionSourceDefinition(
             name="imf_vintages",
             interval_seconds=86_400,
@@ -3484,72 +3491,33 @@ class IngestionOrchestrator:
         )
 
     def _build_eurostat_source(self) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="eurostat",
-            interval_seconds=86_400,
-            prepare=self._ensure_obs_seed,
-            execute=lambda: self.eurostat.refresh(
-                self.store,
-                family_lookup=self._family_lookup or None,
-            ).count,
+        from ingestion.fetchers._sdmx import SDMXFetcher
+        return self._build_fetcher_source(
+            "eurostat", SDMXFetcher(self.eurostat.client, "eurostat", EUROSTAT_SERIES),
         )
 
     def _build_bis_source(self) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="bis",
-            interval_seconds=86_400,
-            prepare=self._ensure_obs_seed,
-            execute=lambda: self.bis.refresh(
-                self.store,
-                family_lookup=self._family_lookup or None,
-            ).count,
+        from ingestion.fetchers._sdmx import SDMXFetcher
+        return self._build_fetcher_source(
+            "bis", SDMXFetcher(self.bis.client, "bis", BIS_SERIES),
         )
 
     def _build_ecb_source(self) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="ecb",
-            interval_seconds=86_400,
-            prepare=self._ensure_obs_seed,
-            execute=lambda: self.ecb.refresh(
-                self.store,
-                family_lookup=self._family_lookup or None,
-            ).count,
+        from ingestion.fetchers._sdmx import SDMXFetcher
+        return self._build_fetcher_source(
+            "ecb", SDMXFetcher(self.ecb.client, "ecb", ECB_SERIES),
         )
 
     def _build_oecd_source(self) -> IngestionSourceDefinition:
-        def _execute_oecd() -> int:
-            lookup = self._family_lookup or None
-            if len(self.oecd.series_configs) > 20:
-                return self.oecd.refresh_parallel(
-                    self.store, family_lookup=lookup,
-                ).count
-            return self.oecd.refresh(
-                self.store, family_lookup=lookup,
-            ).count
-
-        return IngestionSourceDefinition(
-            name="oecd",
-            interval_seconds=86_400,
-            prepare=self._ensure_obs_seed,
-            execute=_execute_oecd,
+        from ingestion.fetchers._oecd import OECDFetcher
+        return self._build_fetcher_source(
+            "oecd", OECDFetcher(client=self.oecd.client),
         )
 
     def _build_worldbank_source(self) -> IngestionSourceDefinition:
-        def _execute_worldbank() -> int:
-            lookup = self._family_lookup or None
-            if len(self.worldbank.series_configs) > 10:
-                return self.worldbank.refresh_parallel(
-                    self.store, family_lookup=lookup,
-                ).count
-            return self.worldbank.refresh(
-                self.store, family_lookup=lookup,
-            ).count
-
-        return IngestionSourceDefinition(
-            name="worldbank",
-            interval_seconds=86_400,
-            prepare=self._ensure_obs_seed,
-            execute=_execute_worldbank,
+        from ingestion.fetchers._worldbank import WorldBankFetcher
+        return self._build_fetcher_source(
+            "worldbank", WorldBankFetcher(client=self.worldbank.client),
         )
 
     def _build_worldbank_catalog_source(self) -> IngestionSourceDefinition:
