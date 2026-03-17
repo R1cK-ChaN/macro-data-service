@@ -1288,3 +1288,117 @@ class IngestionOrchestrator:
                 })
         result.sort(key=lambda x: x["concept_id"])
         return result
+
+    def get_health(
+        self, *, indicator: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """One-table health view: per-source rows with status, freshness, retries."""
+        from ingestion.release_schedule import is_data_fresh
+        from datetime import timezone as _tz
+
+        self._ensure_obs_seed()
+        self.store.seed_concept_map()
+        self.store.seed_release_schedules()
+
+        now = datetime.now(_tz.utc)
+        schedules_by_id = {
+            s.concept_id: s for s in self.store.list_release_schedules()
+        }
+
+        if indicator:
+            concepts = [indicator]
+        else:
+            concepts = sorted(schedules_by_id.keys())
+
+        rows: list[dict[str, Any]] = []
+        for cid in concepts:
+            sched = schedules_by_id.get(cid)
+            freq = sched.frequency if sched else "monthly"
+            mappings = self.store.get_concept_series(cid)
+            rs = self.store.get_latest_release_status(cid)
+
+            for m in mappings:
+                stats = self.store.get_series_stats(m.source_id, m.provider_series_id)
+                latest_date = stats.get("max_date") or ""
+                fresh = is_data_fresh(latest_date, freq, reference=now) if latest_date else False
+
+                # Derive status from release_status + freshness
+                if rs and rs.status in ("CONFIRMED", "FETCHED"):
+                    status = rs.status
+                elif rs and rs.status in ("WAITING", "PENDING"):
+                    status = rs.status
+                elif rs and rs.status in ("FAILED", "STALE"):
+                    status = rs.status
+                elif latest_date:
+                    status = "CONFIRMED" if fresh else "STALE"
+                else:
+                    status = "NO_DATA"
+
+                note = m.role
+                if m.priority > 1 and rs and rs.source_used == m.source_id:
+                    note = "fallback"
+
+                rows.append({
+                    "indicator": cid,
+                    "source": m.source_id,
+                    "status": status,
+                    "freshness": "fresh" if fresh else ("stale" if latest_date else "none"),
+                    "retries": rs.attempt_count if rs else 0,
+                    "note": note,
+                    "latest_date": latest_date,
+                    "obs_count": stats.get("count", 0),
+                })
+        return rows
+
+    def get_alerts(
+        self,
+        *,
+        delay_minutes: int = 30,
+        mismatch_threshold_pct: float = 1.0,
+    ) -> list[dict[str, str]]:
+        """Run the 3 alert checks: DELAY, FAILED, MISMATCH."""
+        from ingestion.release_schedule import check_alerts, Alert
+        from datetime import timezone as _tz
+
+        now = datetime.now(_tz.utc)
+        self.store.seed_concept_map()
+        self.store.seed_release_schedules()
+
+        statuses = self.store.list_all_latest_release_statuses()
+
+        # Cross-source diffs: compare primary vs secondary for multi-source concepts
+        cross_diffs: dict[str, float] = {}
+        seen_concepts: set[str] = set()
+        for rs in statuses:
+            if rs.concept_id in seen_concepts:
+                continue
+            seen_concepts.add(rs.concept_id)
+            mappings = self.store.get_concept_series(rs.concept_id)
+            if len(mappings) < 2:
+                continue
+            # Get latest values from primary and secondary
+            vals: list[tuple[str, float]] = []
+            for m in mappings[:2]:  # just compare top 2
+                stats = self.store.get_series_stats(m.source_id, m.provider_series_id)
+                if stats.get("latest_value") is not None:
+                    vals.append((m.source_id, stats["latest_value"]))
+            if len(vals) == 2 and vals[0][1] != 0:
+                diff_pct = ((vals[1][1] - vals[0][1]) / abs(vals[0][1])) * 100
+                cross_diffs[rs.concept_id] = diff_pct
+
+        alerts = check_alerts(
+            statuses,
+            cross_source_diffs=cross_diffs,
+            now=now,
+            delay_minutes=delay_minutes,
+            mismatch_threshold_pct=mismatch_threshold_pct,
+        )
+        return [
+            {
+                "type": a.alert_type,
+                "indicator": a.concept_id,
+                "source": a.source,
+                "message": a.message,
+            }
+            for a in alerts
+        ]

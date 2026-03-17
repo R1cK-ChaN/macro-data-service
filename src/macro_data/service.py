@@ -228,6 +228,22 @@ class LocalMacroDataService:
         items = [asdict(s) for s in statuses[:limit]]
         return {"total": len(items), "statuses": items}
 
+    def _op_get_health(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self._ingestion is None:
+            return {"error": "ingestion unavailable"}
+        indicator = (arguments.get("indicator") or "").strip() or None
+        rows = self._ingestion.get_health(indicator=indicator)
+        return {"total": len(rows), "rows": rows}
+
+    def _op_get_alerts(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self._ingestion is None:
+            return {"error": "ingestion unavailable"}
+        alerts = self._ingestion.get_alerts(
+            delay_minutes=int(arguments.get("delay_minutes", 30)),
+            mismatch_threshold_pct=float(arguments.get("mismatch_threshold_pct", 1.0)),
+        )
+        return {"total": len(alerts), "alerts": alerts}
+
     def _op_get_recent_releases(self, arguments: dict[str, Any]) -> dict[str, Any]:
         events = self._store.list_recent_events(
             limit=int(arguments.get("limit", 10)),

@@ -39,6 +39,12 @@ def build_parser() -> argparse.ArgumentParser:
     schedule.add_argument("--json", action="store_true", dest="json_output")
     schedule.add_argument("--db-path", default=None)
 
+    health = subparsers.add_parser("health")
+    health.add_argument("--indicator", default=None, help="Filter to a single indicator")
+    health.add_argument("--alerts", action="store_true", help="Show only active alerts")
+    health.add_argument("--json", action="store_true", dest="json_output")
+    health.add_argument("--db-path", default=None)
+
     news_refresh = subparsers.add_parser("news-refresh")
     news_refresh.add_argument("--category", default=None)
     news_refresh.add_argument("--db-path", default=None)
@@ -290,6 +296,37 @@ def _run_wb_refresh_catalog(args: argparse.Namespace) -> int:
         sleep_seconds=args.sleep_seconds,
     )
     print(json.dumps({stats.source: stats.count}, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+def _run_health(args: argparse.Namespace) -> int:
+    from ingestion.sources import IngestionOrchestrator
+    from storage import SQLiteEngineStore
+
+    store = SQLiteEngineStore(db_path=Path(args.db_path) if args.db_path else None)
+    orchestrator = IngestionOrchestrator(store)
+
+    if args.alerts:
+        alerts = orchestrator.get_alerts()
+        if args.json_output:
+            print(json.dumps(alerts, ensure_ascii=False, indent=2))
+        else:
+            if not alerts:
+                print("No active alerts.")
+            for a in alerts:
+                print(f"  [ALERT][{a['type']}] {a['message']}")
+        return 1 if alerts else 0
+
+    rows = orchestrator.get_health(indicator=args.indicator)
+    if args.json_output:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+    else:
+        print(f"  {'indicator':<25} {'source':<12} {'status':<12} "
+              f"{'freshness':<10} {'retries':<8} {'note'}")
+        print(f"  {'-' * 85}")
+        for r in rows:
+            print(f"  {r['indicator']:<25} {r['source']:<12} {r['status']:<12} "
+                  f"{r['freshness']:<10} {r['retries']:<8} {r['note']}")
     return 0
 
 
@@ -566,6 +603,10 @@ def main(argv: list[str] | None = None) -> int:
     # Concept validation (no service needed)
     if args.command == "validate-concept":
         return _run_validate_concept(args)
+
+    # Health dashboard (no service needed)
+    if args.command == "health":
+        return _run_health(args)
 
     # Release schedule (no service needed for --show/--due/--status/--run)
     if args.command == "schedule":

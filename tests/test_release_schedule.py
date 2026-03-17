@@ -27,8 +27,13 @@ from ingestion.release_schedule import (
     expected_reference_period,
     is_data_fresh,
     compute_next_retry,
+    check_alerts,
+    Alert,
     RETRY_BACKOFF_SECONDS,
     MAX_RETRIES,
+    ALERT_DELAY,
+    ALERT_MISMATCH,
+    ALERT_FAILED,
     STATUS_PENDING,
     STATUS_WAITING,
     STATUS_FETCHED,
@@ -587,3 +592,119 @@ class TestReleaseStatusStorage:
         assert got.data_date == "2026-03-16"
         assert got.source_used == "nyfed"
         assert got.error == ""
+
+
+# ── Alert tests (pure function, no DB) ───────────────────────────────
+
+class TestCheckAlerts:
+    def test_delay_alert(self):
+        """DELAY fires when now > release_date + 30min and not confirmed."""
+        now = datetime(2026, 3, 12, 13, 30, tzinfo=timezone.utc)
+        statuses = [
+            {"concept_id": "CPI_US", "status": STATUS_WAITING,
+             "release_date": "2026-03-12T12:30:00+00:00",
+             "attempt_count": 1, "source_used": "bls", "error": ""},
+        ]
+        alerts = check_alerts(statuses, now=now, delay_minutes=30)
+        assert len(alerts) == 1
+        assert alerts[0].alert_type == ALERT_DELAY
+        assert "CPI_US" in alerts[0].message
+
+    def test_no_delay_when_confirmed(self):
+        """No DELAY for confirmed indicators."""
+        now = datetime(2026, 3, 12, 14, 0, tzinfo=timezone.utc)
+        statuses = [
+            {"concept_id": "CPI_US", "status": STATUS_CONFIRMED,
+             "release_date": "2026-03-12T12:30:00+00:00",
+             "attempt_count": 1, "source_used": "bls", "error": ""},
+        ]
+        alerts = check_alerts(statuses, now=now, delay_minutes=30)
+        assert len(alerts) == 0
+
+    def test_no_delay_within_window(self):
+        """No DELAY when still within the delay window."""
+        now = datetime(2026, 3, 12, 12, 45, tzinfo=timezone.utc)  # 15min after release
+        statuses = [
+            {"concept_id": "CPI_US", "status": STATUS_WAITING,
+             "release_date": "2026-03-12T12:30:00+00:00",
+             "attempt_count": 1, "source_used": "bls", "error": ""},
+        ]
+        alerts = check_alerts(statuses, now=now, delay_minutes=30)
+        assert len(alerts) == 0
+
+    def test_failed_alert(self):
+        """FAILED fires when status is FAILED."""
+        statuses = [
+            {"concept_id": "IMF_CN_CPI", "status": STATUS_FAILED,
+             "release_date": "2026-03-15T00:00:00+00:00",
+             "attempt_count": 5, "source_used": "imf", "error": "timeout"},
+        ]
+        # Also triggers DELAY (it's failed AND past release)
+        now = datetime(2026, 3, 16, 0, 0, tzinfo=timezone.utc)
+        alerts = check_alerts(statuses, now=now, delay_minutes=30)
+        types = {a.alert_type for a in alerts}
+        assert ALERT_FAILED in types
+        failed = [a for a in alerts if a.alert_type == ALERT_FAILED]
+        assert "5 retries" in failed[0].message
+
+    def test_mismatch_alert(self):
+        """MISMATCH fires when cross-source diff exceeds threshold."""
+        statuses = []  # no status-based alerts
+        cross = {"CPI_US": 3.2}
+        alerts = check_alerts(
+            statuses, cross_source_diffs=cross,
+            mismatch_threshold_pct=1.0,
+        )
+        assert len(alerts) == 1
+        assert alerts[0].alert_type == ALERT_MISMATCH
+        assert "+3.20%" in alerts[0].message
+
+    def test_mismatch_under_threshold(self):
+        """No MISMATCH when diff is below threshold."""
+        cross = {"CPI_US": 0.5}
+        alerts = check_alerts(
+            [], cross_source_diffs=cross,
+            mismatch_threshold_pct=1.0,
+        )
+        assert len(alerts) == 0
+
+    def test_multiple_alerts(self):
+        """Multiple alert types can fire simultaneously."""
+        now = datetime(2026, 3, 12, 14, 0, tzinfo=timezone.utc)
+        statuses = [
+            {"concept_id": "CPI_US", "status": STATUS_WAITING,
+             "release_date": "2026-03-12T12:30:00+00:00",
+             "attempt_count": 2, "source_used": "bls", "error": ""},
+            {"concept_id": "GDP_US", "status": STATUS_FAILED,
+             "release_date": "2026-03-10T00:00:00+00:00",
+             "attempt_count": 5, "source_used": "bea", "error": "timeout"},
+        ]
+        cross = {"UNEMP_US": 2.5}
+        alerts = check_alerts(
+            statuses, cross_source_diffs=cross,
+            now=now, delay_minutes=30, mismatch_threshold_pct=1.0,
+        )
+        types = {a.alert_type for a in alerts}
+        assert ALERT_DELAY in types
+        assert ALERT_FAILED in types
+        assert ALERT_MISMATCH in types
+
+    def test_dataclass_input(self):
+        """check_alerts works with dataclass-style objects too."""
+        @dataclass
+        class FakeStatus:
+            concept_id: str
+            status: str
+            release_date: str
+            attempt_count: int = 0
+            source_used: str = ""
+            error: str = ""
+
+        now = datetime(2026, 3, 12, 14, 0, tzinfo=timezone.utc)
+        statuses = [
+            FakeStatus("CPI_US", STATUS_WAITING, "2026-03-12T12:30:00+00:00",
+                        1, "bls", ""),
+        ]
+        alerts = check_alerts(statuses, now=now, delay_minutes=30)
+        assert len(alerts) == 1
+        assert alerts[0].alert_type == ALERT_DELAY

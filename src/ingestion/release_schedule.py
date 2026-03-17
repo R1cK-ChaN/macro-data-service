@@ -327,3 +327,84 @@ def compute_next_retry(
     ref = reference or datetime.now(timezone.utc)
     delay = RETRY_BACKOFF_SECONDS[min(attempt_count, len(RETRY_BACKOFF_SECONDS) - 1)]
     return ref + timedelta(seconds=delay)
+
+
+# ── Alert types ───────────────────────────────────────────────────────
+
+ALERT_DELAY = "DELAY"
+ALERT_MISMATCH = "MISMATCH"
+ALERT_FAILED = "FAILED"
+
+
+@dataclass(frozen=True)
+class Alert:
+    alert_type: str     # DELAY, MISMATCH, FAILED
+    concept_id: str
+    source: str
+    message: str
+
+
+def check_alerts(
+    statuses: Sequence[Any],
+    *,
+    schedules_by_id: dict[str, Any] | None = None,
+    cross_source_diffs: dict[str, float] | None = None,
+    now: datetime | None = None,
+    delay_minutes: int = 30,
+    mismatch_threshold_pct: float = 1.0,
+) -> list[Alert]:
+    """Scan release statuses and emit alerts. Pure function, no DB.
+
+    Three alert types:
+    1. DELAY  — data not confirmed after expected_release + delay_minutes
+    2. FAILED — retries exhausted
+    3. MISMATCH — cross-source value difference exceeds threshold
+    """
+    _now = now or datetime.now(timezone.utc)
+    alerts: list[Alert] = []
+
+    for rs in statuses:
+        cid = rs.concept_id if hasattr(rs, "concept_id") else rs.get("concept_id", "")
+        status = rs.status if hasattr(rs, "status") else rs.get("status", "")
+        release_date = rs.release_date if hasattr(rs, "release_date") else rs.get("release_date", "")
+        attempt_count = rs.attempt_count if hasattr(rs, "attempt_count") else rs.get("attempt_count", 0)
+        source_used = rs.source_used if hasattr(rs, "source_used") else rs.get("source_used", "")
+        error = rs.error if hasattr(rs, "error") else rs.get("error", "")
+
+        # Alert 1: DELAY — not confirmed and past release + delay
+        if status not in (STATUS_CONFIRMED, STATUS_FETCHED) and release_date:
+            try:
+                rd = datetime.fromisoformat(release_date)
+                if rd.tzinfo is None:
+                    rd = rd.replace(tzinfo=timezone.utc)
+                if _now > rd + timedelta(minutes=delay_minutes):
+                    alerts.append(Alert(
+                        alert_type=ALERT_DELAY,
+                        concept_id=cid,
+                        source=source_used or "unknown",
+                        message=f"{cid} delayed (status={status})",
+                    ))
+            except (ValueError, TypeError):
+                pass
+
+        # Alert 2: FAILED — retries exhausted
+        if status == STATUS_FAILED:
+            alerts.append(Alert(
+                alert_type=ALERT_FAILED,
+                concept_id=cid,
+                source=source_used or "unknown",
+                message=f"{cid} fetch failed ({attempt_count} retries): {error}",
+            ))
+
+    # Alert 3: MISMATCH — cross-source divergence
+    if cross_source_diffs:
+        for cid, diff_pct in cross_source_diffs.items():
+            if abs(diff_pct) > mismatch_threshold_pct:
+                alerts.append(Alert(
+                    alert_type=ALERT_MISMATCH,
+                    concept_id=cid,
+                    source="cross_source",
+                    message=f"{cid} mismatch ({diff_pct:+.2f}%)",
+                ))
+
+    return alerts
