@@ -108,6 +108,13 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--json", action="store_true", dest="json_output", help="JSON output")
     validate.add_argument("--db-path", default=None)
 
+    refresh_indicator = subparsers.add_parser("refresh-indicator")
+    refresh_indicator.add_argument("concept_id", help="Concept ID (e.g. CPI_US)")
+    refresh_indicator.add_argument("--lookback-days", type=int, default=365 * 3, help="History depth")
+    refresh_indicator.add_argument("--validate", action="store_true", help="Run validation after ingestion")
+    refresh_indicator.add_argument("--json", action="store_true", dest="json_output", help="JSON output")
+    refresh_indicator.add_argument("--db-path", default=None)
+
     validate_concept = subparsers.add_parser("validate-concept")
     validate_concept.add_argument("concept_id", nargs="?", default=None, help="Concept ID (e.g. CPI_US)")
     validate_concept.add_argument("--all", action="store_true", dest="all_concepts", help="Validate all concepts")
@@ -316,6 +323,39 @@ def _run_validate(args: argparse.Namespace) -> int:
     return 0 if report.passed else 1
 
 
+def _run_refresh_indicator(args: argparse.Namespace) -> int:
+    from ingestion.sources import IngestionOrchestrator
+    from storage import SQLiteEngineStore
+
+    store = SQLiteEngineStore(db_path=Path(args.db_path) if args.db_path else None)
+    orchestrator = IngestionOrchestrator(store)
+
+    report = orchestrator.refresh_indicator(
+        args.concept_id,
+        lookback_days=args.lookback_days,
+    )
+
+    if args.json_output:
+        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        status = "OK" if not report.error else "ERROR"
+        print(f"  {report.source}  {status}  stored={report.stored}  "
+              f"fetched={report.fetched}  {report.duration_ms}ms")
+        if report.error:
+            print(f"  errors: {report.error}")
+
+    if args.validate:
+        from ingestion.validation import ValidationEngine, ValidationStore
+        vs = ValidationStore(str(store.db_path))
+        engine = ValidationEngine(vs)
+        store.seed_concept_map()
+        val_report = engine.validate_concept(args.concept_id, store)
+        print()
+        print(val_report.format_text())
+
+    return 0 if not report.error else 1
+
+
 def _run_validate_concept(args: argparse.Namespace) -> int:
     from ingestion.validation import ValidationEngine, ValidationStore
     from storage import SQLiteEngineStore
@@ -399,6 +439,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_wb_generate_configs(args)
     if args.command == "wb-refresh-catalog":
         return _run_wb_refresh_catalog(args)
+
+    # Indicator refresh (no service needed)
+    if args.command == "refresh-indicator":
+        return _run_refresh_indicator(args)
 
     # Concept validation (no service needed)
     if args.command == "validate-concept":

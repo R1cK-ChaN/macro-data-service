@@ -99,6 +99,18 @@ class LocalMacroDataService:
                 "available_sources": self._ingestion.list_sources(),
             }
 
+    def _op_refresh_indicator(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self._ingestion is None:
+            return {"error": "ingestion unavailable"}
+        concept_id = (arguments.get("concept_id") or "").strip()
+        if not concept_id:
+            return {"error": "concept_id is required"}
+        lookback_days = int(arguments.get("lookback_days", 365 * 3))
+        report = self._ingestion.refresh_indicator(
+            concept_id, lookback_days=lookback_days,
+        )
+        return report.to_dict()
+
     def _op_validate_concept(self, arguments: dict[str, Any]) -> dict[str, Any]:
         from ingestion.validation import ValidationEngine, ValidationStore
 

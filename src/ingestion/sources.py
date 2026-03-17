@@ -308,6 +308,7 @@ class IngestionOrchestrator:
             self._build_oecd_source(),
             self._build_worldbank_source(),
             self._build_worldbank_catalog_source(),
+            self._build_bls_source(),
         ]
         for definition in definitions:
             self.register_source(definition)
@@ -332,6 +333,7 @@ class IngestionOrchestrator:
             "oecd",
             "worldbank",
             "worldbank_catalog",
+            "bls",
         ]
 
     @staticmethod
@@ -768,6 +770,133 @@ class IngestionOrchestrator:
             execute=_execute,
         )
 
+    def _build_bls_source(self) -> IngestionSourceDefinition:
+        from ingestion.fetchers._bls import BLSFetcher
+        return self._build_fetcher_source("bls", BLSFetcher())
+
+    # ── Indicator-driven ingestion ───────────────────────────────
+
+    _SOURCE_FETCHER_MAP: dict[str, str] = {
+        "fred": "fred",
+        "bls": "bls",
+        "eia": "eia",
+        "nyfed": "nyfed_rates",
+        "treasury_fiscal": "treasury_fiscal",
+        "imf": "imf",
+        "eurostat": "eurostat",
+        "bis": "bis",
+        "ecb": "ecb",
+        "oecd": "oecd",
+        "worldbank": "worldbank",
+    }
+
+    def _get_fetcher_for_source(self, source_id: str) -> Any:
+        """Return the fetcher adapter for a concept_map source_id."""
+        from ingestion.fetchers._bls import BLSFetcher
+        from ingestion.fetchers._eia import EIAFetcher
+        from ingestion.fetchers._fred import FredFetcher
+        from ingestion.fetchers._nyfed import NYFedFetcher
+        from ingestion.fetchers._oecd import OECDFetcher
+        from ingestion.fetchers._sdmx import SDMXFetcher
+        from ingestion.fetchers._treasury import TreasuryFetcher
+        from ingestion.fetchers._worldbank import WorldBankFetcher
+
+        fetcher_cache = getattr(self, "_fetcher_cache", None)
+        if fetcher_cache is None:
+            self._fetcher_cache: dict[str, Any] = {}
+            fetcher_cache = self._fetcher_cache
+
+        if source_id in fetcher_cache:
+            return fetcher_cache[source_id]
+
+        fetcher: Any
+        if source_id == "fred":
+            fetcher = FredFetcher(client=self.fred.client)
+        elif source_id == "bls":
+            fetcher = BLSFetcher()
+        elif source_id == "eia":
+            fetcher = EIAFetcher(client=self.eia.client)
+        elif source_id == "nyfed":
+            fetcher = NYFedFetcher(client=self.nyfed)
+        elif source_id == "treasury_fiscal":
+            fetcher = TreasuryFetcher(client=self.treasury_fiscal.client)
+        elif source_id == "imf":
+            fetcher = SDMXFetcher(self.imf.client, "imf", IMF_SERIES)
+        elif source_id == "eurostat":
+            fetcher = SDMXFetcher(self.eurostat.client, "eurostat", EUROSTAT_SERIES)
+        elif source_id == "bis":
+            fetcher = SDMXFetcher(self.bis.client, "bis", BIS_SERIES)
+        elif source_id == "ecb":
+            fetcher = SDMXFetcher(self.ecb.client, "ecb", ECB_SERIES)
+        elif source_id == "oecd":
+            fetcher = OECDFetcher(client=self.oecd.client)
+        elif source_id == "worldbank":
+            fetcher = WorldBankFetcher(client=self.worldbank.client)
+        else:
+            return None
+        fetcher_cache[source_id] = fetcher
+        return fetcher
+
+    def refresh_indicator(
+        self,
+        concept_id: str,
+        *,
+        lookback_days: int = 365 * 3,
+    ) -> IngestionRunReport:
+        """Fetch, normalize, and store all series for a single concept."""
+        started = time.perf_counter()
+        self._ensure_obs_seed()
+        self.store.seed_concept_map()
+
+        mappings = self.store.get_concept_series(concept_id)
+        if not mappings:
+            return IngestionRunReport(
+                source=f"indicator:{concept_id}",
+                stored=0,
+                error=f"concept '{concept_id}' not found in concept_map",
+            )
+
+        all_raw: list[Any] = []
+        errors: list[str] = []
+
+        for m in mappings:
+            fetcher = self._get_fetcher_for_source(m.source_id)
+            if fetcher is None:
+                errors.append(f"{m.source_id}: no fetcher available")
+                continue
+            try:
+                rs = fetcher.fetch_series(m.provider_series_id, lookback_days=lookback_days)
+                if rs is not None and rs.observations:
+                    all_raw.append(rs)
+                else:
+                    errors.append(f"{m.source_id}/{m.provider_series_id}: no data returned")
+            except Exception as exc:
+                errors.append(f"{m.source_id}/{m.provider_series_id}: {exc}")
+
+        if not all_raw:
+            return IngestionRunReport(
+                source=f"indicator:{concept_id}",
+                stored=0,
+                fetched=0,
+                duration_ms=int((time.perf_counter() - started) * 1000),
+                error="; ".join(errors) if errors else "no data from any source",
+            )
+
+        records = self._raw_series_to_records(all_raw)
+        deduped = self._deduplicate_observations(records)
+        stored = self._store_indicator_observations(deduped)
+
+        report = IngestionRunReport(
+            source=f"indicator:{concept_id}",
+            stored=stored,
+            fetched=sum(len(rs.observations) for rs in all_raw),
+            normalized=len(records),
+            deduplicated=len(deduped),
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            error="; ".join(errors) if errors else "",
+        )
+        return report
+
     def _deduplicate_observations(
         self,
         observations: list[IndicatorObservationRecord],
@@ -839,6 +968,9 @@ class IngestionOrchestrator:
 
     def refresh_worldbank_catalog(self) -> dict[str, int]:
         return self.run_source("worldbank_catalog").to_counts()
+
+    def refresh_bls(self) -> dict[str, int]:
+        return self.run_source("bls").to_counts()
 
     def refresh_gov_reports(self) -> dict[str, int]:
         return self.run_source("gov_reports").to_counts()
