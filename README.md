@@ -72,6 +72,11 @@ Ontology-oriented operations:
 - `list_release_families_for_indicator`
 - `get_trends`
 
+Indicator resolution operations:
+
+- `resolve_indicator` — returns the highest-priority observation for a concept (with provenance)
+- `resolve_indicator_history` — returns a resolved time series, picking the best source per date
+
 Example:
 
 ```bash
@@ -82,6 +87,18 @@ curl -s -X POST http://127.0.0.1:8765/v1/ops/get_recent_releases \
 curl -s -X POST http://127.0.0.1:8765/v1/ops/get_trends \
   -H 'Content-Type: application/json' \
   -d '{"arguments":{"limit":5,"hours":48}}'
+```
+
+## Indicator Resolution CLI
+
+The `resolve` subcommand returns the authoritative value for a concept using
+source-priority rankings (e.g. BLS > FRED for CPI, NYFed > FRED for rates):
+
+```bash
+macro-data-service resolve CPI_US                       # latest resolved value
+macro-data-service resolve CPI_US --date 2024-01-01     # specific date
+macro-data-service resolve CPI_US --history --limit 12  # resolved time series
+macro-data-service resolve CPI_US --json                # JSON with provenance
 ```
 
 ## Verification

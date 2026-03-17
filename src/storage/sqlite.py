@@ -167,9 +167,23 @@ class ConceptMapRecord:
     source_id: str              # 'fred', 'bls', 'imf'
     provider_series_id: str     # 'CPIAUCSL', 'CUUR0000SA0'
     obs_family_id: str          # FK to obs_family.family_id (may be empty)
-    role: str                   # primary, secondary, cross_check
+    priority: int = 0           # 1 = authoritative, 2 = secondary, 3 = tertiary
+    role: str = "primary"       # primary, secondary, cross_check
     notes: str = ""
     created_at: str = ""
+
+
+@dataclass(frozen=True)
+class ResolvedObservation:
+    """A single resolved value for a concept on a given date, with provenance."""
+    concept_id: str
+    date: str
+    value: float
+    source_id: str
+    provider_series_id: str
+    priority: int
+    role: str
+    alternates: int = 0         # how many other sources also had this date
 
 
 @dataclass(frozen=True)
@@ -1843,6 +1857,10 @@ class SQLiteEngineStore:
                 "CREATE INDEX IF NOT EXISTS idx_concept_map_series "
                 "ON concept_map(source_id, provider_series_id)"
             )
+            try:
+                connection.execute("ALTER TABLE concept_map ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
             # ── Calendar indicator normalization tables ───────────────
             connection.execute(
@@ -5489,163 +5507,172 @@ class SQLiteEngineStore:
 
     # ── Cross-source concept map ─────────────────────────────────────
 
-    _CONCEPT_MAP_DEFS: list[tuple[str, str, str, str, str, str]] = [
-        # (concept_id, source_id, provider_series_id, obs_family_id, role, notes)
+    _CONCEPT_MAP_DEFS: list[tuple[str, str, str, str, int, str, str]] = [
+        # (concept_id, source_id, provider_series_id, obs_family_id, priority, role, notes)
         #
         # ── US Inflation ─────────────────────────────────────────────
-        ("CPI_US",              "fred",           "CPIAUCSL",       "us.inflation.cpi_all",          "primary",     "SA, all urban"),
-        ("CPI_US",              "bls",            "CUUR0000SA0",    "us.inflation.cpi_bls",          "primary",     "NSA, all urban"),
-        ("CORE_CPI_US",         "fred",           "CPILFESL",       "us.inflation.cpi_core",         "primary",     "SA, less food & energy"),
-        ("CORE_CPI_US",         "bls",            "CUUR0000SA0L1E", "us.inflation.cpi_core_bls",     "primary",     "NSA, less food & energy"),
-        ("CORE_PCE_US",         "fred",           "PCEPILFE",       "us.inflation.pce_core",         "primary",     "SA, Fed preferred gauge"),
-        ("BREAKEVEN_5Y_US",     "fred",           "T5YIE",          "us.inflation.breakeven_5y",     "primary",     "TIPS-derived 5Y"),
-        ("BREAKEVEN_10Y_US",    "fred",           "T10YIE",         "us.inflation.breakeven_10y",    "primary",     "TIPS-derived 10Y"),
-        ("CPI_FOOD_US",         "bls",            "CUUR0000SAF1",   "us.inflation.cpi_food_bls",     "primary",     "NSA, food"),
-        ("CPI_ENERGY_US",       "bls",            "CUUR0000SA0E",   "us.inflation.cpi_energy_bls",   "primary",     "NSA, energy"),
-        ("CPI_SHELTER_US",      "bls",            "CUUR0000SAH1",   "us.inflation.cpi_shelter_bls",  "primary",     "NSA, shelter"),
-        ("PPI_US",              "bls",            "WPSFD4",         "us.inflation.ppi_final_demand_bls", "primary",  "NSA, final demand"),
-        ("PPI_CORE_US",         "bls",            "WPSFD49116",     "us.inflation.ppi_core_bls",     "primary",     "NSA, core"),
+        ("CPI_US",              "bls",            "CUUR0000SA0",    "us.inflation.cpi_bls",          1, "primary",     "NSA, all urban"),
+        ("CPI_US",              "fred",           "CPIAUCSL",       "us.inflation.cpi_all",          2, "secondary",   "SA, all urban"),
+        ("CORE_CPI_US",         "bls",            "CUUR0000SA0L1E", "us.inflation.cpi_core_bls",     1, "primary",     "NSA, less food & energy"),
+        ("CORE_CPI_US",         "fred",           "CPILFESL",       "us.inflation.cpi_core",         2, "secondary",   "SA, less food & energy"),
+        ("CORE_PCE_US",         "fred",           "PCEPILFE",       "us.inflation.pce_core",         1, "primary",     "SA, Fed preferred gauge"),
+        ("BREAKEVEN_5Y_US",     "fred",           "T5YIE",          "us.inflation.breakeven_5y",     1, "primary",     "TIPS-derived 5Y"),
+        ("BREAKEVEN_10Y_US",    "fred",           "T10YIE",         "us.inflation.breakeven_10y",    1, "primary",     "TIPS-derived 10Y"),
+        ("CPI_FOOD_US",         "bls",            "CUUR0000SAF1",   "us.inflation.cpi_food_bls",     1, "primary",     "NSA, food"),
+        ("CPI_ENERGY_US",       "bls",            "CUUR0000SA0E",   "us.inflation.cpi_energy_bls",   1, "primary",     "NSA, energy"),
+        ("CPI_SHELTER_US",      "bls",            "CUUR0000SAH1",   "us.inflation.cpi_shelter_bls",  1, "primary",     "NSA, shelter"),
+        ("PPI_US",              "bls",            "WPSFD4",         "us.inflation.ppi_final_demand_bls", 1, "primary",  "NSA, final demand"),
+        ("PPI_CORE_US",         "bls",            "WPSFD49116",     "us.inflation.ppi_core_bls",     1, "primary",     "NSA, core"),
         #
         # ── US Employment ────────────────────────────────────────────
-        ("UNEMP_US",            "fred",           "UNRATE",         "us.employment.unemployment",    "primary",     "SA, BLS CPS"),
-        ("UNEMP_US",            "bls",            "LNS14000000",    "us.employment.unemployment_bls","primary",     "SA, BLS CPS"),
-        ("UNEMP_US",            "oecd",           "OECD_UNEMP_US",  "us.employment.unemployment_oecd","cross_check","OECD KEI"),
-        ("NFP_US",              "fred",           "PAYEMS",         "us.employment.nonfarm_payrolls","primary",     "SA, BLS CES"),
-        ("NFP_US",              "bls",            "CES0000000001",  "us.employment.nfp_bls",         "primary",     "SA, BLS CES"),
-        ("NFP_PRIVATE_US",      "bls",            "CES0500000001",  "us.employment.nfp_private_bls", "primary",     "SA, private sector"),
-        ("AVG_HOURLY_EARN_US",  "bls",            "CES0500000003",  "us.employment.avg_hourly_earnings_bls", "primary", "SA, private"),
-        ("AVG_WEEKLY_HOURS_US", "bls",            "CES0500000002",  "us.employment.avg_weekly_hours_bls", "primary", "SA, private"),
-        ("LFPR_US",             "bls",            "LNS11300000",    "us.employment.lfpr_bls",        "primary",     "SA, BLS CPS"),
-        ("JOLTS_OPENINGS_US",   "bls",            "JTS000000000000000JOL", "us.employment.jolts_openings_bls", "primary", "SA"),
-        ("JOLTS_HIRES_US",      "bls",            "JTS000000000000000HIL", "us.employment.jolts_hires_bls",    "primary", "SA"),
-        ("JOLTS_QUITS_US",      "bls",            "JTS000000000000000QUL", "us.employment.jolts_quits_bls",    "primary", "SA"),
-        ("ECI_US",              "bls",            "CIU1010000000000A",     "us.employment.eci_total_bls",      "primary", "SA, quarterly"),
-        ("INITIAL_CLAIMS_US",   "fred",           "ICSA",           "us.employment.initial_claims",  "primary",     "SA, weekly"),
-        ("CONTINUING_CLAIMS_US","fred",           "CCSA",           "us.employment.continuing_claims","primary",    "SA, weekly"),
+        ("UNEMP_US",            "bls",            "LNS14000000",    "us.employment.unemployment_bls",1, "primary",     "SA, BLS CPS"),
+        ("UNEMP_US",            "fred",           "UNRATE",         "us.employment.unemployment",    2, "secondary",   "SA, BLS CPS"),
+        ("UNEMP_US",            "oecd",           "OECD_UNEMP_US",  "us.employment.unemployment_oecd",3,"cross_check","OECD KEI"),
+        ("NFP_US",              "bls",            "CES0000000001",  "us.employment.nfp_bls",         1, "primary",     "SA, BLS CES"),
+        ("NFP_US",              "fred",           "PAYEMS",         "us.employment.nonfarm_payrolls",2, "secondary",   "SA, BLS CES"),
+        ("NFP_PRIVATE_US",      "bls",            "CES0500000001",  "us.employment.nfp_private_bls", 1, "primary",     "SA, private sector"),
+        ("AVG_HOURLY_EARN_US",  "bls",            "CES0500000003",  "us.employment.avg_hourly_earnings_bls", 1, "primary", "SA, private"),
+        ("AVG_WEEKLY_HOURS_US", "bls",            "CES0500000002",  "us.employment.avg_weekly_hours_bls", 1, "primary", "SA, private"),
+        ("LFPR_US",             "bls",            "LNS11300000",    "us.employment.lfpr_bls",        1, "primary",     "SA, BLS CPS"),
+        ("JOLTS_OPENINGS_US",   "bls",            "JTS000000000000000JOL", "us.employment.jolts_openings_bls", 1, "primary", "SA"),
+        ("JOLTS_HIRES_US",      "bls",            "JTS000000000000000HIL", "us.employment.jolts_hires_bls",    1, "primary", "SA"),
+        ("JOLTS_QUITS_US",      "bls",            "JTS000000000000000QUL", "us.employment.jolts_quits_bls",    1, "primary", "SA"),
+        ("ECI_US",              "bls",            "CIU1010000000000A",     "us.employment.eci_total_bls",      1, "primary", "SA, quarterly"),
+        ("INITIAL_CLAIMS_US",   "fred",           "ICSA",           "us.employment.initial_claims",  1, "primary",     "SA, weekly"),
+        ("CONTINUING_CLAIMS_US","fred",           "CCSA",           "us.employment.continuing_claims",1,"primary",    "SA, weekly"),
         #
         # ── US Productivity ──────────────────────────────────────────
-        ("PRODUCTIVITY_US",     "bls",            "PRS85006092",    "us.productivity.nfb_productivity_bls", "primary", "SA, NFB"),
-        ("UNIT_LABOR_COST_US",  "bls",            "PRS85006112",    "us.productivity.nfb_ulc_bls",   "primary",     "SA, NFB"),
+        ("PRODUCTIVITY_US",     "bls",            "PRS85006092",    "us.productivity.nfb_productivity_bls", 1, "primary", "SA, NFB"),
+        ("UNIT_LABOR_COST_US",  "bls",            "PRS85006112",    "us.productivity.nfb_ulc_bls",   1, "primary",     "SA, NFB"),
         #
         # ── US Growth ────────────────────────────────────────────────
-        ("GDP_NOMINAL_US",      "fred",           "GDP",            "us.growth.gdp_nominal",         "primary",     "SAAR"),
-        ("GDP_REAL_US",         "fred",           "GDPC1",          "us.growth.gdp_real",            "primary",     "SAAR, chained 2017$"),
-        ("RETAIL_SALES_US",     "fred",           "RSAFS",          "us.growth.retail_sales",        "primary",     "SA"),
-        ("INDPRO_US",           "fred",           "INDPRO",         "us.growth.industrial_production","primary",    "SA, index"),
-        ("GDP_GROWTH_WB_US",    "worldbank",      "WB_GDP_GROWTH_US","us.growth.gdp_growth_wb",      "primary",     "Annual % growth"),
+        ("GDP_NOMINAL_US",      "fred",           "GDP",            "us.growth.gdp_nominal",         1, "primary",     "SAAR"),
+        ("GDP_REAL_US",         "fred",           "GDPC1",          "us.growth.gdp_real",            1, "primary",     "SAAR, chained 2017$"),
+        ("RETAIL_SALES_US",     "fred",           "RSAFS",          "us.growth.retail_sales",        1, "primary",     "SA"),
+        ("INDPRO_US",           "fred",           "INDPRO",         "us.growth.industrial_production",1,"primary",    "SA, index"),
+        ("GDP_GROWTH_WB_US",    "worldbank",      "WB_GDP_GROWTH_US","us.growth.gdp_growth_wb",      1, "primary",     "Annual % growth"),
         #
         # ── US Rates ─────────────────────────────────────────────────
-        ("POLICY_RATE_US",      "fred",           "DFF",            "us.rates.fed_funds",            "primary",     "Daily effective rate"),
-        ("POLICY_RATE_US",      "nyfed",          "NYFED_EFFR",     "us.rates.effr",                 "cross_check", "NY Fed EFFR"),
-        ("POLICY_RATE_US",      "bis",            "BIS_POLICY_US",  "us.rates.policy_bis",           "cross_check", "BIS central bank policy"),
-        ("SOFR_US",             "nyfed",          "NYFED_SOFR",     "us.rates.sofr",                 "primary",     "Secured overnight"),
-        ("OBFR_US",             "nyfed",          "NYFED_OBFR",     "us.rates.obfr",                 "primary",     "Overnight bank funding"),
-        ("TREASURY_2Y_US",      "fred",           "DGS2",           "us.rates.treasury_2y",          "primary",     "Daily constant maturity"),
-        ("TREASURY_10Y_US",     "fred",           "DGS10",          "us.rates.treasury_10y",         "primary",     "Daily constant maturity"),
-        ("TREASURY_30Y_US",     "fred",           "DGS30",          "us.rates.treasury_30y",         "primary",     "Daily constant maturity"),
-        ("REAL_YIELD_10Y_US",   "fred",           "DFII10",         "us.rates.real_yield_10y",       "primary",     "TIPS-derived"),
-        ("SPREAD_10Y2Y_US",     "fred",           "T10Y2Y",         "us.rates.spread_10y2y",         "primary",     "Yield curve slope"),
+        ("POLICY_RATE_US",      "nyfed",          "NYFED_EFFR",     "us.rates.effr",                 1, "primary",     "NY Fed EFFR"),
+        ("POLICY_RATE_US",      "fred",           "DFF",            "us.rates.fed_funds",            2, "secondary",   "Daily effective rate"),
+        ("POLICY_RATE_US",      "bis",            "BIS_POLICY_US",  "us.rates.policy_bis",           3, "cross_check", "BIS central bank policy"),
+        ("SOFR_US",             "nyfed",          "NYFED_SOFR",     "us.rates.sofr",                 1, "primary",     "Secured overnight"),
+        ("OBFR_US",             "nyfed",          "NYFED_OBFR",     "us.rates.obfr",                 1, "primary",     "Overnight bank funding"),
+        ("TREASURY_2Y_US",      "fred",           "DGS2",           "us.rates.treasury_2y",          1, "primary",     "Daily constant maturity"),
+        ("TREASURY_10Y_US",     "fred",           "DGS10",          "us.rates.treasury_10y",         1, "primary",     "Daily constant maturity"),
+        ("TREASURY_30Y_US",     "fred",           "DGS30",          "us.rates.treasury_30y",         1, "primary",     "Daily constant maturity"),
+        ("REAL_YIELD_10Y_US",   "fred",           "DFII10",         "us.rates.real_yield_10y",       1, "primary",     "TIPS-derived"),
+        ("SPREAD_10Y2Y_US",     "fred",           "T10Y2Y",         "us.rates.spread_10y2y",         1, "primary",     "Yield curve slope"),
         #
         # ── US Liquidity ─────────────────────────────────────────────
-        ("FED_BALANCE_SHEET_US","fred",           "WALCL",          "us.liquidity.fed_balance_sheet","primary",     "Weekly total assets"),
-        ("M2_US",               "fred",           "M2SL",           "us.liquidity.m2",               "primary",     "SA"),
-        ("REVERSE_REPO_US",     "fred",           "RRPONTSYD",      "us.liquidity.reverse_repo",     "primary",     "Daily ON RRP"),
-        ("TGA_US",              "fred",           "WTREGEN",        "us.liquidity.tga",              "primary",     "Weekly TGA balance"),
-        ("TGA_US",              "treasury_fiscal","TREAS_TGA_BALANCE","us.fiscal.tga_balance",        "cross_check", "Treasury daily TGA"),
+        ("FED_BALANCE_SHEET_US","fred",           "WALCL",          "us.liquidity.fed_balance_sheet",1,"primary",     "Weekly total assets"),
+        ("M2_US",               "fred",           "M2SL",           "us.liquidity.m2",               1, "primary",     "SA"),
+        ("REVERSE_REPO_US",     "fred",           "RRPONTSYD",      "us.liquidity.reverse_repo",     1, "primary",     "Daily ON RRP"),
+        ("TGA_US",              "fred",           "WTREGEN",        "us.liquidity.tga",              1, "primary",     "Weekly TGA balance"),
+        ("TGA_US",              "treasury_fiscal","TREAS_TGA_BALANCE","us.fiscal.tga_balance",        2, "cross_check", "Treasury daily TGA"),
         #
         # ── US FX ────────────────────────────────────────────────────
-        ("DOLLAR_INDEX_US",     "fred",           "DTWEXBGS",       "us.fx.dollar_index_broad",      "primary",     "Broad trade-weighted"),
-        ("DOLLAR_INDEX_US",     "bis",            "BIS_EER_US",     "us.fx.eer_real",                "cross_check", "BIS real EER"),
-        ("CNYUSD",              "fred",           "DEXCHUS",        "us.fx.cny_usd",                 "primary",     "Daily spot"),
+        ("DOLLAR_INDEX_US",     "fred",           "DTWEXBGS",       "us.fx.dollar_index_broad",      1, "primary",     "Broad trade-weighted"),
+        ("DOLLAR_INDEX_US",     "bis",            "BIS_EER_US",     "us.fx.eer_real",                2, "cross_check", "BIS real EER"),
+        ("CNYUSD",              "fred",           "DEXCHUS",        "us.fx.cny_usd",                 1, "primary",     "Daily spot"),
         #
         # ── US Credit ────────────────────────────────────────────────
-        ("HY_OAS_US",           "fred",           "BAMLH0A0HYM2",  "us.credit.hy_oas",              "primary",     "ICE BofA HY OAS"),
-        ("CREDIT_GAP_US",       "bis",            "BIS_CREDIT_GAP_US","us.credit.gap",               "primary",     "Credit-to-GDP gap"),
+        ("HY_OAS_US",           "fred",           "BAMLH0A0HYM2",  "us.credit.hy_oas",              1, "primary",     "ICE BofA HY OAS"),
+        ("CREDIT_GAP_US",       "bis",            "BIS_CREDIT_GAP_US","us.credit.gap",               1, "primary",     "Credit-to-GDP gap"),
         #
         # ── US Property ──────────────────────────────────────────────
-        ("PROPERTY_US",         "bis",            "BIS_PROPERTY_US","us.property.real",              "primary",     "Real property prices"),
+        ("PROPERTY_US",         "bis",            "BIS_PROPERTY_US","us.property.real",              1, "primary",     "Real property prices"),
         #
         # ── US Fiscal ────────────────────────────────────────────────
-        ("DEBT_US",             "treasury_fiscal","TREAS_DEBT_TOTAL","us.fiscal.debt_outstanding",   "primary",     "Daily total debt"),
-        ("AVG_INTEREST_RATE_US","treasury_fiscal","TREAS_AVG_RATE", "us.fiscal.avg_interest_rate",   "primary",     "Monthly avg rate"),
+        ("DEBT_US",             "treasury_fiscal","TREAS_DEBT_TOTAL","us.fiscal.debt_outstanding",   1, "primary",     "Daily total debt"),
+        ("AVG_INTEREST_RATE_US","treasury_fiscal","TREAS_AVG_RATE", "us.fiscal.avg_interest_rate",   1, "primary",     "Monthly avg rate"),
         #
         # ── US Energy ────────────────────────────────────────────────
-        ("BRENT_CRUDE",         "eia",            "EIA_BRENT",      "us.energy.brent_spot",          "primary",     "Daily spot"),
-        ("WTI_CRUDE",           "eia",            "EIA_WTI",        "us.energy.wti_spot",            "primary",     "Daily spot"),
-        ("CRUDE_STOCKS_US",     "eia",            "EIA_CRUDE_STOCKS","us.energy.crude_stocks",       "primary",     "Weekly stocks"),
-        ("NATGAS_US",           "eia",            "EIA_NATGAS",     "us.energy.natgas_futures",      "primary",     "Henry Hub futures"),
-        ("PETROLEUM_SUPPLY_US", "eia",            "EIA_PETROL_SUPPLY","us.energy.petroleum_supply",  "primary",     "Weekly supply"),
+        ("BRENT_CRUDE",         "eia",            "EIA_BRENT",      "us.energy.brent_spot",          1, "primary",     "Daily spot"),
+        ("WTI_CRUDE",           "eia",            "EIA_WTI",        "us.energy.wti_spot",            1, "primary",     "Daily spot"),
+        ("CRUDE_STOCKS_US",     "eia",            "EIA_CRUDE_STOCKS","us.energy.crude_stocks",       1, "primary",     "Weekly stocks"),
+        ("NATGAS_US",           "eia",            "EIA_NATGAS",     "us.energy.natgas_futures",      1, "primary",     "Henry Hub futures"),
+        ("PETROLEUM_SUPPLY_US", "eia",            "EIA_PETROL_SUPPLY","us.energy.petroleum_supply",  1, "primary",     "Weekly supply"),
         #
         # ── US Trade ─────────────────────────────────────────────────
-        ("EXPORTS_US",          "imf",            "IMF_GLOBAL_TRADE","us.trade.exports_fob",         "primary",     "Exports FOB"),
-        ("CURRENT_ACCOUNT_US",  "worldbank",      "WB_CA_GDP_US",   "us.trade.current_account_gdp",  "primary",     "CA % of GDP, annual"),
+        ("EXPORTS_US",          "imf",            "IMF_GLOBAL_TRADE","us.trade.exports_fob",         1, "primary",     "Exports FOB"),
+        ("CURRENT_ACCOUNT_US",  "worldbank",      "WB_CA_GDP_US",   "us.trade.current_account_gdp",  1, "primary",     "CA % of GDP, annual"),
         #
         # ── US Sentiment ─────────────────────────────────────────────
-        ("CONSUMER_CONF_US",    "oecd",           "OECD_CONSUMER_CONF_US","us.sentiment.consumer_conf","primary",   "OECD consumer confidence"),
-        ("BUSINESS_CONF_US",    "oecd",           "OECD_BUSINESS_CONF_US","us.sentiment.business_conf","primary",   "OECD business confidence"),
-        ("CLI_US",              "oecd",           "OECD_CLI_US",    "us.leading.cli",                "primary",     "Composite leading indicator"),
+        ("CONSUMER_CONF_US",    "oecd",           "OECD_CONSUMER_CONF_US","us.sentiment.consumer_conf",1,"primary",   "OECD consumer confidence"),
+        ("BUSINESS_CONF_US",    "oecd",           "OECD_BUSINESS_CONF_US","us.sentiment.business_conf",1,"primary",   "OECD business confidence"),
+        ("CLI_US",              "oecd",           "OECD_CLI_US",    "us.leading.cli",                1, "primary",     "Composite leading indicator"),
         #
         # ── US Development ───────────────────────────────────────────
-        ("GDP_PER_CAPITA_US",   "worldbank",      "WB_GDP_PCAP_US", "us.development.gdp_per_capita", "primary",     "PPP, annual"),
+        ("GDP_PER_CAPITA_US",   "worldbank",      "WB_GDP_PCAP_US", "us.development.gdp_per_capita", 1, "primary",     "PPP, annual"),
         #
         # ── China ────────────────────────────────────────────────────
-        ("CPI_CN",              "imf",            "IMF_CN_CPI",     "cn.inflation.cpi",              "primary",     "IMF SDMX CPI index"),
-        ("GDP_REAL_CN",         "imf",            "IMF_CN_GDP",     "cn.growth.gdp_real",            "primary",     "Real GDP LCU"),
-        ("FX_RESERVES_CN",      "imf",            "IMF_CN_FX_RESERVES","cn.reserves.fx",             "primary",     "FX reserves USD"),
-        ("POLICY_RATE_CN",      "bis",            "BIS_POLICY_CN",  "cn.rates.policy_bis",           "primary",     "PBOC policy rate"),
-        ("CREDIT_GAP_CN",       "bis",            "BIS_CREDIT_GAP_CN","cn.credit.gap",               "primary",     "Credit-to-GDP gap"),
-        ("PROPERTY_CN",         "bis",            "BIS_PROPERTY_CN","cn.property.real",              "primary",     "Real property prices"),
-        ("EER_CN",              "bis",            "BIS_EER_CN",     "cn.fx.eer_real",                "primary",     "Real effective exchange rate"),
-        ("CLI_CN",              "oecd",           "OECD_CLI_CN",    "cn.leading.cli",                "primary",     "Composite leading indicator"),
-        ("GDP_PER_CAPITA_CN",   "worldbank",      "WB_GDP_PCAP_CN", "cn.development.gdp_per_capita", "primary",     "PPP, annual"),
+        ("CPI_CN",              "imf",            "IMF_CN_CPI",     "cn.inflation.cpi",              1, "primary",     "IMF SDMX CPI index"),
+        ("GDP_REAL_CN",         "imf",            "IMF_CN_GDP",     "cn.growth.gdp_real",            1, "primary",     "Real GDP LCU"),
+        ("FX_RESERVES_CN",      "imf",            "IMF_CN_FX_RESERVES","cn.reserves.fx",             1, "primary",     "FX reserves USD"),
+        ("POLICY_RATE_CN",      "bis",            "BIS_POLICY_CN",  "cn.rates.policy_bis",           1, "primary",     "PBOC policy rate"),
+        ("CREDIT_GAP_CN",       "bis",            "BIS_CREDIT_GAP_CN","cn.credit.gap",               1, "primary",     "Credit-to-GDP gap"),
+        ("PROPERTY_CN",         "bis",            "BIS_PROPERTY_CN","cn.property.real",              1, "primary",     "Real property prices"),
+        ("EER_CN",              "bis",            "BIS_EER_CN",     "cn.fx.eer_real",                1, "primary",     "Real effective exchange rate"),
+        ("CLI_CN",              "oecd",           "OECD_CLI_CN",    "cn.leading.cli",                1, "primary",     "Composite leading indicator"),
+        ("GDP_PER_CAPITA_CN",   "worldbank",      "WB_GDP_PCAP_CN", "cn.development.gdp_per_capita", 1, "primary",     "PPP, annual"),
         #
         # ── Japan ────────────────────────────────────────────────────
-        ("CPI_JP",              "imf",            "IMF_JP_CPI",     "jp.inflation.cpi",              "primary",     "IMF SDMX CPI index"),
-        ("GDP_REAL_JP",         "imf",            "IMF_JP_GDP",     "jp.growth.gdp_real",            "primary",     "Real GDP LCU"),
-        ("POLICY_RATE_JP",      "bis",            "BIS_POLICY_JP",  "jp.rates.policy_bis",           "primary",     "BOJ policy rate"),
-        ("CLI_JP",              "oecd",           "OECD_CLI_JP",    "jp.leading.cli",                "primary",     "Composite leading indicator"),
+        ("CPI_JP",              "imf",            "IMF_JP_CPI",     "jp.inflation.cpi",              1, "primary",     "IMF SDMX CPI index"),
+        ("GDP_REAL_JP",         "imf",            "IMF_JP_GDP",     "jp.growth.gdp_real",            1, "primary",     "Real GDP LCU"),
+        ("POLICY_RATE_JP",      "bis",            "BIS_POLICY_JP",  "jp.rates.policy_bis",           1, "primary",     "BOJ policy rate"),
+        ("CLI_JP",              "oecd",           "OECD_CLI_JP",    "jp.leading.cli",                1, "primary",     "Composite leading indicator"),
         #
         # ── Euro Area ────────────────────────────────────────────────
-        ("CPI_EU",              "imf",            "IMF_EU_CPI",     "eu.inflation.cpi_imf",          "primary",     "IMF SDMX HICP"),
-        ("CPI_EU",              "eurostat",       "ESTAT_HICP",     "eu.inflation.hicp",             "primary",     "Eurostat HICP YoY"),
-        ("GDP_EU",              "eurostat",       "ESTAT_GDP",      "eu.growth.gdp_qoq",            "primary",     "GDP QoQ SA"),
-        ("UNEMP_EU",            "eurostat",       "ESTAT_UNEMPLOYMENT","eu.employment.unemployment", "primary",     "SA"),
-        ("INDPRO_EU",           "eurostat",       "ESTAT_INDPRO",   "eu.growth.industrial_production","primary",    "MoM SA"),
-        ("ESI_EU",              "eurostat",       "ESTAT_ESI",      "eu.sentiment.esi",              "primary",     "Economic sentiment"),
-        ("POLICY_RATE_EU",      "ecb",            "ECB_EA_DEPOSIT_RATE","eu.rates.deposit_ecb",      "primary",     "Deposit facility rate"),
-        ("POLICY_RATE_EU",      "bis",            "BIS_POLICY_EU",  "eu.rates.policy_bis",           "cross_check", "BIS ECB policy rate"),
-        ("M1_EU",               "ecb",            "ECB_EA_M1",      "eu.liquidity.m1",               "primary",     "SA"),
-        ("M2_EU",               "ecb",            "ECB_EA_M2",      "eu.liquidity.m2",               "primary",     "SA"),
-        ("M3_EU",               "ecb",            "ECB_EA_M3",      "eu.liquidity.m3",               "primary",     "SA"),
-        ("M3_GROWTH_EU",        "ecb",            "ECB_EA_M3_GROWTH","eu.liquidity.m3_growth",       "primary",     "YoY growth rate"),
-        ("EURUSD",              "ecb",            "ECB_EURUSD",     "eu.fx.eurusd",                  "primary",     "EUR/USD"),
-        ("EER_EU",              "bis",            "BIS_EER_EU",     "eu.fx.eer_real",                "primary",     "Real effective exchange rate"),
-        ("CLI_EU",              "oecd",           "OECD_CLI_EU",    "eu.leading.cli",                "primary",     "Composite leading indicator"),
+        ("CPI_EU",              "eurostat",       "ESTAT_HICP",     "eu.inflation.hicp",             1, "primary",     "Eurostat HICP YoY"),
+        ("CPI_EU",              "imf",            "IMF_EU_CPI",     "eu.inflation.cpi_imf",          2, "secondary",   "IMF SDMX HICP"),
+        ("GDP_EU",              "eurostat",       "ESTAT_GDP",      "eu.growth.gdp_qoq",            1, "primary",     "GDP QoQ SA"),
+        ("UNEMP_EU",            "eurostat",       "ESTAT_UNEMPLOYMENT","eu.employment.unemployment", 1, "primary",     "SA"),
+        ("INDPRO_EU",           "eurostat",       "ESTAT_INDPRO",   "eu.growth.industrial_production",1,"primary",    "MoM SA"),
+        ("ESI_EU",              "eurostat",       "ESTAT_ESI",      "eu.sentiment.esi",              1, "primary",     "Economic sentiment"),
+        ("POLICY_RATE_EU",      "ecb",            "ECB_EA_DEPOSIT_RATE","eu.rates.deposit_ecb",      1, "primary",     "Deposit facility rate"),
+        ("POLICY_RATE_EU",      "bis",            "BIS_POLICY_EU",  "eu.rates.policy_bis",           2, "cross_check", "BIS ECB policy rate"),
+        ("M1_EU",               "ecb",            "ECB_EA_M1",      "eu.liquidity.m1",               1, "primary",     "SA"),
+        ("M2_EU",               "ecb",            "ECB_EA_M2",      "eu.liquidity.m2",               1, "primary",     "SA"),
+        ("M3_EU",               "ecb",            "ECB_EA_M3",      "eu.liquidity.m3",               1, "primary",     "SA"),
+        ("M3_GROWTH_EU",        "ecb",            "ECB_EA_M3_GROWTH","eu.liquidity.m3_growth",       1, "primary",     "YoY growth rate"),
+        ("EURUSD",              "ecb",            "ECB_EURUSD",     "eu.fx.eurusd",                  1, "primary",     "EUR/USD"),
+        ("EER_EU",              "bis",            "BIS_EER_EU",     "eu.fx.eer_real",                1, "primary",     "Real effective exchange rate"),
+        ("CLI_EU",              "oecd",           "OECD_CLI_EU",    "eu.leading.cli",                1, "primary",     "Composite leading indicator"),
         #
         # ── UK ───────────────────────────────────────────────────────
-        ("POLICY_RATE_GB",      "bis",            "BIS_POLICY_GB",  "gb.rates.policy_bis",           "primary",     "BOE bank rate"),
+        ("POLICY_RATE_GB",      "bis",            "BIS_POLICY_GB",  "gb.rates.policy_bis",           1, "primary",     "BOE bank rate"),
     ]
 
     def seed_concept_map(self) -> None:
         """Populate the concept_map table from the built-in definitions."""
         now = utc_now().isoformat()
         with self._connection(commit=True) as connection:
-            for concept_id, source_id, series_id, fam_id, role, notes in self._CONCEPT_MAP_DEFS:
+            for concept_id, source_id, series_id, fam_id, priority, role, notes in self._CONCEPT_MAP_DEFS:
                 connection.execute(
                     """
                     INSERT OR IGNORE INTO concept_map
                         (concept_id, source_id, provider_series_id,
-                         obs_family_id, role, notes, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                         obs_family_id, priority, role, notes, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (concept_id, source_id, series_id, fam_id, role, notes, now),
+                    (concept_id, source_id, series_id, fam_id, priority, role, notes, now),
+                )
+                # Update existing rows from prior seeds that have priority=0
+                connection.execute(
+                    """
+                    UPDATE concept_map SET priority = ?, role = ?
+                    WHERE concept_id = ? AND source_id = ? AND provider_series_id = ?
+                      AND priority = 0
+                    """,
+                    (priority, role, concept_id, source_id, series_id),
                 )
 
     def get_concept_series(self, concept_id: str) -> list[ConceptMapRecord]:
-        """Return all source mappings for a given concept."""
+        """Return all source mappings for a given concept, ordered by priority."""
         with self._connection(commit=False) as connection:
             rows = connection.execute(
-                "SELECT * FROM concept_map WHERE concept_id = ? ORDER BY role, source_id",
+                "SELECT * FROM concept_map WHERE concept_id = ? ORDER BY priority, source_id",
                 (concept_id,),
             ).fetchall()
             return [
@@ -5654,6 +5681,7 @@ class SQLiteEngineStore:
                     source_id=r["source_id"],
                     provider_series_id=r["provider_series_id"],
                     obs_family_id=r["obs_family_id"],
+                    priority=r["priority"],
                     role=r["role"],
                     notes=r["notes"],
                     created_at=r["created_at"],
@@ -5746,6 +5774,128 @@ class SQLiteEngineStore:
             stats["obs_family_id"] = m.obs_family_id
             stats["role"] = m.role
             results.append(stats)
+        return results
+
+    # ── Indicator resolution ─────────────────────────────────────────
+
+    def resolve_indicator(
+        self,
+        concept_id: str,
+        *,
+        date: str | None = None,
+    ) -> ResolvedObservation | None:
+        """Return the highest-priority observation for a concept on a given date.
+
+        If *date* is None, returns the most recent observation across all sources.
+        """
+        mappings = self.get_concept_series(concept_id)
+        if not mappings:
+            return None
+        with self._connection(commit=False) as connection:
+            # Count how many sources have data for the target date (for alternates)
+            best: ResolvedObservation | None = None
+            alternates = 0
+            for m in mappings:
+                if date is not None:
+                    row = connection.execute(
+                        "SELECT date, value FROM indicators "
+                        "WHERE source = ? AND series_id = ? AND date = ? "
+                        "LIMIT 1",
+                        (m.source_id, m.provider_series_id, date),
+                    ).fetchone()
+                else:
+                    row = connection.execute(
+                        "SELECT date, value FROM indicators "
+                        "WHERE source = ? AND series_id = ? "
+                        "ORDER BY date DESC LIMIT 1",
+                        (m.source_id, m.provider_series_id),
+                    ).fetchone()
+                if row is None:
+                    continue
+                alternates += 1
+                if best is None:
+                    best = ResolvedObservation(
+                        concept_id=concept_id,
+                        date=row["date"],
+                        value=row["value"],
+                        source_id=m.source_id,
+                        provider_series_id=m.provider_series_id,
+                        priority=m.priority,
+                        role=m.role,
+                    )
+            if best is not None:
+                # alternates counts *other* sources, so subtract the winner
+                best = ResolvedObservation(
+                    concept_id=best.concept_id,
+                    date=best.date,
+                    value=best.value,
+                    source_id=best.source_id,
+                    provider_series_id=best.provider_series_id,
+                    priority=best.priority,
+                    role=best.role,
+                    alternates=alternates - 1,
+                )
+            return best
+
+    def resolve_indicator_history(
+        self,
+        concept_id: str,
+        *,
+        limit: int = 12,
+    ) -> list[ResolvedObservation]:
+        """Return a resolved time series, picking the highest-priority source per date."""
+        mappings = self.get_concept_series(concept_id)
+        if not mappings:
+            return []
+
+        # Collect all distinct dates across all sources
+        all_dates: set[str] = set()
+        # source_data[i] = {date: value} for mapping i
+        source_data: list[dict[str, float]] = []
+        with self._connection(commit=False) as connection:
+            for m in mappings:
+                rows = connection.execute(
+                    "SELECT date, value FROM indicators "
+                    "WHERE source = ? AND series_id = ? "
+                    "ORDER BY date DESC",
+                    (m.source_id, m.provider_series_id),
+                ).fetchall()
+                data = {r["date"]: r["value"] for r in rows}
+                source_data.append(data)
+                all_dates.update(data.keys())
+
+        # Sort dates descending and limit
+        sorted_dates = sorted(all_dates, reverse=True)[:limit]
+        results: list[ResolvedObservation] = []
+        for d in sorted_dates:
+            winner: ResolvedObservation | None = None
+            alternates = 0
+            for i, m in enumerate(mappings):
+                if d in source_data[i]:
+                    alternates += 1
+                    if winner is None:
+                        winner = ResolvedObservation(
+                            concept_id=concept_id,
+                            date=d,
+                            value=source_data[i][d],
+                            source_id=m.source_id,
+                            provider_series_id=m.provider_series_id,
+                            priority=m.priority,
+                            role=m.role,
+                        )
+            if winner is not None:
+                results.append(
+                    ResolvedObservation(
+                        concept_id=winner.concept_id,
+                        date=winner.date,
+                        value=winner.value,
+                        source_id=winner.source_id,
+                        provider_series_id=winner.provider_series_id,
+                        priority=winner.priority,
+                        role=winner.role,
+                        alternates=alternates - 1,
+                    )
+                )
         return results
 
     # ── Calendar indicator normalization ──────────────────────────────

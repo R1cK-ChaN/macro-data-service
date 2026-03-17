@@ -162,6 +162,32 @@ class LocalMacroDataService:
             "reports": [r.to_dict() for r in reports],
         }
 
+    def _op_resolve_indicator(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        concept_id = (arguments.get("concept_id") or "").strip()
+        if not concept_id:
+            return {"error": "concept_id is required"}
+        self._store.seed_concept_map()
+        date = (arguments.get("date") or "").strip() or None
+        obs = self._store.resolve_indicator(concept_id, date=date)
+        if obs is None:
+            return {"resolved": None, "concept_id": concept_id}
+        from dataclasses import asdict
+        return {"resolved": asdict(obs)}
+
+    def _op_resolve_indicator_history(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        concept_id = (arguments.get("concept_id") or "").strip()
+        if not concept_id:
+            return {"error": "concept_id is required"}
+        self._store.seed_concept_map()
+        limit = int(arguments.get("limit", 12))
+        results = self._store.resolve_indicator_history(concept_id, limit=limit)
+        from dataclasses import asdict
+        return {
+            "concept_id": concept_id,
+            "total": len(results),
+            "observations": [asdict(r) for r in results],
+        }
+
     def _op_get_recent_releases(self, arguments: dict[str, Any]) -> dict[str, Any]:
         events = self._store.list_recent_events(
             limit=int(arguments.get("limit", 10)),

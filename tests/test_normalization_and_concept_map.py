@@ -11,7 +11,7 @@ from ingestion.normalization import Normalizer, normalize_observation_date
 from ingestion.types import CanonicalRow, RawObservation, RawSeries
 from ingestion.validation import ValidationEngine, ValidationStore
 from ingestion.validation._types import ValidationLayer, ValidationSeverity
-from storage.sqlite import ConceptMapRecord, IndicatorObservationRecord, ObsFamilyRecord, SQLiteEngineStore
+from storage.sqlite import ConceptMapRecord, IndicatorObservationRecord, ObsFamilyRecord, ResolvedObservation, SQLiteEngineStore
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────
@@ -526,3 +526,143 @@ class TestValidateAllConcepts:
             assert "source" in d
             assert "checks" in d
             assert isinstance(d["checks"], list)
+
+
+# ── Priority & resolution tests ──────────────────────────────────────
+
+
+class TestPriorityColumn:
+    def test_priority_column_persisted(self, store):
+        store.seed_concept_map()
+        mappings = store.get_concept_series("CPI_US")
+        assert len(mappings) == 2
+        for m in mappings:
+            assert m.priority > 0, f"{m.source_id} has priority=0 after seed"
+
+    def test_priority_ordering(self, store):
+        store.seed_concept_map()
+        mappings = store.get_concept_series("CPI_US")
+        # bls should come first (priority=1), fred second (priority=2)
+        assert mappings[0].source_id == "bls"
+        assert mappings[0].priority == 1
+        assert mappings[1].source_id == "fred"
+        assert mappings[1].priority == 2
+
+    def test_policy_rate_priority_nyfed_first(self, store):
+        store.seed_concept_map()
+        mappings = store.get_concept_series("POLICY_RATE_US")
+        assert mappings[0].source_id == "nyfed"
+        assert mappings[0].priority == 1
+        priorities = [m.priority for m in mappings]
+        assert priorities == sorted(priorities)
+
+    def test_cpi_eu_eurostat_before_imf(self, store):
+        store.seed_concept_map()
+        mappings = store.get_concept_series("CPI_EU")
+        assert mappings[0].source_id == "eurostat"
+        assert mappings[0].priority == 1
+        assert mappings[1].source_id == "imf"
+        assert mappings[1].priority == 2
+
+
+class TestResolveIndicator:
+    def test_resolve_picks_highest_priority(self, store):
+        store.seed_concept_map()
+        # BLS (p=1) has data
+        _insert_obs(store, "CUUR0000SA0", "bls", "2024-01-01", 312.0)
+        # FRED (p=2) has data
+        _insert_obs(store, "CPIAUCSL", "fred", "2024-01-01", 312.3)
+
+        obs = store.resolve_indicator("CPI_US", date="2024-01-01")
+        assert obs is not None
+        assert isinstance(obs, ResolvedObservation)
+        assert obs.source_id == "bls"
+        assert obs.priority == 1
+        assert obs.value == 312.0
+        assert obs.alternates == 1  # fred also has data
+
+    def test_resolve_falls_back(self, store):
+        store.seed_concept_map()
+        # Only FRED (p=2) has data, BLS (p=1) does not
+        _insert_obs(store, "CPIAUCSL", "fred", "2024-01-01", 312.3)
+
+        obs = store.resolve_indicator("CPI_US", date="2024-01-01")
+        assert obs is not None
+        assert obs.source_id == "fred"
+        assert obs.priority == 2
+        assert obs.value == 312.3
+        assert obs.alternates == 0
+
+    def test_resolve_latest_date(self, store):
+        store.seed_concept_map()
+        _insert_obs(store, "CUUR0000SA0", "bls", "2024-01-01", 312.0)
+        _insert_obs(store, "CUUR0000SA0", "bls", "2024-02-01", 313.0)
+
+        obs = store.resolve_indicator("CPI_US")
+        assert obs is not None
+        assert obs.date == "2024-02-01"
+        assert obs.value == 313.0
+
+    def test_resolve_no_data_returns_none(self, store):
+        store.seed_concept_map()
+        obs = store.resolve_indicator("CPI_US", date="2024-01-01")
+        assert obs is None
+
+    def test_resolve_unknown_concept_returns_none(self, store):
+        store.seed_concept_map()
+        obs = store.resolve_indicator("NONEXISTENT")
+        assert obs is None
+
+
+class TestResolveIndicatorHistory:
+    def test_resolve_history_mixed_fallback(self, store):
+        store.seed_concept_map()
+        # BLS has Jan and Feb
+        _insert_obs(store, "CUUR0000SA0", "bls", "2024-01-01", 312.0)
+        _insert_obs(store, "CUUR0000SA0", "bls", "2024-02-01", 313.0)
+        # FRED has Jan, Feb, and Mar (BLS gap in Mar)
+        _insert_obs(store, "CPIAUCSL", "fred", "2024-01-01", 312.3)
+        _insert_obs(store, "CPIAUCSL", "fred", "2024-02-01", 313.1)
+        _insert_obs(store, "CPIAUCSL", "fred", "2024-03-01", 314.0)
+
+        results = store.resolve_indicator_history("CPI_US", limit=12)
+        assert len(results) == 3
+
+        # Most recent first
+        assert results[0].date == "2024-03-01"
+        assert results[0].source_id == "fred"  # fallback — bls has no Mar data
+        assert results[0].alternates == 0
+
+        assert results[1].date == "2024-02-01"
+        assert results[1].source_id == "bls"  # bls wins (p=1)
+        assert results[1].alternates == 1  # fred also has Feb
+
+        assert results[2].date == "2024-01-01"
+        assert results[2].source_id == "bls"
+        assert results[2].alternates == 1
+
+    def test_resolve_history_alternates_count(self, store):
+        store.seed_concept_map()
+        # All three sources have data for UNEMP_US on same date
+        _insert_obs(store, "LNS14000000", "bls", "2024-01-01", 3.7)
+        _insert_obs(store, "UNRATE", "fred", "2024-01-01", 3.7)
+        _insert_obs(store, "OECD_UNEMP_US", "oecd", "2024-01-01", 3.8)
+
+        results = store.resolve_indicator_history("UNEMP_US", limit=5)
+        assert len(results) == 1
+        assert results[0].source_id == "bls"
+        assert results[0].alternates == 2  # fred + oecd
+
+    def test_resolve_history_empty(self, store):
+        store.seed_concept_map()
+        results = store.resolve_indicator_history("CPI_US")
+        assert results == []
+
+    def test_resolve_history_respects_limit(self, store):
+        store.seed_concept_map()
+        for i in range(1, 7):
+            _insert_obs(store, "CUUR0000SA0", "bls", f"2024-0{i}-01", 310.0 + i)
+        results = store.resolve_indicator_history("CPI_US", limit=3)
+        assert len(results) == 3
+        assert results[0].date == "2024-06-01"
+        assert results[2].date == "2024-04-01"

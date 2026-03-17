@@ -292,6 +292,82 @@ monthly/quarterly macro that gets revised across releases.
 
 ---
 
+## Cross-Source Concept Map
+
+Groups equivalent series under a single concept (e.g. `CPI_US` maps to both
+FRED `CPIAUCSL` and BLS `CUUR0000SA0`). The `priority` column encodes
+domain-knowledge precedence so the system can answer "which value is
+authoritative?" without ambiguity.
+
+### concept_map
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `concept_id` | TEXT | e.g. `CPI_US`, `POLICY_RATE_US` |
+| `source_id` | TEXT | e.g. `fred`, `bls`, `nyfed` |
+| `provider_series_id` | TEXT | Maps to `indicators.series_id` |
+| `obs_family_id` | TEXT | FK to `obs_family.family_id` (may be empty) |
+| `priority` | INTEGER | 1 = authoritative, 2 = secondary, 3 = tertiary |
+| `role` | TEXT | CHECK: `primary`, `secondary`, `cross_check` |
+| `notes` | TEXT | Free-form description |
+| PRIMARY KEY | | `(concept_id, source_id, provider_series_id)` |
+
+### Priority assignments
+
+| Concept family | p=1 | p=2 | p=3 |
+|----------------|-----|-----|-----|
+| CPI/PPI/Core CPI (US) | bls | fred | — |
+| UNEMP_US | bls | fred | oecd |
+| NFP, JOLTS, ECI, productivity | bls | — | — |
+| POLICY_RATE_US | nyfed | fred | bis |
+| SOFR, OBFR | nyfed | — | — |
+| TGA_US | fred | treasury_fiscal | — |
+| DOLLAR_INDEX_US | fred | bis | — |
+| CPI_EU | eurostat | imf | — |
+| POLICY_RATE_EU | ecb | bis | — |
+| All single-source concepts | 1 | — | — |
+
+### Data Records
+
+```python
+@dataclass(frozen=True)
+class ConceptMapRecord:
+    concept_id: str
+    source_id: str
+    provider_series_id: str
+    obs_family_id: str
+    priority: int = 0
+    role: str = "primary"
+    notes: str = ""
+
+@dataclass(frozen=True)
+class ResolvedObservation:
+    concept_id: str
+    date: str
+    value: float
+    source_id: str
+    provider_series_id: str
+    priority: int
+    role: str
+    alternates: int = 0   # how many other sources also had this date
+```
+
+### Resolution Methods
+
+| Method | Description |
+|--------|-------------|
+| `seed_concept_map()` | Populate/update concept_map from built-in definitions |
+| `get_concept_series(concept_id)` | All mappings for a concept, ordered by priority |
+| `list_concepts(*, country_code=None)` | Distinct concept IDs |
+| `get_concept_observations(concept_id)` | Raw (source, series, date, value) across all sources |
+| `get_concept_stats(concept_id)` | Per-source row counts and date ranges |
+| `resolve_indicator(concept_id, *, date=None)` | Highest-priority observation (latest if no date) |
+| `resolve_indicator_history(concept_id, *, limit=12)` | Resolved time series with per-date fallback |
+
+Resolution is done in Python — at most 3-4 sources per concept and limited dates, trivially fast.
+
+---
+
 ## Other Tables
 
 | Table | Purpose |
@@ -325,4 +401,5 @@ monthly/quarterly macro that gets revised across releases.
 
 ```bash
 python3 -m pytest tests/test_document_storage.py tests/test_obs_family.py -v
+python3 -m pytest tests/test_normalization_and_concept_map.py -v   # includes resolution tests
 ```

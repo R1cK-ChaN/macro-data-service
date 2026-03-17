@@ -125,6 +125,14 @@ def build_parser() -> argparse.ArgumentParser:
     validate_concept.add_argument("--json", action="store_true", dest="json_output", help="JSON output")
     validate_concept.add_argument("--db-path", default=None)
 
+    resolve = subparsers.add_parser("resolve")
+    resolve.add_argument("concept_id", help="Concept ID (e.g. CPI_US)")
+    resolve.add_argument("--date", default=None, help="Specific date (YYYY-MM-DD)")
+    resolve.add_argument("--history", action="store_true", help="Show resolved time series")
+    resolve.add_argument("--limit", type=int, default=12, help="History limit (default 12)")
+    resolve.add_argument("--json", action="store_true", dest="json_output", help="JSON output")
+    resolve.add_argument("--db-path", default=None)
+
     return parser
 
 
@@ -356,6 +364,41 @@ def _run_refresh_indicator(args: argparse.Namespace) -> int:
     return 0 if not report.error else 1
 
 
+def _run_resolve(args: argparse.Namespace) -> int:
+    from dataclasses import asdict
+    from storage import SQLiteEngineStore
+
+    store = SQLiteEngineStore(db_path=Path(args.db_path) if args.db_path else None)
+    store.seed_concept_map()
+
+    if args.history:
+        results = store.resolve_indicator_history(args.concept_id, limit=args.limit)
+        if not results:
+            print(f"No data found for {args.concept_id}")
+            return 1
+        if args.json_output:
+            print(json.dumps([asdict(r) for r in results], ensure_ascii=False, indent=2))
+        else:
+            for r in results:
+                alt = f"+{r.alternates}" if r.alternates else ""
+                print(f"  {r.date}  {r.value:>12.4f}  {r.source_id:<18}  "
+                      f"p={r.priority}  {r.role}{alt and '  alt=' + alt}")
+        return 0
+
+    obs = store.resolve_indicator(args.concept_id, date=args.date)
+    if obs is None:
+        print(f"No data found for {args.concept_id}" + (f" on {args.date}" if args.date else ""))
+        return 1
+    if args.json_output:
+        print(json.dumps(asdict(obs), ensure_ascii=False, indent=2))
+    else:
+        alt = f"  alt={obs.alternates}" if obs.alternates else ""
+        print(f"  {obs.concept_id}  {obs.date}  {obs.value:.4f}  "
+              f"source={obs.source_id}  series={obs.provider_series_id}  "
+              f"p={obs.priority}  {obs.role}{alt}")
+    return 0
+
+
 def _run_validate_concept(args: argparse.Namespace) -> int:
     from ingestion.validation import ValidationEngine, ValidationStore
     from storage import SQLiteEngineStore
@@ -443,6 +486,10 @@ def main(argv: list[str] | None = None) -> int:
     # Indicator refresh (no service needed)
     if args.command == "refresh-indicator":
         return _run_refresh_indicator(args)
+
+    # Resolve indicator (no service needed)
+    if args.command == "resolve":
+        return _run_resolve(args)
 
     # Concept validation (no service needed)
     if args.command == "validate-concept":
