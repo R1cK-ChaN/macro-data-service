@@ -401,7 +401,7 @@ class IngestionOrchestrator:
                     if definition.retry_backoff_seconds > 0:
                         time.sleep(definition.retry_backoff_seconds * attempt)
                     continue
-                logger.warning("%s ingestion failed", definition.name, exc_info=True)
+                logger.error("%s ingestion failed", definition.name, exc_info=True)
                 report = IngestionRunReport(
                     source=definition.name,
                     stored=0,
@@ -728,9 +728,9 @@ class IngestionOrchestrator:
         )
 
     def _build_eurostat_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._sdmx import SDMXFetcher
+        from ingestion.fetchers._eurostat import EurostatFetcher
         return self._build_fetcher_source(
-            "eurostat", SDMXFetcher(self.eurostat.client, "eurostat", EUROSTAT_SERIES),
+            "eurostat", EurostatFetcher(client=self.eurostat.client),
         )
 
     def _build_bis_source(self) -> IngestionSourceDefinition:
@@ -824,7 +824,8 @@ class IngestionOrchestrator:
         elif source_id == "imf":
             fetcher = SDMXFetcher(self.imf.client, "imf", IMF_SERIES)
         elif source_id == "eurostat":
-            fetcher = SDMXFetcher(self.eurostat.client, "eurostat", EUROSTAT_SERIES)
+            from ingestion.fetchers._eurostat import EurostatFetcher
+            fetcher = EurostatFetcher(client=self.eurostat.client)
         elif source_id == "bis":
             fetcher = SDMXFetcher(self.bis.client, "bis", BIS_SERIES)
         elif source_id == "ecb":

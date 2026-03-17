@@ -31,9 +31,11 @@ def parse_sdmx_json_observations(
     observations: list[SDMXObservation] = []
 
     try:
-        datasets = data["dataSets"]
+        # SDMX 3.0 (IMF) nests under "data", SDMX 2.1 (ECB/BIS) has top-level keys
+        root = data.get("data", data) if "data" in data and isinstance(data.get("data"), dict) else data
+        datasets = root["dataSets"]
         # ECB uses "structure" (singular), standard uses "structures"
-        structure = data.get("structure") or (data.get("structures") or [None])[0]
+        structure = root.get("structure") or (root.get("structures") or [None])[0]
     except (KeyError, TypeError, IndexError):
         return observations
 

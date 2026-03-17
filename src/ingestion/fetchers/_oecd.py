@@ -6,10 +6,13 @@ and the ``OECDSeriesConfig`` dataclass.
 
 from __future__ import annotations
 
+import logging
 import time
 from datetime import UTC, datetime
 
 from ingestion.sdmx.providers.oecd import OECDClient
+
+logger = logging.getLogger(__name__)
 from ingestion.series_config import OECD_SERIES, OECDSeriesConfig
 from ingestion.types import RawObservation, RawSeries
 
@@ -62,7 +65,8 @@ class OECDFetcher:
                     agency_id=cfg.agency_id, version=version,
                     filters=cfg.filters, series_id=cfg.series_id, limit=100,
                 )
-        except Exception:
+        except Exception as exc:
+            logger.error("OECD fetch failed [%s dataflow=%s]: %s", cfg.series_id, cfg.dataflow, exc)
             return None
         raw_obs = tuple(
             RawObservation(

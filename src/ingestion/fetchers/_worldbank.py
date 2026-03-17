@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from datetime import UTC, datetime
 
 from ingestion.scrapers.worldbank import WorldBankClient
 from ingestion.series_config import WORLDBANK_SERIES, WorldBankSeriesConfig
 from ingestion.types import RawObservation, RawSeries
+
+logger = logging.getLogger(__name__)
 
 
 class WorldBankFetcher:
@@ -50,7 +53,8 @@ class WorldBankFetcher:
                 start_year=cfg.start_year,
                 limit=cfg.limit,
             )
-        except Exception:
+        except Exception as exc:
+            logger.error("WorldBank fetch failed [%s country=%s]: %s", cfg.indicator, cfg.country, exc)
             return None
         raw_obs = tuple(
             RawObservation(

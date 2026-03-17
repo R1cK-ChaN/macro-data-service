@@ -147,6 +147,10 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.add_argument("--json", action="store_true", dest="json_output", help="JSON output")
     resolve.add_argument("--db-path", default=None)
 
+    diagnose = subparsers.add_parser("diagnose-sources")
+    diagnose.add_argument("--json", action="store_true", dest="json_output")
+    diagnose.add_argument("--db-path", default=None)
+
     return parser
 
 
@@ -630,6 +634,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "refresh-source":
         print(json.dumps(service.invoke("refresh_source", {"source": args.source}), ensure_ascii=False, sort_keys=True))
         return 0
+    if args.command == "diagnose-sources":
+        return _run_diagnose_sources(args, service)
     if args.command == "oecd-dataflows":
         return _run_oecd_dataflows(args)
     if args.command == "oecd-structure":
@@ -644,6 +650,47 @@ def main(argv: list[str] | None = None) -> int:
         return _run_validate(args)
     parser.error("unknown command")
     return 2
+
+
+def _run_diagnose_sources(args: argparse.Namespace, service) -> int:
+    """Run a single-item probe per data source and report connectivity."""
+    import time as _time
+
+    orch = service._ingestion
+    # Sources that use fetcher adapters (the ones we care about)
+    _PROBE_SOURCES = [
+        "fred_daily", "bls", "nyfed_rates", "eia", "treasury_fiscal",
+        "imf", "eurostat", "bis", "ecb", "oecd", "worldbank",
+    ]
+    results = []
+    for name in _PROBE_SOURCES:
+        t0 = _time.perf_counter()
+        try:
+            report = orch.run_source(name)
+            elapsed = int((_time.perf_counter() - t0) * 1000)
+            status = "ok" if report.stored > 0 else ("empty" if not report.error else "error")
+            results.append({
+                "source": name, "status": status,
+                "stored": report.stored, "ms": elapsed,
+                "error": report.error or "",
+            })
+        except Exception as exc:
+            elapsed = int((_time.perf_counter() - t0) * 1000)
+            results.append({
+                "source": name, "status": "error",
+                "stored": 0, "ms": elapsed, "error": str(exc),
+            })
+
+    if getattr(args, "json_output", False):
+        print(json.dumps(results, ensure_ascii=False, indent=2))
+    else:
+        print(f"{'SOURCE':<20s} {'STATUS':<8s} {'STORED':>6s} {'MS':>6s}  ERROR")
+        print("-" * 70)
+        for r in results:
+            print(f"{r['source']:<20s} {r['status']:<8s} {r['stored']:>6d} {r['ms']:>6d}  {r['error'][:40]}")
+        ok = sum(1 for r in results if r["status"] == "ok")
+        print(f"\n{ok}/{len(results)} sources OK")
+    return 0
 
 
 if __name__ == "__main__":

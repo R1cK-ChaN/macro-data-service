@@ -840,13 +840,13 @@ OECD_SERIES = {
         dataflow="DSD_STES@DF_CS",
         series_id="OECD_CONSUMER_CONF_US",
         category="sentiment",
-        key="USA.M.CCICP.*.*.*.*.*.*",
+        filters={"REF_AREA": "USA", "FREQ": "M", "MEASURE": "CCICP", "UNIT_MEASURE": "PB", "ACTIVITY": "_Z", "ADJUSTMENT": "Y", "TRANSFORMATION": "_Z", "TIME_HORIZ": "_Z", "METHODOLOGY": "N"},
     ),
     "business_conf": OECDSeriesConfig(
         dataflow="DSD_STES@DF_BTS",
         series_id="OECD_BUSINESS_CONF_US",
         category="sentiment",
-        key="USA.M.BCICP.*.*.*.*.*.*",
+        filters={"REF_AREA": "USA", "FREQ": "M", "MEASURE": "BCICP", "UNIT_MEASURE": "PB", "ADJUSTMENT": "Y", "TRANSFORMATION": "_Z", "TIME_HORIZ": "_Z", "METHODOLOGY": "N"},
     ),
     "unemployment_us": OECDSeriesConfig(
         dataflow="DSD_KEI@DF_KEI",

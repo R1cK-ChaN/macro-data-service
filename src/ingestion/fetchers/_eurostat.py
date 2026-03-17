@@ -1,4 +1,8 @@
-"""EIA fetcher adapter — EIAClient → list[RawSeries]."""
+"""Eurostat fetcher adapter — EurostatClient.get_dataset() → list[RawSeries].
+
+Uses the JSON-stat endpoint (not SDMX) because EUROSTAT_SERIES configs
+are keyed by ``dataset`` + ``params`` which map to ``get_dataset()``.
+"""
 
 from __future__ import annotations
 
@@ -7,23 +11,23 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from ingestion.scrapers.eia import EIAClient
-from ingestion.series_config import EIA_SERIES
+from ingestion.sdmx.providers.eurostat import EurostatClient
+from ingestion.series_config import EUROSTAT_SERIES
 from ingestion.types import RawObservation, RawSeries
 
 logger = logging.getLogger(__name__)
 
 
-class EIAFetcher:
-    source_name = "eia"
+class EurostatFetcher:
+    source_name = "eurostat"
 
     def __init__(
         self,
-        client: EIAClient | None = None,
+        client: EurostatClient | None = None,
         series_config: dict[str, dict[str, Any]] | None = None,
     ) -> None:
-        self.client = client or EIAClient()
-        self.series_config = series_config or EIA_SERIES
+        self.client = client or EurostatClient()
+        self.series_config = series_config or EUROSTAT_SERIES
 
     def fetch(self, *, lookback_days: int = 365) -> list[RawSeries]:
         results: list[RawSeries] = []
@@ -31,14 +35,14 @@ class EIAFetcher:
             rs = self._fetch_one(cfg)
             if rs is not None:
                 results.append(rs)
-            time.sleep(0.3)
+            time.sleep(0.5)
         return results
 
     def fetch_series(
         self, series_id: str, *, lookback_days: int = 365
     ) -> RawSeries | None:
         cfg = next(
-            (c for c in self.series_config.values() if c["series_id"] == series_id),
+            (c for c in self.series_config.values() if c.get("series_id") == series_id),
             None,
         )
         if cfg is None:
@@ -46,28 +50,30 @@ class EIAFetcher:
         return self._fetch_one(cfg)
 
     def _fetch_one(self, cfg: dict[str, Any]) -> RawSeries | None:
+        dataset = cfg.get("dataset", "")
+        series_id = cfg.get("series_id", "")
         try:
-            obs_list = self.client.get_series(
-                cfg["route"],
-                params=cfg["params"],
-                series_id=cfg["series_id"],
-                limit=100,
+            obs_list = self.client.get_dataset(
+                dataset,
+                params=dict(cfg.get("params", {})),
+                series_id=series_id,
+                limit=30,
             )
         except Exception as exc:
-            logger.error("EIA fetch failed [%s route=%s]: %s", cfg.get("series_id", "?"), cfg.get("route", "?"), exc)
+            logger.error("Eurostat fetch failed [%s]: %s", dataset, exc)
             return None
         raw_obs = tuple(
             RawObservation(
                 date=obs.date,
                 value=obs.value,
-                provider_metadata={"unit": obs.unit} if obs.unit else {},
+                provider_metadata={"dataset": obs.dataset} if obs.dataset else {},
             )
             for obs in obs_list
         )
         return RawSeries(
-            source="eia",
-            series_id=cfg["series_id"],
+            source="eurostat",
+            series_id=series_id,
             observations=raw_obs,
             fetched_at=datetime.now(UTC).isoformat(),
-            series_metadata={"category": cfg.get("category", "energy")},
+            series_metadata={"category": cfg.get("category", ""), "dataset": dataset},
         )

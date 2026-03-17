@@ -6,12 +6,15 @@ the ``SDMXObservation`` output type.
 
 from __future__ import annotations
 
+import logging
 import time
 from datetime import UTC, datetime
 from typing import Any
 
 from ingestion.sdmx._base_client import SDMXClient
 from ingestion.types import RawObservation, RawSeries
+
+logger = logging.getLogger(__name__)
 
 
 class SDMXFetcher:
@@ -67,7 +70,8 @@ class SDMXFetcher:
                 obs_list = self.client.get_data(
                     dataflow, key, series_id=series_id, limit=30,
                 )
-        except Exception:
+        except Exception as exc:
+            logger.error("%s fetch failed [%s key=%s]: %s", self.source_name, dataflow, key, exc)
             return None
         raw_obs = tuple(
             RawObservation(

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from ingestion.scrapers.treasury_fiscal import TreasuryFiscalClient
 from ingestion.series_config import TREASURY_DATASETS
 from ingestion.types import RawObservation, RawSeries
+
+logger = logging.getLogger(__name__)
 
 _METHOD_MAP = {
     "debt_outstanding": "fetch_debt_outstanding",
@@ -49,7 +52,8 @@ class TreasuryFetcher:
             return None
         try:
             obs_list = getattr(self.client, method_name)(limit=30)
-        except Exception:
+        except Exception as exc:
+            logger.error("Treasury fetch failed [%s method=%s]: %s", cfg.get("series_id", "?"), method_name, exc)
             return None
         raw_obs = tuple(
             RawObservation(

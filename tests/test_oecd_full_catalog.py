@@ -53,7 +53,12 @@ def oecd_client() -> OECDClient:
 
 @pytest.fixture(scope="module")
 def all_dataflows(oecd_client: OECDClient) -> list:
-    return oecd_client.list_dataflows()
+    try:
+        return oecd_client.list_dataflows()
+    except OECDRateLimitError:
+        pytest.skip("OECD rate limited on catalog fetch")
+    except OECDAPIError:
+        pytest.skip("OECD API unavailable")
 
 
 def _check_oecd_data_available(client: OECDClient) -> None:

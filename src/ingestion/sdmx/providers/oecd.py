@@ -920,11 +920,11 @@ class OECDClient:
     @staticmethod
     def _serialize_filter_value(value: str | Sequence[str] | None) -> str:
         if value is None:
-            return "*"
+            return ""
         if isinstance(value, str):
-            return value or "*"
+            return value
         values = [item for item in value if item]
-        return "+".join(values) if values else "*"
+        return "+".join(values) if values else ""
 
     @staticmethod
     def _parse_value_label(value_def: dict) -> str:
