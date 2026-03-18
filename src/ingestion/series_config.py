@@ -940,3 +940,39 @@ ILO_SERIES: dict[str, dict[str, Any]] = {}
 # ---------------------------------------------------------------------------
 
 UNSD_SERIES: dict[str, dict[str, Any]] = {}
+
+# ---------------------------------------------------------------------------
+# Concept tiers — T1 (mission-critical), T2 (important), T3 (supplementary)
+# ---------------------------------------------------------------------------
+
+# T1: core macro indicators that clients depend on daily. Target: >99% CONFIRMED.
+TIER1_CONCEPTS: frozenset[str] = frozenset({
+    "CPI_US", "CORE_CPI_US", "CORE_PCE_US", "NFP_US", "UNEMP_US",
+    "GDP_REAL_US", "POLICY_RATE_US", "SOFR_US", "TREASURY_10Y_US",
+    "TREASURY_2Y_US", "INITIAL_CLAIMS_US", "RETAIL_SALES_US",
+    "INDPRO_US", "FED_BALANCE_SHEET_US", "BRENT_CRUDE", "WTI_CRUDE",
+})
+
+# T2: important secondary indicators. Target: daily refresh.
+TIER2_CONCEPTS: frozenset[str] = frozenset({
+    "PPI_US", "PPI_CORE_US", "GDP_NOMINAL_US", "NFP_PRIVATE_US",
+    "AVG_HOURLY_EARN_US", "JOLTS_OPENINGS_US", "CONTINUING_CLAIMS_US",
+    "CPI_EU", "GDP_EU", "UNEMP_EU", "POLICY_RATE_EU",
+    "CPI_CN", "GDP_REAL_CN", "CPI_JP", "GDP_REAL_JP",
+    "SPREAD_10Y2Y_US", "TREASURY_30Y_US", "REAL_YIELD_10Y_US",
+    "M2_US", "TGA_US", "DOLLAR_INDEX_US", "EURUSD",
+    "HY_OAS_US", "CRUDE_STOCKS_US", "NATGAS_US",
+    "BREAKEVEN_5Y_US", "BREAKEVEN_10Y_US",
+})
+
+# T3: everything else. Target: weekly refresh acceptable.
+# (not enumerated — any concept not in T1/T2 is T3)
+
+
+def get_concept_tier(concept_id: str) -> int:
+    """Return 1, 2, or 3 for a concept ID."""
+    if concept_id in TIER1_CONCEPTS:
+        return 1
+    if concept_id in TIER2_CONCEPTS:
+        return 2
+    return 3

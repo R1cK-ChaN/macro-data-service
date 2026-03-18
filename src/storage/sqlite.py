@@ -184,6 +184,8 @@ class ResolvedObservation:
     priority: int
     role: str
     alternates: int = 0         # how many other sources also had this date
+    vintage: str = "initial"    # "initial", "revised", or "unknown"
+    revision_count: int = 0     # number of vintage entries for this obs date
 
 
 @dataclass(frozen=True)
@@ -5924,7 +5926,24 @@ class SQLiteEngineStore:
                         role=m.role,
                     )
             if best is not None:
-                # alternates counts *other* sources, so subtract the winner
+                # Check vintage status from indicator_vintages table
+                vintage = "initial"
+                revision_count = 0
+                try:
+                    vrow = connection.execute(
+                        "SELECT COUNT(*) FROM indicator_vintages "
+                        "WHERE series_id = ? AND source = ? AND observation_date = ?",
+                        (best.provider_series_id, best.source_id, best.date),
+                    ).fetchone()
+                    revision_count = vrow[0] if vrow else 0
+                    if revision_count > 1:
+                        vintage = "revised"
+                    elif revision_count == 1:
+                        vintage = "initial"
+                    # 0 vintages means no vintage tracking for this series
+                except Exception:
+                    pass
+
                 best = ResolvedObservation(
                     concept_id=best.concept_id,
                     date=best.date,
@@ -5934,6 +5953,8 @@ class SQLiteEngineStore:
                     priority=best.priority,
                     role=best.role,
                     alternates=alternates - 1,
+                    vintage=vintage,
+                    revision_count=revision_count,
                 )
             return best
 

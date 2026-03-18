@@ -50,7 +50,9 @@ def setup_logging() -> None:
 # ── Digest ─────────────────────────────────────────────────────────────────
 
 def compute_digest(db_path: str) -> dict:
-    """Compute coverage, freshness, and per-source stats."""
+    """Compute coverage, freshness, and per-source/tier stats."""
+    from ingestion.series_config import get_concept_tier
+
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
 
@@ -80,19 +82,63 @@ def compute_digest(db_path: str) -> dict:
         "SELECT source, MAX(scraped_at) FROM indicators GROUP BY source"
     )
     freshness = {}
+    now_iso = datetime.now(UTC).isoformat()
     for row in c.fetchall():
         freshness[row[0]] = row[1] or ""
+
+    # Ingestion latency: seconds between scraped_at and now for most recent obs per source
+    latency = {}
+    for src, ts in freshness.items():
+        if ts:
+            try:
+                scraped = datetime.fromisoformat(ts)
+                delta = (datetime.now(UTC) - scraped).total_seconds()
+                latency[src] = round(delta, 1)
+            except (ValueError, TypeError):
+                pass
+
+    # Confirmed concepts in last 24h
+    c.execute(
+        "SELECT COUNT(DISTINCT cm.concept_id) FROM concept_map cm "
+        "JOIN indicators i ON i.source = cm.source_id "
+        "AND i.series_id = cm.provider_series_id "
+        "AND i.scraped_at > datetime('now', '-1 day')"
+    )
+    confirmed_24h = c.fetchone()[0]
+
+    # Per-tier coverage
+    c.execute(
+        "SELECT DISTINCT cm.concept_id FROM concept_map cm "
+        "JOIN indicators i ON i.source = cm.source_id "
+        "AND i.series_id = cm.provider_series_id"
+    )
+    covered_ids = {row[0] for row in c.fetchall()}
+    c.execute("SELECT DISTINCT concept_id FROM concept_map")
+    all_ids = {row[0] for row in c.fetchall()}
+
+    tier_stats = {}
+    for tier_n in (1, 2, 3):
+        tier_all = {cid for cid in all_ids if get_concept_tier(cid) == tier_n}
+        tier_covered = tier_all & covered_ids
+        tier_stats[f"T{tier_n}"] = {
+            "total": len(tier_all),
+            "covered": len(tier_covered),
+            "missing": sorted(tier_all - tier_covered),
+        }
 
     conn.close()
 
     return {
-        "timestamp": datetime.now(UTC).isoformat(),
+        "timestamp": now_iso,
         "concepts_covered": covered_concepts,
         "concepts_total": total_concepts,
         "coverage_pct": round(covered_concepts / total_concepts * 100, 1) if total_concepts else 0,
         "total_obs": total_obs,
         "sources": sources,
         "freshness": freshness,
+        "latency_seconds": latency,
+        "confirmed_24h": confirmed_24h,
+        "tier_coverage": tier_stats,
     }
 
 
@@ -101,10 +147,11 @@ def write_digest(digest: dict) -> None:
     with open(DIGEST_FILE, "a", encoding="utf-8") as f:
         f.write(json.dumps(digest, ensure_ascii=False) + "\n")
     logger.info(
-        "DIGEST: coverage=%d/%d (%.0f%%), total_obs=%d",
+        "DIGEST: coverage=%d/%d (%.0f%%), confirmed_24h=%d, total_obs=%d",
         digest["concepts_covered"],
         digest["concepts_total"],
         digest["coverage_pct"],
+        digest.get("confirmed_24h", 0),
         digest["total_obs"],
     )
 

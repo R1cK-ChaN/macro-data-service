@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import math
 from datetime import UTC, datetime
 from typing import Any
@@ -12,6 +13,8 @@ from ._types import (
     ValidationLayer,
     ValidationSeverity,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def compute_series_profile(
@@ -277,6 +280,88 @@ def check_anomalies(
         "series_profile",
         _profile_to_dict(current_profile),
         now,
+    )
+
+    return results
+
+
+# ── Pre-store sanity check ──────────────────────────────────────────────
+
+def check_value_sanity(
+    incoming_value: float,
+    series_id: str,
+    source: str,
+    recent_values: list[float],
+    *,
+    change_sigma: float = 4.0,
+    min_history: int = 5,
+) -> CheckResult | None:
+    """Compare an incoming value against recent history.
+
+    Flags if the period-over-period change is > ``change_sigma`` standard
+    deviations from the recent change distribution.  Returns ``None`` when
+    history is too short to judge.
+    """
+    if len(recent_values) < min_history:
+        return None
+
+    # Compute recent period-over-period changes (newest first in recent_values)
+    changes: list[float] = []
+    for i in range(len(recent_values) - 1):
+        changes.append(recent_values[i] - recent_values[i + 1])
+
+    if not changes:
+        return None
+
+    mean_chg = sum(changes) / len(changes)
+    if len(changes) > 1:
+        var = sum((c - mean_chg) ** 2 for c in changes) / (len(changes) - 1)
+        std_chg = math.sqrt(var)
+    else:
+        std_chg = 0.0
+
+    # New change: incoming vs most recent stored value
+    new_change = incoming_value - recent_values[0]
+
+    # If std is near zero (constant series), flag if any change at all
+    if std_chg < 1e-9:
+        passed = abs(new_change) < 1e-9
+        threshold = 0.0
+    else:
+        threshold = change_sigma * std_chg
+        passed = abs(new_change - mean_chg) <= threshold
+
+    now = datetime.now(UTC).isoformat()
+    severity = ValidationSeverity.INFO if passed else ValidationSeverity.WARNING
+
+    if not passed:
+        logger.warning(
+            "SANITY: %s/%s value %.4f → %.4f (change=%.4f, mean_chg=%.4f, threshold=%.4f)",
+            source, series_id, recent_values[0], incoming_value,
+            new_change, mean_chg, threshold,
+        )
+
+    return CheckResult(
+        check_name="sanity_value_change",
+        layer=ValidationLayer.ANOMALY,
+        passed=passed,
+        severity=severity,
+        message=(
+            f"{series_id}: change {new_change:+.4f} "
+            f"(mean_chg={mean_chg:.4f}, {change_sigma}σ threshold={threshold:.4f})"
+        ),
+        source=source,
+        series_id=series_id,
+        timestamp=now,
+        details={
+            "incoming_value": incoming_value,
+            "previous_value": recent_values[0],
+            "new_change": round(new_change, 6),
+            "mean_change": round(mean_chg, 6),
+            "std_change": round(std_chg, 6),
+            "threshold": round(threshold, 6),
+            "history_depth": len(recent_values),
+        },
     )
 
     return results

@@ -909,9 +909,33 @@ class IngestionOrchestrator:
         )
 
     def _store_indicator_observations(self, observations: list[IndicatorObservationRecord]) -> int:
+        self._run_sanity_checks(observations)
         for observation in observations:
             self.store.upsert_indicator_observation(observation)
         return len(observations)
+
+    def _run_sanity_checks(self, observations: list[IndicatorObservationRecord]) -> None:
+        """Pre-store sanity check: flag values that deviate from recent history."""
+        from ingestion.validation._anomaly import check_value_sanity
+
+        # Group by (source, series_id), check only the newest observation per series
+        latest_by_series: dict[tuple[str, str], IndicatorObservationRecord] = {}
+        for obs in observations:
+            key = (obs.source, obs.series_id)
+            if key not in latest_by_series or obs.date > latest_by_series[key].date:
+                latest_by_series[key] = obs
+
+        for (source, series_id), obs in latest_by_series.items():
+            try:
+                history = self.store.get_indicator_history(series_id, limit=20)
+                recent_values = [h.value for h in history if h.source == source]
+                if len(recent_values) < 5:
+                    continue
+                check_value_sanity(
+                    obs.value, series_id, source, recent_values,
+                )
+            except Exception:
+                pass  # sanity checks must never block ingestion
 
     def refresh_calendar(self) -> dict[str, int]:
         return self.run_source("calendar").to_counts()
