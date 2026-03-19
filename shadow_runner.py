@@ -25,6 +25,16 @@ DIGEST_FILE = LOG_DIR / "daily_digest.jsonl"
 
 logger = logging.getLogger("shadow")
 
+
+def _table_count(cursor: sqlite3.Cursor, table_name: str) -> int:
+    exists = cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    if exists is None:
+        return 0
+    return int(cursor.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0])
+
 def setup_logging() -> None:
     root = logging.getLogger()
     root.setLevel(logging.INFO)
@@ -126,6 +136,11 @@ def compute_digest(db_path: str) -> dict:
             "missing": sorted(tier_all - tier_covered),
         }
 
+    document_count = _table_count(c, "document")
+    news_article_count = _table_count(c, "news_articles")
+    release_schedule_count = _table_count(c, "release_schedule")
+    release_status_count = _table_count(c, "release_status")
+
     conn.close()
 
     return {
@@ -139,6 +154,10 @@ def compute_digest(db_path: str) -> dict:
         "latency_seconds": latency,
         "confirmed_24h": confirmed_24h,
         "tier_coverage": tier_stats,
+        "document_count": document_count,
+        "news_article_count": news_article_count,
+        "release_schedule_count": release_schedule_count,
+        "release_status_count": release_status_count,
     }
 
 
@@ -175,7 +194,9 @@ def run_shadow(
 
     # Ensure concept_map is seeded for coverage tracking
     svc._store.seed_concept_map()
+    svc._store.seed_release_schedules()
     logger.info("Concept map seeded")
+    logger.info("Release schedules seeded")
 
     cycle = 0
     while True:

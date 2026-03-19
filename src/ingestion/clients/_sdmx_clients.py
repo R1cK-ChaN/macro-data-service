@@ -75,6 +75,7 @@ class IMFIngestionClient:
         family_lookup: dict[tuple[str, str], str] | None = None,
     ) -> RefreshStats:
         count = 0
+        failures: list[str] = []
         now = datetime.now(UTC)
         as_of_dates = [
             (now - timedelta(days=30 * i)).strftime("%Y-%m-%d")
@@ -89,7 +90,6 @@ class IMFIngestionClient:
                     series_id=cfg["series_id"],
                     version=cfg["version"],
                     as_of_dates=as_of_dates,
-                    start_period=str(now.year - 2),
                     limit=30,
                 )
                 fam_id = family_lookup.get(("imf", cfg["series_id"])) if family_lookup else None
@@ -106,8 +106,20 @@ class IMFIngestionClient:
                         )
                     )
                     count += 1
-            except Exception:
+            except Exception as exc:
                 logger.warning("IMF vintage refresh failed for %s", series_key, exc_info=True)
+                failures.append(f"{series_key}: {exc}")
+        if failures and count == 0 and IMF_VINTAGE_SERIES:
+            raise RuntimeError(
+                f"imf vintages failed for all {len(IMF_VINTAGE_SERIES)} series; first error: {failures[0]}"
+            )
+        if failures:
+            logger.warning(
+                "imf vintage partial failures: %d/%d; first error: %s",
+                len(failures),
+                len(IMF_VINTAGE_SERIES),
+                failures[0],
+            )
         return RefreshStats(source="imf_vintages", count=count)
 
 
@@ -449,5 +461,4 @@ class ECBIngestionClient:
                 logger.warning("ECB catalog refresh failed for %s", dataflow.id, exc_info=True)
             time.sleep(sleep_seconds)
         return RefreshStats(source="ecb", count=count)
-
 

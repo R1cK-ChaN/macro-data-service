@@ -4,19 +4,29 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import time
-from datetime import UTC, datetime, timedelta
-from typing import Any
+import re
+from datetime import UTC, datetime
 
+from contracts import normalize_utc_iso, to_epoch_ms
 from ingestion.scrapers.gov_report import GovReportClient, GovReportItem
+from ingestion.url_canon import canonicalize_url
 from storage import (
     DocumentBlobRecord,
     DocumentExtraRecord,
     DocumentRecord,
+    NewsArticleRecord,
     SQLiteEngineStore,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _infer_publish_precision(value: str | None) -> str:
+    if not value:
+        return "estimated"
+    if re.search(r"[T ]\d{1,2}:\d{2}", value):
+        return "exact"
+    return "date_only"
 
 
 class RefreshStats:
@@ -73,6 +83,7 @@ class GovReportIngestionClient:
     def store_items(self, store: SQLiteEngineStore, items: list[GovReportItem]) -> int:
         self._ensure_seed(store)
         count = 0
+        failures: list[str] = []
         now_dt = datetime.now(UTC)
         now_iso = now_dt.isoformat()
         now_epoch_ms = int(now_dt.timestamp() * 1000)
@@ -99,7 +110,7 @@ class GovReportIngestionClient:
                 published_date = published_at[:10]
 
                 # --- Normalized document storage ---
-                if not store.document_exists(item.url):
+                if not store.document_exists(canonical):
                     doc_id = url_hash[:16]
                     release_family_id = item.source_id.replace("_", ".")
                     parts = item.source_id.split("_")
@@ -109,7 +120,7 @@ class GovReportIngestionClient:
                         document_id=doc_id,
                         release_family_id=release_family_id,
                         source_id=source_key,
-                        canonical_url=item.url,
+                        canonical_url=canonical,
                         title=item.title,
                         subtitle="",
                         document_type=self._gov_document_type(item.data_category),
@@ -183,9 +194,19 @@ class GovReportIngestionClient:
                 )
                 store.upsert_news_article(record)
                 count += 1
-            except Exception:
+            except Exception as exc:
                 logger.warning("Gov report storage failed: %s", item.source_id, exc_info=True)
+                failures.append(f"{item.source_id}: {exc}")
                 continue
+        if failures and count == 0 and items:
+            raise RuntimeError(
+                f"gov report storage failed for all {len(items)} items; first error: {failures[0]}"
+            )
+        if failures:
+            logger.warning(
+                "gov report partial storage failures: %d/%d; first error: %s",
+                len(failures),
+                len(items),
+                failures[0],
+            )
         return count
-
-

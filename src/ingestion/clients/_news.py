@@ -4,21 +4,20 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import re
 import time
-from datetime import UTC, datetime, timedelta, timezone
-from typing import Any
+from datetime import datetime, timezone
 
+import feedparser
 import requests
 from bs4 import BeautifulSoup
 
-from contracts import format_epoch_iso, normalize_utc_iso, to_epoch_ms
-from env import get_env_value
+from contracts import format_epoch_iso
 from ingestion.news_classify import Deduplicator
 from ingestion.news_extract import extract_news_metadata
 from ingestion.news_feeds import get_feeds
 from ingestion.news_fetcher import ArticleFetcher
 from ingestion.url_canon import canonicalize_url, content_hash
+from ._trends import PreparedNewsRecord, RawNewsEntry
 from storage import NewsArticleRecord, SQLiteEngineStore
 
 logger = logging.getLogger(__name__)
@@ -53,6 +52,29 @@ class NewsIngestionClient:
             ),
         })
 
+    @staticmethod
+    def _finalize_stage(
+        stage: str,
+        *,
+        failures: list[str],
+        successes: int,
+        attempted: int,
+        subject: str,
+    ) -> None:
+        if not failures:
+            return
+        if attempted > 0 and successes == 0:
+            raise RuntimeError(
+                f"news {stage} failed for all {attempted} {subject}; first error: {failures[0]}"
+            )
+        logger.warning(
+            "news %s partial failures: %d/%d; first error: %s",
+            stage,
+            len(failures),
+            attempted,
+            failures[0],
+        )
+
     def refresh(
         self,
         store: SQLiteEngineStore,
@@ -67,13 +89,20 @@ class NewsIngestionClient:
 
     def fetch_entries(self, *, category: str | None = None) -> list[RawNewsEntry]:
         entries: list[RawNewsEntry] = []
+        attempted_feeds = 0
+        successful_feeds = 0
+        failures: list[str] = []
         for feed in get_feeds(category):
+            attempted_feeds += 1
             try:
                 resp = self._session.get(feed.url, timeout=self._timeout)
                 resp.raise_for_status()
                 parsed = feedparser.parse(resp.text)
-            except Exception:
+            except Exception as exc:
+                logger.warning("news feed fetch failed: %s", feed.url, exc_info=True)
+                failures.append(f"{feed.name}: {exc}")
                 continue
+            successful_feeds += 1
 
             for entry in parsed.entries[: self._max_items_per_feed]:
                 title = entry.get("title", "").strip()
@@ -96,6 +125,13 @@ class NewsIngestionClient:
                     )
                 )
             time.sleep(0.3)
+        self._finalize_stage(
+            "feed fetch",
+            failures=failures,
+            successes=successful_feeds,
+            attempted=attempted_feeds,
+            subject="feeds",
+        )
         return entries
 
     def normalize_entries(self, entries: list[RawNewsEntry]) -> list[PreparedNewsRecord]:
@@ -152,6 +188,7 @@ class NewsIngestionClient:
 
     def store_articles(self, store: SQLiteEngineStore, entries: list[PreparedNewsRecord]) -> int:
         count = 0
+        failures: list[str] = []
         for entry in entries:
             try:
                 article = self._article_fetcher.fetch_article(entry.raw_url, entry.description)
@@ -202,11 +239,18 @@ class NewsIngestionClient:
                 )
                 count += 1
                 time.sleep(0.5)
-            except Exception:
+            except Exception as exc:
+                logger.warning("news article storage failed: %s", entry.raw_url, exc_info=True)
+                failures.append(f"{entry.raw_url}: {exc}")
                 continue
+        self._finalize_stage(
+            "article storage",
+            failures=failures,
+            successes=count,
+            attempted=len(entries),
+            subject="articles",
+        )
         return count
 
     def close(self) -> None:
         self._article_fetcher.close()
-
-

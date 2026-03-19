@@ -24,6 +24,7 @@ class RefreshStats:
         self.count = count
 
 
+@dataclass(frozen=True)
 class RawNewsEntry:
     source_feed: str
     feed_category: str
@@ -556,5 +557,4 @@ class WeiboTrendIngestionClient:
             -entry.provider_rank,
             entry.topic.casefold(),
         )
-
 
