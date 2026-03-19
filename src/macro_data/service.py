@@ -99,6 +99,77 @@ class LocalMacroDataService:
                 "available_sources": self._ingestion.list_sources(),
             }
 
+    def _op_list_source_capabilities(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        del arguments
+        if self._ingestion is None:
+            return {"error": "capabilities unavailable", "sources": []}
+        items = self._ingestion.list_source_capabilities()
+        return {"total": len(items), "sources": items}
+
+    def _op_sync_catalog_discovery(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self._ingestion is None:
+            return {"error": "catalog discovery unavailable"}
+        source_id = str(arguments.get("source_id") or arguments.get("source") or "").strip()
+        if not source_id:
+            return {"error": "source_id is required"}
+        query = (arguments.get("query") or "").strip() or None
+        limit = arguments.get("limit")
+        return self._ingestion.sync_catalog_discovery(
+            source_id,
+            query=query,
+            limit=int(limit) if limit is not None else None,
+        )
+
+    def _op_list_catalog_entities(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self._ingestion is None:
+            return {"error": "catalog listing unavailable", "entities": []}
+        source_id = str(arguments.get("source_id") or arguments.get("source") or "").strip()
+        if not source_id:
+            return {"error": "source_id is required", "entities": []}
+        query = (arguments.get("query") or "").strip() or None
+        limit = int(arguments.get("limit", 100))
+        refresh = bool(arguments.get("refresh", False))
+        return self._ingestion.list_catalog_entities(
+            source_id,
+            query=query,
+            limit=limit,
+            refresh=refresh,
+        )
+
+    def _op_get_catalog_structure(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self._ingestion is None:
+            return {"error": "catalog structure unavailable", "structure": None}
+        source_id = str(arguments.get("source_id") or arguments.get("source") or "").strip()
+        entity_id = str(arguments.get("entity_id") or arguments.get("entity") or "").strip()
+        if not source_id:
+            return {"error": "source_id is required", "structure": None}
+        if not entity_id:
+            return {"error": "entity_id is required", "structure": None}
+        return self._ingestion.get_catalog_structure(source_id, entity_id)
+
+    def _op_sync_catalog_latest(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self._ingestion is None:
+            return {"error": "catalog sync unavailable"}
+        source_id = str(arguments.get("source_id") or arguments.get("source") or "").strip()
+        if not source_id:
+            return {"error": "source_id is required"}
+        entity_ids = arguments.get("entity_ids")
+        if entity_ids is None:
+            entity = (arguments.get("entity_id") or arguments.get("entity") or "").strip()
+            entity_ids = [entity] if entity else None
+        limit = arguments.get("limit")
+        return self._ingestion.sync_catalog_latest(
+            source_id,
+            entity_ids=entity_ids,
+            limit=int(limit) if limit is not None else None,
+        )
+
+    def _op_get_catalog_status(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self._ingestion is None:
+            return {"error": "catalog status unavailable", "sources": []}
+        source_id = (arguments.get("source_id") or arguments.get("source") or "").strip() or None
+        return self._ingestion.get_catalog_status(source_id)
+
     def _op_refresh_indicator(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if self._ingestion is None:
             return {"error": "ingestion unavailable"}

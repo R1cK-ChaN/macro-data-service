@@ -262,6 +262,15 @@ class IngestionOrchestrator:
         self.store.seed_calendar_indicators()
         self._cal_seeded = True
 
+    def _ensure_capability_manager(self) -> None:
+        if hasattr(self, "_capability_manager"):
+            return
+        from ingestion.source_capabilities import SourceCapabilityManager
+        self._capability_manager = SourceCapabilityManager(
+            self.store,
+            orchestrator=self,
+        )
+
     def _resolve_calendar_indicator(self, event: StoredEventRecord) -> StoredEventRecord:
         indicator_id = self.store.resolve_calendar_alias(
             event.indicator, event.source, event.country
@@ -1009,6 +1018,66 @@ class IngestionOrchestrator:
         for source in self._default_refresh_order:
             results.update(self.run_source(source).to_counts())
         return results
+
+    def list_source_capabilities(self) -> list[dict[str, Any]]:
+        self._ensure_capability_manager()
+        return self._capability_manager.list_capabilities()
+
+    def sync_catalog_discovery(
+        self,
+        source_id: str,
+        *,
+        query: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        self._ensure_capability_manager()
+        return self._capability_manager.sync_discovery(
+            source_id,
+            query=query,
+            limit=limit,
+        )
+
+    def list_catalog_entities(
+        self,
+        source_id: str,
+        *,
+        query: str | None = None,
+        limit: int = 100,
+        refresh: bool = False,
+    ) -> dict[str, Any]:
+        self._ensure_capability_manager()
+        return self._capability_manager.list_entities(
+            source_id,
+            query=query,
+            limit=limit,
+            refresh=refresh,
+        )
+
+    def get_catalog_structure(
+        self,
+        source_id: str,
+        entity_id: str,
+    ) -> dict[str, Any]:
+        self._ensure_capability_manager()
+        return self._capability_manager.get_structure(source_id, entity_id)
+
+    def sync_catalog_latest(
+        self,
+        source_id: str,
+        *,
+        entity_ids: list[str] | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        self._ensure_capability_manager()
+        return self._capability_manager.sync_latest(
+            source_id,
+            entity_ids=entity_ids,
+            limit=limit,
+        )
+
+    def get_catalog_status(self, source_id: str | None = None) -> dict[str, Any]:
+        self._ensure_capability_manager()
+        return self._capability_manager.get_status(source_id)
 
     def run_schedule(self, *, poll_interval_seconds: int = 60) -> None:
         jobs = {

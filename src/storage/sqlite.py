@@ -1963,6 +1963,83 @@ class SQLiteEngineStore:
                 "CREATE INDEX IF NOT EXISTS idx_release_status_concept "
                 "ON release_status(concept_id, status)"
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS source_capability (
+                    source_id TEXT PRIMARY KEY,
+                    display_name TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    entity_type TEXT NOT NULL,
+                    supports_discovery INTEGER NOT NULL DEFAULT 0,
+                    supports_structure INTEGER NOT NULL DEFAULT 0,
+                    supports_latest_sync INTEGER NOT NULL DEFAULT 0,
+                    supports_backfill INTEGER NOT NULL DEFAULT 0,
+                    is_default_scheduled INTEGER NOT NULL DEFAULT 0,
+                    description TEXT NOT NULL DEFAULT '',
+                    notes TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS catalog_entity (
+                    source_id TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    entity_type TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    discovered_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (source_id, entity_id)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_catalog_entity_source "
+                "ON catalog_entity(source_id, entity_type, display_name)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS catalog_sync_checkpoint (
+                    source_id TEXT NOT NULL,
+                    job_type TEXT NOT NULL,
+                    cursor TEXT NOT NULL DEFAULT '',
+                    entities_total INTEGER NOT NULL DEFAULT 0,
+                    entities_synced INTEGER NOT NULL DEFAULT 0,
+                    observations_synced INTEGER NOT NULL DEFAULT 0,
+                    last_success_at TEXT NOT NULL DEFAULT '',
+                    last_error TEXT NOT NULL DEFAULT '',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (source_id, job_type)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS catalog_sync_run (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_id TEXT NOT NULL,
+                    job_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    entities_total INTEGER NOT NULL DEFAULT 0,
+                    entities_synced INTEGER NOT NULL DEFAULT 0,
+                    observations_synced INTEGER NOT NULL DEFAULT 0,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT NOT NULL DEFAULT '',
+                    duration_ms INTEGER NOT NULL DEFAULT 0,
+                    error TEXT NOT NULL DEFAULT '',
+                    metadata_json TEXT NOT NULL DEFAULT '{}'
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_catalog_sync_run_source "
+                "ON catalog_sync_run(source_id, job_type, started_at DESC)"
+            )
 
             # ── Calendar indicator normalization tables ───────────────
             connection.execute(
@@ -6610,3 +6687,397 @@ class SQLiteEngineStore:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+    # -- Source capability / catalog sync -----------------------------------
+
+    def upsert_source_capability(self, payload: dict[str, Any]) -> None:
+        now = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO source_capability (
+                    source_id,
+                    display_name,
+                    source_type,
+                    entity_type,
+                    supports_discovery,
+                    supports_structure,
+                    supports_latest_sync,
+                    supports_backfill,
+                    is_default_scheduled,
+                    description,
+                    notes,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_id) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    source_type = excluded.source_type,
+                    entity_type = excluded.entity_type,
+                    supports_discovery = excluded.supports_discovery,
+                    supports_structure = excluded.supports_structure,
+                    supports_latest_sync = excluded.supports_latest_sync,
+                    supports_backfill = excluded.supports_backfill,
+                    is_default_scheduled = excluded.is_default_scheduled,
+                    description = excluded.description,
+                    notes = excluded.notes,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    payload["source_id"],
+                    payload.get("display_name", payload["source_id"]),
+                    payload.get("source_type", ""),
+                    payload.get("entity_type", ""),
+                    int(bool(payload.get("supports_discovery", False))),
+                    int(bool(payload.get("supports_structure", False))),
+                    int(bool(payload.get("supports_latest_sync", False))),
+                    int(bool(payload.get("supports_backfill", False))),
+                    int(bool(payload.get("is_default_scheduled", False))),
+                    payload.get("description", ""),
+                    payload.get("notes", ""),
+                    payload.get("updated_at", now),
+                ),
+            )
+
+    def get_source_capability(self, source_id: str) -> dict[str, Any] | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM source_capability WHERE source_id = ?",
+                (source_id,),
+            ).fetchone()
+        return self._row_to_source_capability(row) if row is not None else None
+
+    def list_source_capabilities(
+        self,
+        *,
+        source_type: str | None = None,
+        default_scheduled: bool | None = None,
+    ) -> list[dict[str, Any]]:
+        conditions: list[str] = []
+        params: list[Any] = []
+        if source_type:
+            conditions.append("source_type = ?")
+            params.append(source_type)
+        if default_scheduled is not None:
+            conditions.append("is_default_scheduled = ?")
+            params.append(int(default_scheduled))
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                f"SELECT * FROM source_capability{where} ORDER BY source_id",
+                params,
+            ).fetchall()
+        return [self._row_to_source_capability(row) for row in rows]
+
+    def upsert_catalog_entity(self, payload: dict[str, Any]) -> None:
+        now = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO catalog_entity (
+                    source_id,
+                    entity_id,
+                    entity_type,
+                    display_name,
+                    description,
+                    metadata_json,
+                    is_active,
+                    discovered_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_id, entity_id) DO UPDATE SET
+                    entity_type = excluded.entity_type,
+                    display_name = excluded.display_name,
+                    description = excluded.description,
+                    metadata_json = excluded.metadata_json,
+                    is_active = excluded.is_active,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    payload["source_id"],
+                    payload["entity_id"],
+                    payload.get("entity_type", ""),
+                    payload.get("display_name", payload["entity_id"]),
+                    payload.get("description", ""),
+                    json.dumps(payload.get("metadata", {}), ensure_ascii=True, sort_keys=True),
+                    int(bool(payload.get("is_active", True))),
+                    payload.get("discovered_at", now),
+                    payload.get("updated_at", now),
+                ),
+            )
+
+    def list_catalog_entities(
+        self,
+        source_id: str,
+        *,
+        query: str | None = None,
+        entity_type: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        conditions = ["source_id = ?"]
+        params: list[Any] = [source_id]
+        if entity_type:
+            conditions.append("entity_type = ?")
+            params.append(entity_type)
+        if query:
+            pattern = f"%{query.lower()}%"
+            conditions.append(
+                "(LOWER(entity_id) LIKE ? OR LOWER(display_name) LIKE ? OR LOWER(description) LIKE ?)"
+            )
+            params.extend([pattern, pattern, pattern])
+        params.append(limit)
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM catalog_entity
+                WHERE {' AND '.join(conditions)}
+                ORDER BY display_name, entity_id
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [self._row_to_catalog_entity(row) for row in rows]
+
+    def count_catalog_entities(self, source_id: str) -> int:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS cnt FROM catalog_entity WHERE source_id = ?",
+                (source_id,),
+            ).fetchone()
+        return int(row["cnt"]) if row is not None else 0
+
+    def upsert_catalog_sync_checkpoint(self, payload: dict[str, Any]) -> None:
+        now = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO catalog_sync_checkpoint (
+                    source_id,
+                    job_type,
+                    cursor,
+                    entities_total,
+                    entities_synced,
+                    observations_synced,
+                    last_success_at,
+                    last_error,
+                    metadata_json,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_id, job_type) DO UPDATE SET
+                    cursor = excluded.cursor,
+                    entities_total = excluded.entities_total,
+                    entities_synced = excluded.entities_synced,
+                    observations_synced = excluded.observations_synced,
+                    last_success_at = excluded.last_success_at,
+                    last_error = excluded.last_error,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    payload["source_id"],
+                    payload["job_type"],
+                    payload.get("cursor", ""),
+                    int(payload.get("entities_total", 0)),
+                    int(payload.get("entities_synced", 0)),
+                    int(payload.get("observations_synced", 0)),
+                    payload.get("last_success_at", ""),
+                    payload.get("last_error", ""),
+                    json.dumps(payload.get("metadata", {}), ensure_ascii=True, sort_keys=True),
+                    payload.get("updated_at", now),
+                ),
+            )
+
+    def get_catalog_sync_checkpoint(
+        self,
+        source_id: str,
+        job_type: str,
+    ) -> dict[str, Any] | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM catalog_sync_checkpoint
+                WHERE source_id = ? AND job_type = ?
+                """,
+                (source_id, job_type),
+            ).fetchone()
+        return self._row_to_catalog_sync_checkpoint(row) if row is not None else None
+
+    def list_catalog_sync_checkpoints(
+        self,
+        *,
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: list[Any] = []
+        where = ""
+        if source_id:
+            where = " WHERE source_id = ?"
+            params.append(source_id)
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                f"SELECT * FROM catalog_sync_checkpoint{where} ORDER BY source_id, job_type",
+                params,
+            ).fetchall()
+        return [self._row_to_catalog_sync_checkpoint(row) for row in rows]
+
+    def insert_catalog_sync_run(self, payload: dict[str, Any]) -> int:
+        now = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO catalog_sync_run (
+                    source_id,
+                    job_type,
+                    status,
+                    entities_total,
+                    entities_synced,
+                    observations_synced,
+                    started_at,
+                    finished_at,
+                    duration_ms,
+                    error,
+                    metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload["source_id"],
+                    payload["job_type"],
+                    payload.get("status", "running"),
+                    int(payload.get("entities_total", 0)),
+                    int(payload.get("entities_synced", 0)),
+                    int(payload.get("observations_synced", 0)),
+                    payload.get("started_at", now),
+                    payload.get("finished_at", ""),
+                    int(payload.get("duration_ms", 0)),
+                    payload.get("error", ""),
+                    json.dumps(payload.get("metadata", {}), ensure_ascii=True, sort_keys=True),
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def update_catalog_sync_run(self, run_id: int, payload: dict[str, Any]) -> None:
+        sets: list[str] = []
+        params: list[Any] = []
+        field_map = {
+            "status": "status",
+            "entities_total": "entities_total",
+            "entities_synced": "entities_synced",
+            "observations_synced": "observations_synced",
+            "started_at": "started_at",
+            "finished_at": "finished_at",
+            "duration_ms": "duration_ms",
+            "error": "error",
+        }
+        for key, column in field_map.items():
+            if key in payload:
+                sets.append(f"{column} = ?")
+                params.append(payload[key])
+        if "metadata" in payload:
+            sets.append("metadata_json = ?")
+            params.append(json.dumps(payload["metadata"], ensure_ascii=True, sort_keys=True))
+        if not sets:
+            return
+        params.append(run_id)
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                f"UPDATE catalog_sync_run SET {', '.join(sets)} WHERE id = ?",
+                params,
+            )
+
+    def list_catalog_sync_runs(
+        self,
+        *,
+        source_id: str | None = None,
+        job_type: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        conditions: list[str] = []
+        params: list[Any] = []
+        if source_id:
+            conditions.append("source_id = ?")
+            params.append(source_id)
+        if job_type:
+            conditions.append("job_type = ?")
+            params.append(job_type)
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.append(limit)
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM catalog_sync_run
+                {where}
+                ORDER BY started_at DESC, id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [self._row_to_catalog_sync_run(row) for row in rows]
+
+    def _row_to_source_capability(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "source_id": row["source_id"],
+            "display_name": row["display_name"],
+            "source_type": row["source_type"],
+            "entity_type": row["entity_type"],
+            "supports_discovery": bool(row["supports_discovery"]),
+            "supports_structure": bool(row["supports_structure"]),
+            "supports_latest_sync": bool(row["supports_latest_sync"]),
+            "supports_backfill": bool(row["supports_backfill"]),
+            "is_default_scheduled": bool(row["is_default_scheduled"]),
+            "description": row["description"],
+            "notes": row["notes"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _row_to_catalog_entity(self, row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            metadata = {}
+        return {
+            "source_id": row["source_id"],
+            "entity_id": row["entity_id"],
+            "entity_type": row["entity_type"],
+            "display_name": row["display_name"],
+            "description": row["description"],
+            "metadata": metadata,
+            "is_active": bool(row["is_active"]),
+            "discovered_at": row["discovered_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _row_to_catalog_sync_checkpoint(self, row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            metadata = {}
+        return {
+            "source_id": row["source_id"],
+            "job_type": row["job_type"],
+            "cursor": row["cursor"],
+            "entities_total": int(row["entities_total"]),
+            "entities_synced": int(row["entities_synced"]),
+            "observations_synced": int(row["observations_synced"]),
+            "last_success_at": row["last_success_at"],
+            "last_error": row["last_error"],
+            "metadata": metadata,
+            "updated_at": row["updated_at"],
+        }
+
+    def _row_to_catalog_sync_run(self, row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            metadata = {}
+        return {
+            "run_id": int(row["id"]),
+            "source_id": row["source_id"],
+            "job_type": row["job_type"],
+            "status": row["status"],
+            "entities_total": int(row["entities_total"]),
+            "entities_synced": int(row["entities_synced"]),
+            "observations_synced": int(row["observations_synced"]),
+            "started_at": row["started_at"],
+            "finished_at": row["finished_at"],
+            "duration_ms": int(row["duration_ms"]),
+            "error": row["error"],
+            "metadata": metadata,
+        }

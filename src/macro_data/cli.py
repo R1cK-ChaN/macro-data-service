@@ -53,6 +53,37 @@ def build_parser() -> argparse.ArgumentParser:
     refresh_source.add_argument("--source", required=True)
     refresh_source.add_argument("--db-path", default=None)
 
+    capabilities = subparsers.add_parser("sources-capabilities")
+    capabilities.add_argument("--db-path", default=None)
+
+    catalog_list = subparsers.add_parser("catalog-list")
+    catalog_list.add_argument("--source", required=True)
+    catalog_list.add_argument("--query", default=None)
+    catalog_list.add_argument("--limit", type=int, default=100)
+    catalog_list.add_argument("--refresh", action="store_true")
+    catalog_list.add_argument("--db-path", default=None)
+
+    catalog_structure = subparsers.add_parser("catalog-structure")
+    catalog_structure.add_argument("--source", required=True)
+    catalog_structure.add_argument("--entity", required=True)
+    catalog_structure.add_argument("--db-path", default=None)
+
+    catalog_sync_discovery = subparsers.add_parser("catalog-sync-discovery")
+    catalog_sync_discovery.add_argument("--source", required=True)
+    catalog_sync_discovery.add_argument("--query", default=None)
+    catalog_sync_discovery.add_argument("--limit", type=int, default=None)
+    catalog_sync_discovery.add_argument("--db-path", default=None)
+
+    catalog_sync_latest = subparsers.add_parser("catalog-sync-latest")
+    catalog_sync_latest.add_argument("--source", required=True)
+    catalog_sync_latest.add_argument("--entity", action="append", dest="entities", default=None)
+    catalog_sync_latest.add_argument("--limit", type=int, default=None)
+    catalog_sync_latest.add_argument("--db-path", default=None)
+
+    catalog_status = subparsers.add_parser("catalog-status")
+    catalog_status.add_argument("--source", default=None)
+    catalog_status.add_argument("--db-path", default=None)
+
     oecd_dataflows = subparsers.add_parser("oecd-dataflows")
     oecd_dataflows.add_argument("--query", default=None)
     oecd_dataflows.add_argument("--limit", type=int, default=20)
@@ -237,6 +268,12 @@ def _run_oecd_refresh_catalog(args: argparse.Namespace) -> int:
     )
     print(json.dumps({stats.source: stats.count}, ensure_ascii=False, sort_keys=True))
     return 0
+
+
+def _run_service_json(service, operation: str, arguments: dict[str, object]) -> int:
+    payload = service.invoke(operation, arguments)
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if not payload.get("error") else 1
 
 
 # -- World Bank CLI handlers ------------------------------------------------
@@ -622,6 +659,43 @@ def main(argv: list[str] | None = None) -> int:
 
     service = build_local_macro_data_service(db_path=Path(args.db_path) if hasattr(args, "db_path") and args.db_path else None)
 
+    if args.command == "sources-capabilities":
+        return _run_service_json(service, "list_source_capabilities", {})
+    if args.command == "catalog-list":
+        return _run_service_json(
+            service,
+            "list_catalog_entities",
+            {
+                "source_id": args.source,
+                "query": args.query,
+                "limit": args.limit,
+                "refresh": args.refresh,
+            },
+        )
+    if args.command == "catalog-structure":
+        return _run_service_json(
+            service,
+            "get_catalog_structure",
+            {"source_id": args.source, "entity_id": args.entity},
+        )
+    if args.command == "catalog-sync-discovery":
+        return _run_service_json(
+            service,
+            "sync_catalog_discovery",
+            {"source_id": args.source, "query": args.query, "limit": args.limit},
+        )
+    if args.command == "catalog-sync-latest":
+        return _run_service_json(
+            service,
+            "sync_catalog_latest",
+            {"source_id": args.source, "entity_ids": args.entities, "limit": args.limit},
+        )
+    if args.command == "catalog-status":
+        return _run_service_json(
+            service,
+            "get_catalog_status",
+            {"source_id": args.source},
+        )
     if args.command == "refresh":
         print(json.dumps(service.invoke("refresh_all_sources", {}), ensure_ascii=False, sort_keys=True))
         return 0

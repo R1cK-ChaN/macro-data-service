@@ -170,6 +170,62 @@ class MacroDataCLITest(unittest.TestCase):
         self.assertEqual(payload["stored"], 5)
         fake_service.invoke.assert_called_once_with("refresh_source", {"source": "weibo_trends"})
 
+    def test_sources_capabilities_command_invokes_service(self) -> None:
+        output = io.StringIO()
+        fake_service = Mock()
+        fake_service.invoke.return_value = {
+            "total": 1,
+            "sources": [{"source_id": "oecd", "supports_discovery": True}],
+        }
+        with patch("macro_data.factory.build_local_macro_data_service", return_value=fake_service):
+            with redirect_stdout(output):
+                rc = main(["sources-capabilities"])
+
+        self.assertEqual(rc, 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["total"], 1)
+        fake_service.invoke.assert_called_once_with("list_source_capabilities", {})
+
+    def test_catalog_list_command_invokes_service(self) -> None:
+        output = io.StringIO()
+        fake_service = Mock()
+        fake_service.invoke.return_value = {
+            "source_id": "oecd",
+            "total": 1,
+            "entities": [{"entity_id": "DF_CLI"}],
+        }
+        with patch("macro_data.factory.build_local_macro_data_service", return_value=fake_service):
+            with redirect_stdout(output):
+                rc = main(["catalog-list", "--source", "oecd", "--query", "cli", "--limit", "5", "--refresh"])
+
+        self.assertEqual(rc, 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["source_id"], "oecd")
+        fake_service.invoke.assert_called_once_with(
+            "list_catalog_entities",
+            {"source_id": "oecd", "query": "cli", "limit": 5, "refresh": True},
+        )
+
+    def test_catalog_sync_latest_command_invokes_service(self) -> None:
+        output = io.StringIO()
+        fake_service = Mock()
+        fake_service.invoke.return_value = {
+            "source_id": "worldbank",
+            "status": "success",
+            "observations_synced": 12,
+        }
+        with patch("macro_data.factory.build_local_macro_data_service", return_value=fake_service):
+            with redirect_stdout(output):
+                rc = main(["catalog-sync-latest", "--source", "worldbank", "--entity", "SP.POP.TOTL", "--limit", "3"])
+
+        self.assertEqual(rc, 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["status"], "success")
+        fake_service.invoke.assert_called_once_with(
+            "sync_catalog_latest",
+            {"source_id": "worldbank", "entity_ids": ["SP.POP.TOTL"], "limit": 3},
+        )
+
     def test_default_engine_db_path_is_service_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = default_engine_db_path(Path(temp_dir))
