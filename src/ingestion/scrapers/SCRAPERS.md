@@ -1,5 +1,20 @@
 # Scrapers – Data Reference
 
+> **Note:** Scrapers are now organized by data class under per-domain folders.
+> This `scrapers/` directory is a **backward-compatibility facade** — all files
+> here re-export from the canonical locations:
+>
+> | Data class | Canonical path | Scrapers |
+> |---|---|---|
+> | Time-series | `timeseries/scrapers/` | fred, bls, eia, treasury, nyfed, rateprobability, worldbank, bea, census |
+> | News | `news/scrapers/` | reuters, ft, wsj, bloomberg |
+> | Documents | `documents/scrapers/` | gov_report |
+> | Trends | `trends/scrapers/` | reddit, weibo |
+> | Calendar | `calendar/scrapers/` | forexfactory, investing, tradingeconomics |
+>
+> Shared utilities live in `_shared/` (http_transport, url_canon, common types,
+> selector versioning).
+
 Each scraper module targets one financial site and exposes clients for every
 scrapable data section. Transport varies by site: bot-sensitive news scrapers
 use `curl_cffi` (via `create_cf_session`) when browser impersonation helps,
@@ -11,7 +26,7 @@ plus `fetch_all_news()` convenience methods for backfill.
 
 ---
 
-## Shared Data Types (`_common.py`)
+## Shared Data Types (`_shared/common.py`)
 
 | Dataclass | Purpose |
 |-----------|---------|

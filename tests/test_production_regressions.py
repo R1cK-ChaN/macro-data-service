@@ -22,7 +22,7 @@ from ingestion.sdmx.providers.imf import IMFVintageObservation
 def test_news_fetch_entries_raises_when_all_feeds_fail(monkeypatch) -> None:
     client = NewsIngestionClient()
     monkeypatch.setattr(
-        "ingestion.clients._news.get_feeds",
+        "ingestion.news.client.get_feeds",
         lambda category=None: [SimpleNamespace(name="feed-a", url="https://example.com/rss", category="markets")],
     )
     client._session = Mock()
@@ -35,11 +35,11 @@ def test_news_fetch_entries_raises_when_all_feeds_fail(monkeypatch) -> None:
 def test_news_fetch_entries_builds_records_when_feed_succeeds(monkeypatch) -> None:
     client = NewsIngestionClient()
     monkeypatch.setattr(
-        "ingestion.clients._news.get_feeds",
+        "ingestion.news.client.get_feeds",
         lambda category=None: [SimpleNamespace(name="feed-a", url="https://example.com/rss", category="markets")],
     )
     monkeypatch.setattr(
-        "ingestion.clients._news.feedparser.parse",
+        "ingestion.news.client.feedparser.parse",
         lambda text: SimpleNamespace(entries=[{"title": "Headline", "link": "https://example.com/a", "summary": "Desc"}]),
     )
     client._session = Mock()

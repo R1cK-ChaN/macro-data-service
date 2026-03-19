@@ -11,6 +11,8 @@ from typing import Protocol
 
 from ingestion.types import RawSeries
 
+from ingestion.timeseries.fetchers import *  # noqa: F401,F403
+
 
 class Fetcher(Protocol):
     """Minimal interface every fetcher adapter must satisfy."""

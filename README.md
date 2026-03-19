@@ -35,13 +35,38 @@ World Bank                                   release_status
 
 ```text
 src/
-  ingestion/          Scrapers, SDMX clients, fetcher adapters, orchestrator
-    scrapers/         BLS, FRED, EIA, NYFed, Treasury, World Bank, news sources
-    sdmx/providers/   IMF, Eurostat, BIS, ECB, OECD (SDMX protocol)
-    source_capabilities.py  Unified capability registry + discovery/sync adapters
-    release_schedule.py  Date-math resolvers, availability checks, alert logic
-    sources.py        IngestionOrchestrator — scheduling, retry, health
+  ingestion/
+    timeseries/       FRED, BLS, EIA, Treasury, NYFed, WorldBank + SDMX providers
+      scrapers/       Source-specific API clients (fred.py, bls.py, eia.py, ...)
+      fetchers/       RawSeries adapters (Fetcher protocol)
+      clients/        Ingestion clients (FREDIngestionClient, ...)
+      sdmx/           Unified SDMX engine + providers/ (IMF, ECB, BIS, OECD, ...)
+      _config.py      Series configs (MACRO_SERIES, BLS_SERIES, OECD_SERIES, ...)
+    news/             Reuters, FT, WSJ, Bloomberg
+      scrapers/       Article listing scrapers
+      client.py       NewsIngestionClient
+      _config.py      RSS feed registry (140 feeds)
+    documents/        Government reports, Fed communications
+      scrapers/       gov_report.py
+      clients/        GovReportIngestionClient, FedIngestionClient
+      _config.py      FED_FEEDS, FED_SPEAKERS
+    trends/           Reddit, Weibo social trend tracking
+      scrapers/       reddit.py, weibo.py
+      clients/        RedditTrendIngestionClient, WeiboTrendIngestionClient
+    market/           Real-time price feeds
+      clients/        MarketPriceClient
+      _config.py      MACRO_WATCHLIST
+    calendar/         Economic event calendars
+      scrapers/       ForexFactory, Investing, TradingEconomics
+    _shared/          Cross-cutting: http_transport, url_canon, selector versioning
     validation/       Data quality checks, cross-source consistency
+    sources.py        IngestionOrchestrator — scheduling, retry, health
+    source_capabilities.py  Unified capability registry + discovery/sync adapters
+    release_schedule.py     Date-math resolvers, availability checks, alert logic
+    scrapers/         Facade — backward-compatible re-exports
+    clients/          Facade — backward-compatible re-exports
+    fetchers/         Facade — backward-compatible re-exports
+    sdmx/             Facade — backward-compatible re-exports
   storage/            SQLite schema, CRUD, concept map, release tracking
   macro_data/         CLI, HTTP server, service layer, factory
   rag/                Local RAG index and retrieval

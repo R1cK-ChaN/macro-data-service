@@ -1,0 +1,1 @@
+"""Trend scrapers — Reddit, Weibo."""

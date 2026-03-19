@@ -19,31 +19,29 @@ from bs4 import BeautifulSoup
 
 from contracts import format_epoch_iso, normalize_utc_iso, to_epoch_ms
 from env import get_env_value
-from ingestion.news_classify import Deduplicator
-from ingestion.news_extract import extract_news_metadata
-from ingestion.news_feeds import get_feeds
-from ingestion.news_fetcher import ArticleFetcher
-from ingestion.url_canon import canonicalize_url, content_hash
-from ingestion.scrapers import (
-    ForexFactoryCalendarClient,
-    InvestingCalendarClient,
-    TradingEconomicsCalendarClient,
-)
-from ingestion.scrapers.gov_report import GovReportClient, GovReportItem
-from ingestion.sdmx.providers.bis import BISClient
-from ingestion.sdmx.providers.ecb import ECBClient
-from ingestion.scrapers.eia import EIAClient
-from ingestion.sdmx.providers.eurostat import EurostatClient
-from ingestion.scrapers.fred import FredClient
-from ingestion.sdmx.providers.imf import IMFClient
-from ingestion.sdmx._errors import OECDRateLimitError
-from ingestion.sdmx.providers.oecd import OECDClient
-from ingestion.scrapers.reddit import RedditTrendClient, RedditTrendPost
-from ingestion.scrapers.weibo import WeiboTrendClient, WeiboTrendItem
-from ingestion.scrapers.worldbank import WorldBankClient, WorldBankRateLimitError
-from ingestion.scrapers.nyfed import NYFedRatesClient
-from ingestion.scrapers.rateprobability import RateProbabilityClient
-from ingestion.scrapers.treasury_fiscal import TreasuryFiscalClient
+from ingestion.news._classify import Deduplicator
+from ingestion.news._extract import extract_news_metadata
+from ingestion.news._config import get_feeds
+from ingestion.news._fetcher import ArticleFetcher
+from ingestion._shared.url_canon import canonicalize_url, content_hash
+from ingestion.calendar.scrapers.forexfactory import ForexFactoryCalendarClient
+from ingestion.calendar.scrapers.investing import InvestingCalendarClient
+from ingestion.calendar.scrapers.tradingeconomics import TradingEconomicsCalendarClient
+from ingestion.documents.scrapers.gov_report import GovReportClient, GovReportItem
+from ingestion.timeseries.sdmx.providers.bis import BISClient
+from ingestion.timeseries.sdmx.providers.ecb import ECBClient
+from ingestion.timeseries.scrapers.eia import EIAClient
+from ingestion.timeseries.sdmx.providers.eurostat import EurostatClient
+from ingestion.timeseries.scrapers.fred import FredClient
+from ingestion.timeseries.sdmx.providers.imf import IMFClient
+from ingestion.timeseries.sdmx._errors import OECDRateLimitError
+from ingestion.timeseries.sdmx.providers.oecd import OECDClient
+from ingestion.trends.scrapers.reddit import RedditTrendClient, RedditTrendPost
+from ingestion.trends.scrapers.weibo import WeiboTrendClient, WeiboTrendItem
+from ingestion.timeseries.scrapers.worldbank import WorldBankClient, WorldBankRateLimitError
+from ingestion.timeseries.scrapers.nyfed import NYFedRatesClient
+from ingestion.timeseries.scrapers.rateprobability import RateProbabilityClient
+from ingestion.timeseries.scrapers.treasury_fiscal import TreasuryFiscalClient
 
 logger = logging.getLogger(__name__)
 from storage import (
@@ -69,7 +67,7 @@ def _infer_publish_precision(value: str | None) -> str:
         return "exact"
     return "date_only"
 
-from ingestion.series_config import (  # noqa: E402
+from ingestion.timeseries._config import (  # noqa: E402
     BEA_DATASETS,
     BEA_KNOWN_DATASETS,
     BIS_SERIES,
@@ -82,13 +80,10 @@ from ingestion.series_config import (  # noqa: E402
     EIA_KNOWN_ROUTES,
     EIA_SERIES,
     EUROSTAT_SERIES,
-    FED_FEEDS,
-    FED_SPEAKERS,
     ILO_SERIES,
     IMF_SERIES,
     IMF_VINTAGE_SERIES,
     MACRO_SERIES,
-    MACRO_WATCHLIST,
     OECD_SERIES,
     OECDSeriesConfig,
     TREASURY_DATASETS,
@@ -105,6 +100,8 @@ from ingestion.series_config import (  # noqa: E402
     render_oecd_series_configs,
     render_wb_series_configs,
 )
+from ingestion.documents._config import FED_FEEDS, FED_SPEAKERS  # noqa: E402
+from ingestion.market._config import MACRO_WATCHLIST  # noqa: E402
 
 
 def extract_speaker(title: str) -> str:

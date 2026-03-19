@@ -110,7 +110,7 @@ class SelectorVersioningTest(unittest.TestCase):
         """
 
         client = InvestingNewsClient.__new__(InvestingNewsClient)
-        with self.assertLogs("ingestion.scrapers.investing", level="WARNING") as captured:
+        with self.assertLogs("ingestion.calendar.scrapers.investing", level="WARNING") as captured:
             items = client._parse_news_html(html, "stock-market-news")
 
         self.assertEqual(len(items), 2)
@@ -158,7 +158,7 @@ class SelectorVersioningTest(unittest.TestCase):
         first_items = client._parse_news_html(html_v1)
         self.assertEqual(first_items[0].raw_json["selector_version"], "news-block-v1")
 
-        with self.assertLogs("ingestion.scrapers.forexfactory", level="WARNING") as captured:
+        with self.assertLogs("ingestion.calendar.scrapers.forexfactory", level="WARNING") as captured:
             second_items = client._parse_news_html(html_v2)
 
         self.assertEqual(len(second_items), 1)
