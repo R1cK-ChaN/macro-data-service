@@ -7,6 +7,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from env import get_env_value
 
@@ -20,8 +21,23 @@ class MacroDataRequestHandler(BaseHTTPRequestHandler):
     server_version = "AnalystMacroData/0.1"
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path == "/health":
+        parsed = urlparse(self.path)
+        if parsed.path == "/healthz":
             self._write_json(HTTPStatus.OK, {"status": "ok"})
+            return
+        if parsed.path == "/health":
+            include_internal = parse_qs(parsed.query).get("all", ["0"])[0] in {"1", "true", "yes"}
+            service = self.server.service  # type: ignore[attr-defined]
+            try:
+                payload = service.invoke(
+                    "get_source_health_dashboard",
+                    {"include_internal": include_internal},
+                )
+            except Exception as exc:
+                logger.exception("macro-data health request failed")
+                self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"status": "error", "error": str(exc)})
+                return
+            self._write_json(HTTPStatus.OK, payload)
             return
         self._write_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 

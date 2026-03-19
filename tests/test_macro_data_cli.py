@@ -184,7 +184,27 @@ class MacroDataCLITest(unittest.TestCase):
         self.assertEqual(rc, 0)
         payload = json.loads(output.getvalue())
         self.assertEqual(payload["total"], 1)
-        fake_service.invoke.assert_called_once_with("list_source_capabilities", {})
+        fake_service.invoke.assert_called_once_with("list_source_capabilities", {"include_internal": False})
+
+    def test_source_health_command_invokes_service(self) -> None:
+        output = io.StringIO()
+        fake_service = Mock()
+        fake_service.invoke.return_value = {
+            "status": "healthy",
+            "summary": {"healthy": 3, "degraded": 0, "other": 0, "visible_sources": 3},
+            "sources": [],
+        }
+        with patch("macro_data.factory.build_local_macro_data_service", return_value=fake_service):
+            with redirect_stdout(output):
+                rc = main(["source-health"])
+
+        self.assertEqual(rc, 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["status"], "healthy")
+        fake_service.invoke.assert_called_once_with(
+            "get_source_health_dashboard",
+            {"include_internal": False},
+        )
 
     def test_catalog_list_command_invokes_service(self) -> None:
         output = io.StringIO()

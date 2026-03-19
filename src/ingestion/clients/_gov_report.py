@@ -20,6 +20,8 @@ from storage import (
 
 logger = logging.getLogger(__name__)
 
+_MIN_GOV_REPORT_CONTENT_CHARS = 100
+
 
 def _infer_publish_precision(value: str | None) -> str:
     if not value:
@@ -89,6 +91,11 @@ class GovReportIngestionClient:
         now_epoch_ms = int(now_dt.timestamp() * 1000)
         for item in items:
             try:
+                content = (item.content_markdown or "").strip()
+                if len(content) < _MIN_GOV_REPORT_CONTENT_CHARS:
+                    failures.append(f"{item.source_id}: stale_or_short_content")
+                    logger.info("Gov report dropped for incomplete content: %s", item.source_id)
+                    continue
                 canonical = canonicalize_url(item.url)
                 url_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
                 published_precision = item.published_precision or _infer_publish_precision(item.published_at)
@@ -143,15 +150,15 @@ class GovReportIngestionClient:
                     )
                     store.upsert_document(doc)
 
-                    if item.content_markdown:
+                    if content:
                         blob = DocumentBlobRecord(
                             document_blob_id=f"{doc_id}_md",
                             document_id=doc_id,
                             blob_role="markdown",
                             storage_path="",
-                            content_text=item.content_markdown,
+                            content_text=content,
                             content_bytes=None,
-                            byte_size=len(item.content_markdown.encode("utf-8")),
+                            byte_size=len(content.encode("utf-8")),
                             encoding="utf-8",
                             parser_name="markdownify",
                             parser_version="",
@@ -182,11 +189,11 @@ class GovReportIngestionClient:
                     url=item.url,
                     timestamp=ts,
                     description=item.description,
-                    content_markdown=item.content_markdown,
+                    content_markdown=content,
                     impact_level=item.importance or "medium",
                     finance_category=item.data_category,
                     confidence=0.8,
-                    content_fetched=bool(item.content_markdown),
+                    content_fetched=bool(content),
                     institution=item.institution,
                     country=item.country,
                     document_type="government_report",

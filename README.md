@@ -101,6 +101,8 @@ macro-data-service health                             # per-source status table
 macro-data-service health --indicator CPI_US          # single concept
 macro-data-service health --alerts                    # active alerts only
 macro-data-service health --json                      # JSON output
+macro-data-service source-health                      # customer-facing source matrix
+macro-data-service source-health --all               # include internal/coming-soon sources
 ```
 
 Output:
@@ -159,10 +161,15 @@ Operational notes:
 - Capability `structure` output may be a live provider structure summary or a config-backed summary, depending on the source mode.
 - Capability latest-sync is best-effort and now surfaces upstream HTTP/timeouts instead of silently returning false-green zero results.
 - Some scaffolded sources can validly return zero discovered entities when the upstream provider or local configured series set is empty.
+- Customer-facing health surfaces hide `ILO` and `UNSD` until they return non-empty entity catalogs.
+- `news` disables known bad feeds and drops low-content articles.
+- `gov_reports` drops incomplete/timed-out report bodies instead of storing partial content.
+- `eia` now prefers live EIA data, then recent local cache, then selected FRED fallback series for a small set of critical energy series.
 
 ## HTTP API
 
-- `GET /health`
+- `GET /health`      customer-facing source health matrix
+- `GET /healthz`     lightweight liveness probe
 - `POST /v1/ops/<operation>`
 
 Key operations:
@@ -176,6 +183,7 @@ Key operations:
 | `get_health` | Per-source health dashboard |
 | `get_alerts` | Active alerts (DELAY, FAILED, MISMATCH) |
 | `list_source_capabilities` | Capability registry for all known sources |
+| `get_source_health_dashboard` | Customer-facing per-source health summary |
 | `sync_catalog_discovery` | Persist discovered provider entities for a source |
 | `list_catalog_entities` | List stored catalog entities for a source |
 | `get_catalog_structure` | Source-specific structure/config summary for an entity |

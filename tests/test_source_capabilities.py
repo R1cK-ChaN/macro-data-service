@@ -151,3 +151,32 @@ def test_sync_latest_records_checkpoint_and_run() -> None:
     runs = store.list_catalog_sync_runs(source_id="alpha", job_type="latest_sync", limit=5)
     assert len(runs) == 1
     assert runs[0]["status"] == "success"
+
+
+def test_customer_visible_capabilities_filter_hides_internal_sources() -> None:
+    store = _make_store()
+    manager = SourceCapabilityManager(
+        store,
+        adapters={
+            "alpha": SourceCapabilityAdapter(
+                source_id="alpha",
+                display_name="Alpha Source",
+                source_type="catalog-crawlable",
+                entity_type="dataset",
+                description="alpha description",
+            ),
+            "ilo": SourceCapabilityAdapter(
+                source_id="ilo",
+                display_name="ILO",
+                source_type="catalog-crawlable",
+                entity_type="dataflow",
+                description="ilo description",
+            ),
+        },
+    )
+
+    visible = manager.list_capabilities(include_internal=False)
+    internal = manager.list_capabilities(include_internal=True)
+
+    assert [item["source_id"] for item in visible] == ["alpha"]
+    assert {item["source_id"] for item in internal} == {"alpha", "ilo"}

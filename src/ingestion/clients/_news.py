@@ -21,6 +21,7 @@ from ._trends import PreparedNewsRecord, RawNewsEntry
 from storage import NewsArticleRecord, SQLiteEngineStore
 
 logger = logging.getLogger(__name__)
+_MIN_ARTICLE_CONTENT_CHARS = 100
 
 
 class RefreshStats:
@@ -192,6 +193,9 @@ class NewsIngestionClient:
         for entry in entries:
             try:
                 article = self._article_fetcher.fetch_article(entry.raw_url, entry.description)
+                if len((article.content or "").strip()) < _MIN_ARTICLE_CONTENT_CHARS:
+                    logger.info("news article dropped for low content: %s", entry.raw_url)
+                    continue
                 extraction = extract_news_metadata(
                     title=entry.raw_title,
                     description=entry.description,

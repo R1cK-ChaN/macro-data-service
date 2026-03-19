@@ -54,7 +54,12 @@ def build_parser() -> argparse.ArgumentParser:
     refresh_source.add_argument("--db-path", default=None)
 
     capabilities = subparsers.add_parser("sources-capabilities")
+    capabilities.add_argument("--all", action="store_true", dest="include_internal")
     capabilities.add_argument("--db-path", default=None)
+
+    source_health = subparsers.add_parser("source-health")
+    source_health.add_argument("--all", action="store_true", dest="include_internal")
+    source_health.add_argument("--db-path", default=None)
 
     catalog_list = subparsers.add_parser("catalog-list")
     catalog_list.add_argument("--source", required=True)
@@ -82,6 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     catalog_status = subparsers.add_parser("catalog-status")
     catalog_status.add_argument("--source", default=None)
+    catalog_status.add_argument("--all", action="store_true", dest="include_internal")
     catalog_status.add_argument("--db-path", default=None)
 
     oecd_dataflows = subparsers.add_parser("oecd-dataflows")
@@ -660,7 +666,17 @@ def main(argv: list[str] | None = None) -> int:
     service = build_local_macro_data_service(db_path=Path(args.db_path) if hasattr(args, "db_path") and args.db_path else None)
 
     if args.command == "sources-capabilities":
-        return _run_service_json(service, "list_source_capabilities", {})
+        return _run_service_json(
+            service,
+            "list_source_capabilities",
+            {"include_internal": args.include_internal},
+        )
+    if args.command == "source-health":
+        return _run_service_json(
+            service,
+            "get_source_health_dashboard",
+            {"include_internal": args.include_internal},
+        )
     if args.command == "catalog-list":
         return _run_service_json(
             service,
@@ -694,7 +710,7 @@ def main(argv: list[str] | None = None) -> int:
         return _run_service_json(
             service,
             "get_catalog_status",
-            {"source_id": args.source},
+            {"source_id": args.source, "include_internal": args.include_internal},
         )
     if args.command == "refresh":
         print(json.dumps(service.invoke("refresh_all_sources", {}), ensure_ascii=False, sort_keys=True))

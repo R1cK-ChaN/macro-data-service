@@ -100,11 +100,17 @@ class LocalMacroDataService:
             }
 
     def _op_list_source_capabilities(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        del arguments
+        include_internal = bool(arguments.get("include_internal", False))
         if self._ingestion is None:
             return {"error": "capabilities unavailable", "sources": []}
-        items = self._ingestion.list_source_capabilities()
+        items = self._ingestion.list_source_capabilities(include_internal=include_internal)
         return {"total": len(items), "sources": items}
+
+    def _op_get_source_health_dashboard(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self._ingestion is None:
+            return {"error": "source health unavailable", "sources": []}
+        include_internal = bool(arguments.get("include_internal", False))
+        return self._ingestion.get_source_health_dashboard(include_internal=include_internal)
 
     def _op_sync_catalog_discovery(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if self._ingestion is None:
@@ -168,7 +174,8 @@ class LocalMacroDataService:
         if self._ingestion is None:
             return {"error": "catalog status unavailable", "sources": []}
         source_id = (arguments.get("source_id") or arguments.get("source") or "").strip() or None
-        return self._ingestion.get_catalog_status(source_id)
+        include_internal = bool(arguments.get("include_internal", False))
+        return self._ingestion.get_catalog_status(source_id, include_internal=include_internal)
 
     def _op_refresh_indicator(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if self._ingestion is None:

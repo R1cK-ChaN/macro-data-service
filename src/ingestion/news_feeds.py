@@ -213,12 +213,19 @@ RSS_FEEDS: list[FeedInfo] = [
     FeedInfo("FAO Food Prices", "https://www.fao.org/news/rss-feed/en/", "esg"),
 ]
 
+DISABLED_FEED_NAMES: set[str] = {
+    "IMF News",
+    "AEI",
+    "IEA News",
+    "FAO Food Prices",
+}
 
 FEED_CATEGORIES: list[str] = sorted({feed.category for feed in RSS_FEEDS})
 
 
-def get_feeds(category: str | None = None) -> list[FeedInfo]:
+def get_feeds(category: str | None = None, *, include_disabled: bool = False) -> list[FeedInfo]:
     """Return feeds, optionally filtered by category."""
-    if category is None:
-        return list(RSS_FEEDS)
-    return [feed for feed in RSS_FEEDS if feed.category == category]
+    feeds = list(RSS_FEEDS) if category is None else [feed for feed in RSS_FEEDS if feed.category == category]
+    if include_disabled:
+        return feeds
+    return [feed for feed in feeds if feed.name not in DISABLED_FEED_NAMES]

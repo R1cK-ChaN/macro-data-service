@@ -707,9 +707,15 @@ class IngestionOrchestrator:
         return self._deduplicate_by_key(items, lambda item: canonicalize_url(item.url))
 
     def _build_eia_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._eia import EIAFetcher
-        return self._build_fetcher_source(
-            "eia", EIAFetcher(client=self.eia.client),
+        return IngestionSourceDefinition(
+            name="eia",
+            interval_seconds=86_400,
+            prepare=self._ensure_obs_seed,
+            execute=lambda: self.eia.refresh_subset(
+                self.store,
+                series_configs=EIA_SERIES,
+                family_lookup=self._family_lookup or None,
+            ).count,
         )
 
     def _build_treasury_fiscal_source(self) -> IngestionSourceDefinition:
@@ -1019,9 +1025,9 @@ class IngestionOrchestrator:
             results.update(self.run_source(source).to_counts())
         return results
 
-    def list_source_capabilities(self) -> list[dict[str, Any]]:
+    def list_source_capabilities(self, *, include_internal: bool = True) -> list[dict[str, Any]]:
         self._ensure_capability_manager()
-        return self._capability_manager.list_capabilities()
+        return self._capability_manager.list_capabilities(include_internal=include_internal)
 
     def sync_catalog_discovery(
         self,
@@ -1075,9 +1081,13 @@ class IngestionOrchestrator:
             limit=limit,
         )
 
-    def get_catalog_status(self, source_id: str | None = None) -> dict[str, Any]:
+    def get_catalog_status(self, source_id: str | None = None, *, include_internal: bool = True) -> dict[str, Any]:
         self._ensure_capability_manager()
-        return self._capability_manager.get_status(source_id)
+        return self._capability_manager.get_status(source_id, include_internal=include_internal)
+
+    def get_source_health_dashboard(self, *, include_internal: bool = False) -> dict[str, Any]:
+        self._ensure_capability_manager()
+        return self._capability_manager.get_customer_health(include_internal=include_internal)
 
     def run_schedule(self, *, poll_interval_seconds: int = 60) -> None:
         jobs = {

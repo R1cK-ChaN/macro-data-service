@@ -99,9 +99,15 @@ class SourceCapabilityManager:
         for adapter in self._adapters.values():
             self._store.upsert_source_capability(adapter.capability_payload())
 
-    def list_capabilities(self) -> list[dict[str, Any]]:
+    def _is_customer_visible(self, source_id: str) -> bool:
+        return source_id not in {"ilo", "unsd"}
+
+    def list_capabilities(self, *, include_internal: bool = True) -> list[dict[str, Any]]:
         self.seed_registry()
-        return self._store.list_source_capabilities()
+        items = self._store.list_source_capabilities()
+        if include_internal:
+            return items
+        return [item for item in items if self._is_customer_visible(item["source_id"])]
 
     def sync_discovery(
         self,
@@ -293,9 +299,9 @@ class SourceCapabilityManager:
                 "duration_ms": duration_ms,
             }
 
-    def get_status(self, source_id: str | None = None) -> dict[str, Any]:
+    def get_status(self, source_id: str | None = None, *, include_internal: bool = True) -> dict[str, Any]:
         capabilities = (
-            [self._store.get_source_capability(source_id)] if source_id else self._store.list_source_capabilities()
+            [self._store.get_source_capability(source_id)] if source_id else self.list_capabilities(include_internal=include_internal)
         )
         items: list[dict[str, Any]] = []
         for capability in capabilities:
@@ -310,6 +316,96 @@ class SourceCapabilityManager:
             })
         return {"total": len(items), "sources": items}
 
+    def get_customer_health(self, *, include_internal: bool = False) -> dict[str, Any]:
+        capabilities = self.list_capabilities(include_internal=include_internal)
+        items: list[dict[str, Any]] = []
+        healthy = 0
+        degraded = 0
+        empty = 0
+
+        for capability in capabilities:
+            sid = capability["source_id"]
+            if not include_internal and not self._is_customer_visible(sid):
+                continue
+            checkpoint = self._store.get_catalog_sync_checkpoint(sid, "latest_sync")
+            runs = self._store.list_catalog_sync_runs(source_id=sid, job_type="latest_sync", limit=1)
+            latest_run = runs[0] if runs else None
+            storage = self._store.get_source_storage_stats(sid)
+            last_success_at = ""
+            last_error = ""
+            latest_status = "not_supported"
+            observations_last_run = 0
+
+            if checkpoint is not None:
+                last_success_at = checkpoint.get("last_success_at", "")
+                last_error = checkpoint.get("last_error", "")
+            if latest_run is not None:
+                latest_status = latest_run.get("status", "unknown")
+                observations_last_run = int(latest_run.get("observations_synced", 0))
+                if latest_run.get("error"):
+                    last_error = latest_run["error"]
+                if latest_run.get("finished_at") and not last_success_at and latest_status == "success":
+                    last_success_at = latest_run["finished_at"]
+
+            if not capability["supports_latest_sync"]:
+                status = "coming_soon" if not self._is_customer_visible(sid) else "discovery_only"
+            elif storage["count"] > 0 and not last_error:
+                status = "healthy"
+            elif storage["count"] > 0 and last_error:
+                status = "degraded"
+            elif latest_status == "error":
+                status = "degraded"
+            else:
+                status = "empty"
+
+            if status == "healthy":
+                healthy += 1
+            elif status == "degraded":
+                degraded += 1
+            else:
+                empty += 1
+
+            item = {
+                "source_id": sid,
+                "display_name": capability["display_name"],
+                "mode": capability["source_type"],
+                "entity_type": capability["entity_type"],
+                "status": status,
+                "is_default_scheduled": capability["is_default_scheduled"],
+                "supports_discovery": capability["supports_discovery"],
+                "supports_structure": capability["supports_structure"],
+                "supports_latest_sync": capability["supports_latest_sync"],
+                "record_count": storage["count"],
+                "storage_table": storage["table"],
+                "latest_storage_at": storage["latest_ts"],
+                "last_success_at": last_success_at,
+                "last_error": last_error,
+                "latest_run_status": latest_status,
+                "observations_last_run": observations_last_run,
+                "entity_count": self._store.count_catalog_entities(sid),
+                "notes": capability.get("notes", ""),
+            }
+            if sid == "eia" and status != "healthy":
+                item["note"] = "Upstream EIA endpoints are timing out; cache/fallback path should be used."
+            if sid == "news":
+                item["note"] = "Bad feeds are disabled or skipped; quality gates apply to low-content articles."
+            if sid == "gov_reports":
+                item["note"] = "Incomplete or timed-out reports are dropped instead of stored partially."
+            items.append(item)
+
+        items.sort(key=lambda item: item["source_id"])
+        overall = "healthy" if degraded == 0 else ("degraded" if healthy > 0 else "unhealthy")
+        return {
+            "status": overall,
+            "summary": {
+                "healthy": healthy,
+                "degraded": degraded,
+                "other": empty,
+                "visible_sources": len(items),
+            },
+            "sources": items,
+        }
+
     def _require_adapter(self, source_id: str) -> SourceCapabilityAdapter:
         adapter = self._adapters.get(source_id)
         if adapter is None:
@@ -318,7 +414,6 @@ class SourceCapabilityManager:
 
     def _build_default_adapters(self, orchestrator: Any | None) -> dict[str, SourceCapabilityAdapter]:
         from ingestion.clients._ilo_unsd import ILOIngestionClient, UNSDIngestionClient
-        from ingestion.fetchers._eia import EIAFetcher
         from ingestion.scrapers.bea import BEAClient
         from ingestion.scrapers.census import CensusClient
         from ingestion.scrapers.gov_report import _CN_SOURCES, _EU_SOURCES, _JP_SOURCES, _US_SOURCES
@@ -774,42 +869,27 @@ class SourceCapabilityManager:
         def _eia_sync_latest(entity_ids: list[str] | None, limit: int | None) -> CapabilitySyncResult:
             if orchestrator is None:
                 raise RuntimeError("orchestrator unavailable for eia sync")
-            candidate_items: list[tuple[str, dict[str, Any]]] = []
+            subset: dict[str, dict[str, Any]] = {}
             for key, cfg in EIA_SERIES.items():
                 route = cfg["route"]
                 series_id = cfg["series_id"]
                 if entity_ids:
                     if route not in entity_ids and series_id not in entity_ids and not any(route.startswith(item) for item in entity_ids):
                         continue
-                candidate_items.append((key, cfg))
-            if not candidate_items:
-                candidate_items = list(EIA_SERIES.items())
-            if limit is not None and not entity_ids:
-                candidate_items = candidate_items[: max(limit, 1)]
-
-            stored = 0
-            attempted: list[str] = []
-            fallback_used = False
-            for idx, (key, cfg) in enumerate(candidate_items):
-                fetcher = EIAFetcher(client=orchestrator.eia.client, series_config={key: cfg})
-                raw = fetcher.fetch()
-                if not raw:
-                    attempted.append(cfg["series_id"])
-                    continue
-                records = orchestrator._raw_series_to_records(raw)
-                deduped = orchestrator._deduplicate_observations(records)
-                stored = orchestrator._store_indicator_observations(deduped)
-                attempted.append(cfg["series_id"])
-                if stored > 0:
-                    fallback_used = idx > 0
-                    break
-            if stored == 0:
-                raise RuntimeError(f"EIA latest sync stored 0 observations after trying {attempted}")
+                subset[key] = cfg
+            if not subset:
+                subset = dict(list(EIA_SERIES.items())[: max(limit or 1, 1)])
+            elif limit is not None and not entity_ids:
+                subset = dict(list(subset.items())[: max(limit, 1)])
+            stats = orchestrator.eia.refresh_subset(
+                orchestrator.store,
+                series_configs=subset,
+                family_lookup=orchestrator._family_lookup or None,
+            )
             return CapabilitySyncResult(
                 entities_total=1,
                 entities_synced=1,
-                observations_synced=stored,
-                metadata={"attempted_series": attempted, "fallback_used": fallback_used},
+                observations_synced=stats.count,
             )
 
         def _treasury_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:

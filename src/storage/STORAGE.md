@@ -411,6 +411,7 @@ Stores the discovered or enumerated entity surface for a source:
 | `list_catalog_entities(source_id, ...)` / `count_catalog_entities(source_id)` | Query stored entities |
 | `upsert_catalog_sync_checkpoint(payload)` / `get_catalog_sync_checkpoint()` | Persist checkpoint/status |
 | `insert_catalog_sync_run(payload)` / `update_catalog_sync_run()` / `list_catalog_sync_runs()` | Track sync run history |
+| `get_source_storage_stats(source_id)` | Aggregate customer-facing source record count + latest ingest timestamp |
 
 These tables are intentionally separate from `concept_map` and `indicators`:
 capability/catalog state describes what a source *can* expose, while

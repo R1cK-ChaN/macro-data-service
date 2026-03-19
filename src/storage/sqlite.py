@@ -5941,6 +5941,50 @@ class SQLiteEngineStore:
                 "latest_value": latest["value"] if latest else None,
             }
 
+    def get_source_storage_stats(self, source_id: str) -> dict[str, Any]:
+        mapping = {
+            "fred": ("indicators", "source = ?", ("fred",), "scraped_at"),
+            "bls": ("indicators", "source = ?", ("bls",), "scraped_at"),
+            "eia": ("indicators", "source = ?", ("eia",), "scraped_at"),
+            "treasury_fiscal": ("indicators", "source = ?", ("treasury_fiscal",), "scraped_at"),
+            "imf": ("indicators", "source = ?", ("imf",), "scraped_at"),
+            "eurostat": ("indicators", "source = ?", ("eurostat",), "scraped_at"),
+            "bis": ("indicators", "source = ?", ("bis",), "scraped_at"),
+            "ecb": ("indicators", "source = ?", ("ecb",), "scraped_at"),
+            "oecd": ("indicators", "source = ?", ("oecd",), "scraped_at"),
+            "worldbank": ("indicators", "source = ?", ("worldbank",), "scraped_at"),
+            "nyfed_rates": ("indicators", "source = ?", ("nyfed",), "scraped_at"),
+            "rate_probability": ("indicators", "source = ?", ("rateprobability",), "scraped_at"),
+            "census": ("indicators", "source = ?", ("census",), "scraped_at"),
+            "ilo": ("indicators", "source = ?", ("ilo",), "scraped_at"),
+            "unsd": ("indicators", "source = ?", ("unsd",), "scraped_at"),
+            "fred_vintages": ("indicator_vintages", "source = ?", ("fred",), "scraped_at"),
+            "imf_vintages": ("indicator_vintages", "source = ?", ("imf",), "scraped_at"),
+            "market": ("market_prices", "1 = 1", tuple(), "scraped_at"),
+            "fed": ("central_bank_comms", "source = ?", ("fed",), "scraped_at"),
+            "calendar": ("calendar_events", "1 = 1", tuple(), "scraped_at"),
+            "news": ("news_articles", "source_feed NOT LIKE 'gov_%'", tuple(), "scraped_at"),
+            "gov_reports": ("document", "1 = 1", tuple(), "updated_at"),
+            "reddit_trends": ("trend_topics", "provider = ?", ("reddit",), "scraped_at"),
+            "weibo_trends": ("trend_topics", "provider = ?", ("weibo",), "scraped_at"),
+        }
+        table, where_clause, params, ts_col = mapping.get(
+            source_id,
+            ("catalog_entity", "source_id = ?", (source_id,), "updated_at"),
+        )
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                f"""
+                SELECT COUNT(*) AS cnt, MAX({ts_col}) AS latest_ts
+                FROM {table}
+                WHERE {where_clause}
+                """,
+                params,
+            ).fetchone()
+        count = int(row["cnt"]) if row is not None and row["cnt"] is not None else 0
+        latest_ts = row["latest_ts"] if row is not None else ""
+        return {"table": table, "count": count, "latest_ts": latest_ts or ""}
+
     def get_concept_stats(self, concept_id: str) -> list[dict[str, Any]]:
         """Return per-source stats for all series in a concept."""
         mappings = self.get_concept_series(concept_id)
