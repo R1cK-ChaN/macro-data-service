@@ -368,6 +368,56 @@ Resolution is done in Python — at most 3-4 sources per concept and limited dat
 
 ---
 
+## Source Capability Catalog
+
+Tracks the provider/source capability layer introduced for catalog discovery,
+entity persistence, and latest-sync observability.
+
+### Tables
+
+| Table | Purpose |
+|-------|---------|
+| `source_capability` | One row per source capability adapter: mode, entity type, and support flags |
+| `catalog_entity` | Discovered provider entities or fixed-scope supported entities |
+| `catalog_sync_checkpoint` | Per-source checkpoint/status for `discovery` and `latest_sync` jobs |
+| `catalog_sync_run` | Historical sync run log with counts, duration, and error metadata |
+
+### source_capability
+
+Key columns:
+
+- `source_id`: stable source key such as `oecd`, `worldbank`, `news`, `eia`
+- `source_type`: `catalog-crawlable`, `discovery-rich`, or `fixed-scope-complete`
+- `entity_type`: `dataflow`, `dataset`, `feed`, `route`, `symbol`, etc.
+- `supports_discovery`, `supports_structure`, `supports_latest_sync`, `supports_backfill`
+- `is_default_scheduled`: whether the source is in the default orchestrator refresh order
+
+### catalog_entity
+
+Stores the discovered or enumerated entity surface for a source:
+
+- `entity_id`: provider key such as a dataflow id, dataset id, route, or feed key
+- `display_name`: human-readable label
+- `description`: short source/provider description
+- `metadata_json`: provider-specific overflow metadata (agency/version/params/url/etc.)
+
+### catalog sync methods
+
+| Method | Description |
+|--------|-------------|
+| `upsert_source_capability(payload)` | Insert/update a source capability row |
+| `list_source_capabilities()` / `get_source_capability()` | Query capability registry |
+| `upsert_catalog_entity(payload)` | Insert/update a discovered entity |
+| `list_catalog_entities(source_id, ...)` / `count_catalog_entities(source_id)` | Query stored entities |
+| `upsert_catalog_sync_checkpoint(payload)` / `get_catalog_sync_checkpoint()` | Persist checkpoint/status |
+| `insert_catalog_sync_run(payload)` / `update_catalog_sync_run()` / `list_catalog_sync_runs()` | Track sync run history |
+
+These tables are intentionally separate from `concept_map` and `indicators`:
+capability/catalog state describes what a source *can* expose, while
+`concept_map` and `indicators` remain the curated resolution layer.
+
+---
+
 ## Other Tables
 
 | Table | Purpose |
@@ -388,6 +438,10 @@ Resolution is done in Python — at most 3-4 sources per concept and limited dat
 | `trade_signals` | Trading signals with rationale |
 | `decision_log` | Decision tracking |
 | `position_state` | Current portfolio positions |
+| `source_capability` | Capability registry for catalog/discovery/source-mode metadata |
+| `catalog_entity` | Persisted catalog entities or fixed-scope source entities |
+| `catalog_sync_checkpoint` | Latest discovery/latest-sync checkpoint state |
+| `catalog_sync_run` | Historical discovery/latest-sync run log |
 | `performance_records` | Trading performance metrics |
 | `trading_artifacts` | Trading strategy documents |
 | `client_profiles` | User profiles (20+ dimensions) |

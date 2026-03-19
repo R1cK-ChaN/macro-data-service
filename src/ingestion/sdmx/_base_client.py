@@ -232,9 +232,12 @@ class SDMXClient:
         **kwargs: Any,
     ) -> SDMXDataStructure:
         """Fetch the DSD for a dataflow with ``references=all``."""
-        flows = self.list_dataflows()
-        match = next((f for f in flows if f.id == dataflow_id), None)
-        df_version = (match.version if match else version) or self.config.default_version
+        if version:
+            df_version = version
+        else:
+            flows = self.list_dataflows()
+            match = next((f for f in flows if f.id == dataflow_id), None)
+            df_version = (match.version if match else version) or self.config.default_version
 
         cache_key = f"{dataflow_id}/{df_version}"
         if cache_key in self._structure_cache:

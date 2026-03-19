@@ -1,6 +1,6 @@
 # Macro Data Service
 
-Institutional-grade macro-data ingestion, resolution, and observability platform. Ingests 86 economic concepts from 11 sources with release-calendar-aware scheduling, availability verification, and cross-source fallback.
+Institutional-grade macro-data ingestion, resolution, and observability platform. Ingests 86 economic concepts from 11 core sources, supports a 25-source capability registry, and includes release-calendar-aware scheduling, availability verification, and cross-source fallback.
 
 ## Architecture
 
@@ -23,6 +23,12 @@ World Bank                                   release_status
                      │  freshness + retries │  FAILED           │
                      │  provenance          │  MISMATCH         │
                      └─────────────────────────────────────────┘
+                     ┌─────────────────────────────────────────┐
+                     │ Source Capability Layer                 │
+                     │  catalog-crawlable / discovery-rich     │
+                     │  fixed-scope-complete                   │
+                     │  discovery / latest-sync / status       │
+                     └─────────────────────────────────────────┘
 ```
 
 ## Layout
@@ -32,6 +38,7 @@ src/
   ingestion/          Scrapers, SDMX clients, fetcher adapters, orchestrator
     scrapers/         BLS, FRED, EIA, NYFed, Treasury, World Bank, news sources
     sdmx/providers/   IMF, Eurostat, BIS, ECB, OECD (SDMX protocol)
+    source_capabilities.py  Unified capability registry + discovery/sync adapters
     release_schedule.py  Date-math resolvers, availability checks, alert logic
     sources.py        IngestionOrchestrator — scheduling, retry, health
     validation/       Data quality checks, cross-source consistency
@@ -130,6 +137,29 @@ macro-data-service wb-sources
 macro-data-service wb-indicators --query gdp
 ```
 
+### Source capabilities and catalog sync
+
+```bash
+macro-data-service sources-capabilities
+macro-data-service catalog-list --source oecd --refresh --limit 10
+macro-data-service catalog-structure --source ecb --entity ECB_EA_DEPOSIT_RATE
+macro-data-service catalog-sync-discovery --source worldbank --limit 10
+macro-data-service catalog-sync-latest --source worldbank --entity SP.POP.TOTL --limit 1
+macro-data-service catalog-status --source worldbank
+```
+
+Source modes:
+
+- `catalog-crawlable` — source supports discovery plus catalog-based latest sync
+- `discovery-rich` — source exposes discovery/structure metadata, but latest sync still maps to curated or configured paths
+- `fixed-scope-complete` — source has a complete supported-entity surface, but no meaningful upstream full-catalog crawl
+
+Operational notes:
+
+- Capability `structure` output may be a live provider structure summary or a config-backed summary, depending on the source mode.
+- Capability latest-sync is best-effort and now surfaces upstream HTTP/timeouts instead of silently returning false-green zero results.
+- Some scaffolded sources can validly return zero discovered entities when the upstream provider or local configured series set is empty.
+
 ## HTTP API
 
 - `GET /health`
@@ -145,6 +175,12 @@ Key operations:
 | `get_release_status` | Availability tracking status |
 | `get_health` | Per-source health dashboard |
 | `get_alerts` | Active alerts (DELAY, FAILED, MISMATCH) |
+| `list_source_capabilities` | Capability registry for all known sources |
+| `sync_catalog_discovery` | Persist discovered provider entities for a source |
+| `list_catalog_entities` | List stored catalog entities for a source |
+| `get_catalog_structure` | Source-specific structure/config summary for an entity |
+| `sync_catalog_latest` | Run source-level latest sync through the capability layer |
+| `get_catalog_status` | Checkpoints and recent runs for capability jobs |
 | `refresh_indicator` | Trigger ingestion for a single concept |
 | `validate_concept` | Run validation checks on a concept |
 | `get_indicator_ontology` | Structural metadata for an indicator |
@@ -169,6 +205,16 @@ Key operations:
 │  documents      │                           │  CONFIRMED      │
 │  market_prices  │                           │  STALE / FAILED │
 └─────────────────┘                           └────────────────┘
+
+┌─────────────────────┐    ┌──────────────────────┐
+│ source_capability   │───▶│ catalog_entity       │
+│ source mode + flags │    │ discovered entities  │
+└─────────────────────┘    └──────────┬───────────┘
+                                      │
+                         ┌────────────▼────────────┐
+                         │ catalog_sync_checkpoint │
+                         │ catalog_sync_run        │
+                         └─────────────────────────┘
 ```
 
 ## Local run
@@ -198,4 +244,5 @@ python -m pytest tests/ -v                            # all tests
 python -m pytest tests/test_release_schedule.py -v    # schedule + alerts (58 tests)
 python -m pytest tests/test_macro_data_cli.py -v      # CLI smoke tests
 python -m pytest tests/test_fetcher_adapters.py -v    # fetcher adapter tests
+python -m pytest tests/test_source_capabilities.py -v # capability registry + catalog ops
 ```

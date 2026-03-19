@@ -318,6 +318,7 @@ class SourceCapabilityManager:
 
     def _build_default_adapters(self, orchestrator: Any | None) -> dict[str, SourceCapabilityAdapter]:
         from ingestion.clients._ilo_unsd import ILOIngestionClient, UNSDIngestionClient
+        from ingestion.fetchers._eia import EIAFetcher
         from ingestion.scrapers.bea import BEAClient
         from ingestion.scrapers.census import CensusClient
         from ingestion.scrapers.gov_report import _CN_SOURCES, _EU_SOURCES, _JP_SOURCES, _US_SOURCES
@@ -327,11 +328,15 @@ class SourceCapabilityManager:
             CENSUS_DATASETS,
             EIA_SERIES,
             FED_FEEDS,
+            ILO_SERIES,
             IMF_VINTAGE_SERIES,
             MACRO_SERIES,
             MACRO_WATCHLIST,
             TREASURY_DATASETS,
+            UNSD_SERIES,
             VINTAGE_SERIES,
+            ECB_SERIES,
+            EUROSTAT_SERIES,
         )
         from ingestion.news_feeds import get_feeds
         from ingestion.scrapers.eia import EIAClient
@@ -384,6 +389,35 @@ class SourceCapabilityManager:
                 for feed in get_feeds()
             ]
             return _limit_items(entities, query, limit)
+
+        def _news_sync_latest(entity_ids: list[str] | None, limit: int | None) -> CapabilitySyncResult:
+            if orchestrator is None:
+                raise RuntimeError("orchestrator unavailable for news sync")
+            all_entries = orchestrator.news.fetch_entries(category=None)
+            candidate_entries = all_entries
+            if entity_ids:
+                allowed = set(entity_ids)
+                candidate_entries = [entry for entry in all_entries if entry.source_feed in allowed]
+            if limit is not None and not entity_ids:
+                candidate_entries = candidate_entries[: max(limit, 1)]
+
+            def _store(entries: list[Any]) -> int:
+                normalized = orchestrator.news.normalize_entries(entries)
+                valid = orchestrator.news.validate_entries(normalized)
+                deduplicated = orchestrator.news.deduplicate_entries(orchestrator.store, valid)
+                return orchestrator.news.store_articles(orchestrator.store, deduplicated)
+
+            stored = _store(candidate_entries)
+            fallback_used = False
+            if stored == 0 and entity_ids:
+                stored = _store(all_entries)
+                fallback_used = stored > 0
+            return CapabilitySyncResult(
+                entities_total=len(entity_ids) if entity_ids else len({entry.source_feed for entry in candidate_entries}),
+                entities_synced=len(entity_ids) if entity_ids else len({entry.source_feed for entry in candidate_entries}),
+                observations_synced=stored,
+                metadata={"fallback_used": fallback_used},
+            )
 
         def _market_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
             entities: list[dict[str, Any]] = []
@@ -451,6 +485,24 @@ class SourceCapabilityManager:
                     ))
             return _limit_items(entities, query, limit)
 
+        def _gov_report_sync_latest(entity_ids: list[str] | None, limit: int | None) -> CapabilitySyncResult:
+            if orchestrator is None:
+                raise RuntimeError("orchestrator unavailable for gov report sync")
+            items = orchestrator.gov_report.fetch_items()
+            if entity_ids:
+                allowed = set(entity_ids)
+                items = [item for item in items if item.source_id in allowed]
+            if limit is not None:
+                items = items[: max(limit, 1)]
+            valid = orchestrator._validate_gov_report_items(items)
+            deduplicated = orchestrator._deduplicate_gov_report_items(valid)
+            stored = orchestrator.gov_report.store_items(orchestrator.store, deduplicated)
+            return CapabilitySyncResult(
+                entities_total=len(entity_ids) if entity_ids else len({item.source_id for item in items}),
+                entities_synced=len(entity_ids) if entity_ids else len({item.source_id for item in items}),
+                observations_synced=stored,
+            )
+
         def _sdmx_entities(source_id: str, client: Any, query: str | None, limit: int | None) -> list[dict[str, Any]]:
             entities = [
                 _entity(
@@ -475,6 +527,12 @@ class SourceCapabilityManager:
             if hasattr(summary, "__dict__"):
                 return dict(summary.__dict__)
             return dict(summary)
+
+        def _configured_structure(entity_id: str, mapping: dict[str, dict[str, Any]]) -> dict[str, Any]:
+            for key, cfg in mapping.items():
+                if cfg.get("series_id") == entity_id or cfg.get("dataset") == entity_id or cfg.get("dataflow") == entity_id:
+                    return {"config_key": key, **cfg}
+            raise KeyError(f"unknown configured entity: {entity_id}")
 
         def _sdmx_catalog_refresh(source_id: str, refresh_fn: Callable[..., Any]) -> Callable[[list[str] | None, int | None], CapabilitySyncResult]:
             def _inner(entity_ids: list[str] | None, limit: int | None) -> CapabilitySyncResult:
@@ -565,6 +623,15 @@ class SourceCapabilityManager:
                 observations_synced=stats.count,
             )
 
+        def _oecd_structure(entity_id: str) -> dict[str, Any]:
+            if orchestrator is None:
+                raise RuntimeError("orchestrator unavailable for oecd structure")
+            try:
+                summary = orchestrator.oecd.get_structure_summary(entity_id)
+                return dict(summary.__dict__) if hasattr(summary, "__dict__") else dict(summary)
+            except Exception:
+                return {"dataflow_id": entity_id, "structure_unavailable": True}
+
         def _bea_discovery(query: str | None, limit: int | None) -> list[dict[str, Any]]:
             client = BEAClient()
             entities = [
@@ -628,7 +695,9 @@ class SourceCapabilityManager:
                 items = [
                     (key, cfg)
                     for key, cfg in items
-                    if cfg["variable"] in allowed or key in allowed
+                    if cfg["variable"] in allowed
+                    or key in allowed
+                    or f"{cfg['dataset']}:{cfg['vintage']}" in allowed
                 ]
             elif limit is not None:
                 items = items[:limit]
@@ -667,39 +736,81 @@ class SourceCapabilityManager:
             )
 
         def _eia_route_discovery(query: str | None, limit: int | None) -> list[dict[str, Any]]:
-            client = EIAClient()
-            queue = [""]
-            visited: set[str] = set()
             entities: list[dict[str, Any]] = []
-            while queue:
-                parent = queue.pop(0)
-                for route in client.list_routes(parent):
-                    route_path = f"{parent}/{route.route_id}".strip("/")
-                    if route_path in visited:
-                        continue
-                    visited.add(route_path)
-                    entities.append(_entity(
-                        "eia",
-                        route_path,
-                        "route",
-                        route.name or route_path,
-                        description=route.description,
-                    ))
-                    queue.append(route_path)
-                    if limit is not None and len(entities) >= limit:
-                        return _limit_items(entities, query, limit)
+            for key, cfg in EIA_SERIES.items():
+                entities.append(_entity(
+                    "eia",
+                    cfg["route"],
+                    "route",
+                    cfg["series_id"],
+                    description=cfg.get("category", ""),
+                    metadata=dict(cfg) | {"config_key": key},
+                ))
             return _limit_items(entities, query, limit)
 
         def _eia_structure(entity_id: str) -> dict[str, Any]:
             client = EIAClient()
-            metadata = client.get_metadata(entity_id)
-            facets = client.get_facets(entity_id)
+            matching = [
+                {"config_key": key, **cfg}
+                for key, cfg in EIA_SERIES.items()
+                if cfg["route"] == entity_id
+            ]
+            try:
+                metadata = client.get_metadata(entity_id)
+            except Exception:
+                metadata = {}
+            try:
+                facets = client.get_facets(entity_id)
+            except Exception:
+                facets = []
             return {
                 "route": entity_id,
                 "facet_count": len(facets),
                 "facets": [facet.__dict__ for facet in facets],
                 "metadata": metadata,
+                "configured_series": matching,
             }
+
+        def _eia_sync_latest(entity_ids: list[str] | None, limit: int | None) -> CapabilitySyncResult:
+            if orchestrator is None:
+                raise RuntimeError("orchestrator unavailable for eia sync")
+            candidate_items: list[tuple[str, dict[str, Any]]] = []
+            for key, cfg in EIA_SERIES.items():
+                route = cfg["route"]
+                series_id = cfg["series_id"]
+                if entity_ids:
+                    if route not in entity_ids and series_id not in entity_ids and not any(route.startswith(item) for item in entity_ids):
+                        continue
+                candidate_items.append((key, cfg))
+            if not candidate_items:
+                candidate_items = list(EIA_SERIES.items())
+            if limit is not None and not entity_ids:
+                candidate_items = candidate_items[: max(limit, 1)]
+
+            stored = 0
+            attempted: list[str] = []
+            fallback_used = False
+            for idx, (key, cfg) in enumerate(candidate_items):
+                fetcher = EIAFetcher(client=orchestrator.eia.client, series_config={key: cfg})
+                raw = fetcher.fetch()
+                if not raw:
+                    attempted.append(cfg["series_id"])
+                    continue
+                records = orchestrator._raw_series_to_records(raw)
+                deduped = orchestrator._deduplicate_observations(records)
+                stored = orchestrator._store_indicator_observations(deduped)
+                attempted.append(cfg["series_id"])
+                if stored > 0:
+                    fallback_used = idx > 0
+                    break
+            if stored == 0:
+                raise RuntimeError(f"EIA latest sync stored 0 observations after trying {attempted}")
+            return CapabilitySyncResult(
+                entities_total=1,
+                entities_synced=1,
+                observations_synced=stored,
+                metadata={"attempted_series": attempted, "fallback_used": fallback_used},
+            )
 
         def _treasury_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
             entities = [
@@ -798,7 +909,7 @@ class SourceCapabilityManager:
             description="Configured RSS/news feed sources",
             is_default_scheduled=True,
             discover=_news_entities,
-            sync_latest=lambda entity_ids, limit: _run_job("news"),
+            sync_latest=_news_sync_latest,
         )
         adapters["reddit_trends"] = SourceCapabilityAdapter(
             source_id="reddit_trends",
@@ -848,7 +959,7 @@ class SourceCapabilityManager:
             description="Configured government report sources",
             is_default_scheduled=True,
             discover=_gov_report_entities,
-            sync_latest=lambda entity_ids, limit: _run_job("gov_reports"),
+            sync_latest=_gov_report_sync_latest,
         )
         adapters["fred"] = SourceCapabilityAdapter(
             source_id="fred",
@@ -899,7 +1010,7 @@ class SourceCapabilityManager:
             is_default_scheduled=True,
             discover=_eia_route_discovery,
             get_structure=_eia_structure,
-            sync_latest=lambda entity_ids, limit: _run_job("eia"),
+            sync_latest=_eia_sync_latest,
         )
         adapters["treasury_fiscal"] = SourceCapabilityAdapter(
             source_id="treasury_fiscal",
@@ -932,7 +1043,7 @@ class SourceCapabilityManager:
                     )
                     for df in orchestrator.oecd.list_catalog_dataflows(query=query, limit=limit)
                 ],
-                get_structure=lambda entity_id: dict(orchestrator.oecd.get_structure_summary(entity_id).__dict__),
+                get_structure=_oecd_structure,
                 sync_latest=_sdmx_catalog_refresh("oecd", orchestrator.oecd.refresh_catalog),
             )
             adapters["worldbank"] = SourceCapabilityAdapter(
@@ -947,19 +1058,39 @@ class SourceCapabilityManager:
                 discover=_worldbank_discovery,
                 sync_latest=_worldbank_sync_latest,
             )
-            adapters["eurostat"] = _sdmx_discovery_adapter(
-                "eurostat",
-                "Eurostat",
-                orchestrator.eurostat.client,
-                refresh_job="eurostat",
-                refresh_fn=orchestrator.eurostat.refresh_catalog,
+            adapters["eurostat"] = SourceCapabilityAdapter(
+                source_id="eurostat",
+                display_name="Eurostat",
+                source_type="discovery-rich",
+                entity_type="dataset",
+                description="Configured Eurostat datasets with structure introspection and curated latest sync.",
+                notes="Provider-wide SDMX catalog discovery is not yet used here; discovery is based on the configured Eurostat datasets.",
+                supports_structure=True,
+                is_default_scheduled=True,
+                discover=_configured_entities(
+                    "eurostat",
+                    "dataset",
+                    {key: {"series_id": cfg["dataset"], "name": cfg["series_id"], **cfg} for key, cfg in EUROSTAT_SERIES.items()},
+                ),
+                get_structure=lambda entity_id: _configured_structure(entity_id, EUROSTAT_SERIES),
+                sync_latest=lambda entity_ids, limit: _run_job("eurostat"),
             )
-            adapters["ecb"] = _sdmx_discovery_adapter(
-                "ecb",
-                "ECB",
-                orchestrator.ecb.client,
-                refresh_job="ecb",
-                refresh_fn=orchestrator.ecb.refresh_catalog,
+            adapters["ecb"] = SourceCapabilityAdapter(
+                source_id="ecb",
+                display_name="ECB",
+                source_type="discovery-rich",
+                entity_type="dataflow",
+                description="Configured ECB dataflows with structure introspection and curated latest sync.",
+                notes="Provider-wide ECB catalog discovery is not yet used here; discovery is based on configured ECB dataflows.",
+                supports_structure=True,
+                is_default_scheduled=True,
+                discover=_configured_entities(
+                    "ecb",
+                    "dataflow",
+                    {key: {"series_id": cfg["dataflow"], "name": cfg["series_id"], **cfg} for key, cfg in ECB_SERIES.items()},
+                ),
+                get_structure=lambda entity_id: _configured_structure(entity_id, ECB_SERIES),
+                sync_latest=lambda entity_ids, limit: _run_job("ecb"),
             )
             adapters["imf"] = _sdmx_discovery_adapter(
                 "imf",
@@ -998,12 +1129,13 @@ class SourceCapabilityManager:
             entity_type="dataflow",
             description="ILO SDMX catalog discovery and latest sync",
             supports_structure=True,
+            supports_latest_sync=bool(ILO_SERIES),
             discover=lambda query, limit: [
                 _entity("ilo", df.id, "dataflow", df.name or df.id, description=df.description, metadata={"agency_id": df.agency_id, "version": df.version})
                 for df in ilo_client.list_catalog_dataflows(query=query, limit=limit)
             ],
             get_structure=lambda entity_id: dict(ilo_client.get_structure_summary(entity_id).__dict__),
-            sync_latest=_sdmx_catalog_refresh("ilo", ilo_client.refresh_catalog),
+            sync_latest=_sdmx_catalog_refresh("ilo", ilo_client.refresh_catalog) if ILO_SERIES else None,
         )
 
         unsd_client = UNSDIngestionClient()
@@ -1014,12 +1146,13 @@ class SourceCapabilityManager:
             entity_type="dataflow",
             description="UNSD SDMX catalog discovery and latest sync",
             supports_structure=True,
+            supports_latest_sync=bool(UNSD_SERIES),
             discover=lambda query, limit: [
                 _entity("unsd", df.id, "dataflow", df.name or df.id, description=df.description, metadata={"agency_id": df.agency_id, "version": df.version})
                 for df in unsd_client.list_catalog_dataflows(query=query, limit=limit)
             ],
             get_structure=lambda entity_id: dict(unsd_client.get_structure_summary(entity_id).__dict__),
-            sync_latest=_sdmx_catalog_refresh("unsd", unsd_client.refresh_catalog),
+            sync_latest=_sdmx_catalog_refresh("unsd", unsd_client.refresh_catalog) if UNSD_SERIES else None,
         )
 
         adapters["bea"] = SourceCapabilityAdapter(
@@ -1040,11 +1173,22 @@ class SourceCapabilityManager:
             display_name="Census",
             source_type="discovery-rich",
             entity_type="dataset",
-            description="Census dataset discovery with dataset structure summaries and configured latest sync",
-            notes="Latest sync uses configured Census dataset variables.",
+            description="Configured Census datasets with structure summaries and latest sync",
+            notes="Discovery is scoped to configured Census dataset/vintage combinations so latest sync and structure share the same entity space.",
             supports_structure=True,
             supports_latest_sync=True,
-            discover=_census_discovery,
+            discover=_configured_entities(
+                "census",
+                "dataset",
+                {
+                    key: {
+                        "series_id": f"{cfg['dataset']}:{cfg['vintage']}",
+                        "name": f"{cfg['dataset']}:{cfg['vintage']}",
+                        **cfg,
+                    }
+                    for key, cfg in CENSUS_DATASETS.items()
+                },
+            ),
             get_structure=_census_structure,
             sync_latest=_census_sync_latest,
         )
