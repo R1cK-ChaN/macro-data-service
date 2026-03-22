@@ -108,7 +108,7 @@ def test_gov_report_store_items_raises_when_every_item_fails(monkeypatch) -> Non
         data_category="inflation",
     )
     monkeypatch.setattr(
-        "ingestion.clients._gov_report.canonicalize_url",
+        "ingestion.documents.clients._gov_report.canonicalize_url",
         Mock(side_effect=RuntimeError("url failure")),
     )
 
@@ -116,10 +116,13 @@ def test_gov_report_store_items_raises_when_every_item_fails(monkeypatch) -> Non
         client.store_items(store, [item])
 
 
-def test_gov_report_store_items_rejects_short_content(monkeypatch) -> None:
+def test_gov_report_store_items_stores_short_content_with_metadata(monkeypatch) -> None:
+    """Items with short content are stored as metadata-only (content_fetched=False)."""
     client = GovReportIngestionClient()
     monkeypatch.setattr(client, "_ensure_seed", lambda store: None)
     store = Mock()
+    store.document_exists.return_value = False
+    store.news_article_exists.return_value = False
     item = GovReportItem(
         source="gov_bls",
         source_id="us_bls_cpi",
@@ -133,8 +136,11 @@ def test_gov_report_store_items_rejects_short_content(monkeypatch) -> None:
         content_markdown="short",
     )
 
-    with pytest.raises(RuntimeError, match="gov report storage failed for all 1 items"):
-        client.store_items(store, [item])
+    count = client.store_items(store, [item])
+    assert count == 1
+    store.upsert_news_article.assert_called_once()
+    record = store.upsert_news_article.call_args[0][0]
+    assert record.content_fetched is False
 
 
 def test_imf_refresh_vintages_uses_supported_signature() -> None:

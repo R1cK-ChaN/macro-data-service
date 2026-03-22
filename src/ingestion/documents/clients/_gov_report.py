@@ -93,9 +93,12 @@ class GovReportIngestionClient:
             try:
                 content = (item.content_markdown or "").strip()
                 if len(content) < _MIN_GOV_REPORT_CONTENT_CHARS:
-                    failures.append(f"{item.source_id}: stale_or_short_content")
-                    logger.info("Gov report dropped for incomplete content: %s", item.source_id)
-                    continue
+                    content = (item.description or "").strip()
+                if len(content) < _MIN_GOV_REPORT_CONTENT_CHARS:
+                    logger.info(
+                        "Gov report stored with minimal content: %s (%d chars)",
+                        item.source_id, len(content),
+                    )
                 canonical = canonicalize_url(item.url)
                 url_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
                 published_precision = item.published_precision or _infer_publish_precision(item.published_at)

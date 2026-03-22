@@ -43,6 +43,20 @@ class FREDIngestionClient:
             time.sleep(0.2)
         return RefreshStats(source="fred_daily", count=count)
 
+    def refresh_nondaily_series(
+        self,
+        store: SQLiteEngineStore,
+        *,
+        family_lookup: dict[tuple[str, str], str] | None = None,
+    ) -> RefreshStats:
+        nondaily = {sid: meta for sid, meta in MACRO_SERIES.items() if meta["freq"] != "daily"}
+        count = 0
+        start_date = (datetime.now(UTC) - timedelta(days=120)).strftime("%Y-%m-%d")
+        for series_id, meta in nondaily.items():
+            count += self._store_series(store, series_id, meta, start_date=start_date, limit=10, family_lookup=family_lookup)
+            time.sleep(1.0)
+        return RefreshStats(source="fred_nondaily", count=count)
+
     def refresh_all_series(
         self,
         store: SQLiteEngineStore,

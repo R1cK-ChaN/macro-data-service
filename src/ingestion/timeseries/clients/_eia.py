@@ -119,7 +119,8 @@ class EIAIngestionClient:
             if fallback_count > 0:
                 logger.warning("EIA fallback used for %s via FRED %s", series_id, fallback_series)
                 return fallback_count
-        raise RuntimeError(f"no live EIA data, cache, or FRED fallback available for {series_id}")
+        logger.warning("no live EIA data, cache, or FRED fallback available for %s", series_id)
+        return 0
 
     def _store_eia_observations(
         self,

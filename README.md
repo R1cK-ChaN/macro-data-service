@@ -188,8 +188,9 @@ Operational notes:
 - Some scaffolded sources can validly return zero discovered entities when the upstream provider or local configured series set is empty.
 - Customer-facing health surfaces hide `ILO` and `UNSD` until they return non-empty entity catalogs.
 - `news` disables known bad feeds and drops low-content articles.
-- `gov_reports` drops incomplete/timed-out report bodies instead of storing partial content.
-- `eia` now prefers live EIA data, then recent local cache, then selected FRED fallback series for a small set of critical energy series.
+- `gov_reports` falls back to RSS `description` when full content extraction fails; metadata-only records are stored for PDF/asset sources.
+- `eia` prefers live EIA data, then recent local cache, then selected FRED fallback series. Timeout is configurable via `EIA_TIMEOUT` env var (default 60s). Failed series degrade gracefully instead of crashing the batch.
+- `fred_nondaily` source refreshes weekly/monthly/quarterly FRED series (ICSA, CCSA, WALCL, PCEPILFE, INDPRO, RSAFS, M2SL, GDP, GDPC1) every 6h, complementing `fred_daily` which handles daily series only.
 
 ## HTTP API
 
@@ -249,6 +250,19 @@ Key operations:
                          │ catalog_sync_run        │
                          └─────────────────────────┘
 ```
+
+## Shadow mode
+
+Continuous ingestion runner with structured logging and daily digest.
+
+```bash
+python shadow_runner.py --interval 6    # run full cycle every 6 hours
+python shadow_status.py                 # show latest digest + recent errors
+```
+
+Logs: `.macro-data/logs/shadow.log`, `.macro-data/logs/daily_digest.jsonl`
+
+Production status (2026-03-22): 86/86 concepts covered (100%), 12 sources active, cycle time ~16 min.
 
 ## Local run
 

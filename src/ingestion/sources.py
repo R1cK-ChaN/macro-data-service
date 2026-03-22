@@ -297,6 +297,7 @@ class IngestionOrchestrator:
             self._build_fed_source(),
             self._build_market_source(),
             self._build_fred_daily_source(),
+            self._build_fred_nondaily_source(),
             self._build_fred_full_source(),
             self._build_news_source(),
             self._build_reddit_trends_source(),
@@ -341,6 +342,7 @@ class IngestionOrchestrator:
             "worldbank",
             "worldbank_catalog",
             "bls",
+            "fred_nondaily",
         ]
 
     @staticmethod
@@ -657,6 +659,17 @@ class IngestionOrchestrator:
             ).count,
         )
 
+    def _build_fred_nondaily_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="fred_nondaily",
+            interval_seconds=21_600,
+            prepare=self._ensure_obs_seed,
+            execute=lambda: self.fred.refresh_nondaily_series(
+                self.store,
+                family_lookup=self._family_lookup or None,
+            ).count,
+        )
+
     def _build_fred_full_source(self, *, lookback_days: int = 365) -> IngestionSourceDefinition:
         return IngestionSourceDefinition(
             name="fred_full",
@@ -713,6 +726,8 @@ class IngestionOrchestrator:
                 series_configs=EIA_SERIES,
                 family_lookup=self._family_lookup or None,
             ).count,
+            max_retries=1,
+            retry_backoff_seconds=5.0,
         )
 
     def _build_treasury_fiscal_source(self) -> IngestionSourceDefinition:

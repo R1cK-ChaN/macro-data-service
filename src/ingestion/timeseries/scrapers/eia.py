@@ -66,6 +66,7 @@ class EIAClient:
 
     def __init__(self, api_key: str | None = None) -> None:
         self.api_key = api_key or get_env_value("EIA_API_KEY")
+        self._timeout = int(get_env_value("EIA_TIMEOUT", default="60") or "60")
         self.session = requests.Session()
         self.session.headers.update({
             "Accept": "application/json",
@@ -219,7 +220,7 @@ class EIAClient:
             query["api_key"] = self.api_key or ""
 
         try:
-            resp = self.session.get(url, params=query, timeout=30)
+            resp = self.session.get(url, params=query, timeout=self._timeout)
         except requests.RequestException as exc:
             raise EIAAPIError(f"EIA request failed: {exc}") from exc
 
