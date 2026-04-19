@@ -526,6 +526,20 @@ class DocumentRecord:
     published_epoch_ms: int = 0
     created_epoch_ms: int = 0
     updated_epoch_ms: int = 0
+    # 17-field LLM extraction surface (information-layer port).
+    # All default blank/zero so gov_report / SDMX ingestion paths that
+    # never populate them stay valid.
+    institution: str = ""
+    authors: str = ""
+    data_period: str = ""
+    market: str = ""
+    asset_class: str = ""
+    sector: str = ""
+    event_type: str = ""
+    impact_level: str = ""
+    contains_commentary: bool = False
+    confidence: float = 0.0
+    subject_freetext: str = ""
 
 
 @dataclass(frozen=True)
@@ -1698,6 +1712,25 @@ class SQLiteEngineStore:
                     "published_epoch_ms": "INTEGER NOT NULL DEFAULT 0",
                     "created_epoch_ms": "INTEGER NOT NULL DEFAULT 0",
                     "updated_epoch_ms": "INTEGER NOT NULL DEFAULT 0",
+                    # ── 17-field LLM-extraction fields (information-layer) ──
+                    # Added for issue #3: port doc_parser / gov_report / news
+                    # pipelines onto the unified document table. All default
+                    # blank/zero so existing rows and non-LLM-extracted
+                    # sources stay valid.
+                    "institution": "TEXT NOT NULL DEFAULT ''",
+                    "authors": "TEXT NOT NULL DEFAULT ''",
+                    "data_period": "TEXT NOT NULL DEFAULT ''",
+                    "market": "TEXT NOT NULL DEFAULT ''",
+                    "asset_class": "TEXT NOT NULL DEFAULT ''",
+                    "sector": "TEXT NOT NULL DEFAULT ''",
+                    "event_type": "TEXT NOT NULL DEFAULT ''",
+                    "impact_level": "TEXT NOT NULL DEFAULT ''",
+                    "contains_commentary": "INTEGER NOT NULL DEFAULT 0",
+                    "confidence": "REAL NOT NULL DEFAULT 0",
+                    # Free-text subject string produced by the LLM before it is
+                    # resolved to a canonical subject_id. Stored for audit;
+                    # queries go through item_subjects / subject_aliases.
+                    "subject_freetext": "TEXT NOT NULL DEFAULT ''",
                 },
             )
             connection.execute(
@@ -1770,6 +1803,38 @@ class SQLiteEngineStore:
                 "CREATE INDEX IF NOT EXISTS idx_blob_document_role "
                 "ON document_blob(document_id, blob_role)"
             )
+            # -- Filter indexes for the 17-field extension --------------------
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_document_impact_level "
+                "ON document(impact_level)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_document_asset_class "
+                "ON document(asset_class)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_document_event_type "
+                "ON document(event_type)"
+            )
+            # -- FTS5 over document title + body ------------------------------
+            # Contentless (no content= link) — body lives in document_blob,
+            # so upsert_document_fts() writes the denormalized title+body
+            # row whenever a document or its markdown blob changes. Guarded
+            # against SQLite builds without FTS5; search_documents() falls
+            # back to LIKE if the virtual table is absent.
+            try:
+                connection.execute(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+                        document_id UNINDEXED,
+                        title,
+                        body,
+                        tokenize = 'porter unicode61'
+                    )
+                    """
+                )
+            except sqlite3.OperationalError:
+                pass  # FTS5 unavailable; document search falls back to LIKE
             # -- Observation family: 3-table hierarchy --------------------------
             connection.execute(
                 """
@@ -5055,8 +5120,11 @@ class SQLiteEngineStore:
                     language_code, country_code, topic_code,
                     published_date, published_at, published_precision, published_epoch_ms, status, version_no,
                     parent_document_id, hash_sha256,
-                    created_at, updated_at, created_epoch_ms, updated_epoch_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, updated_at, created_epoch_ms, updated_epoch_ms,
+                    institution, authors, data_period, market, asset_class,
+                    sector, event_type, impact_level,
+                    contains_commentary, confidence, subject_freetext
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.document_id,
@@ -5082,6 +5150,17 @@ class SQLiteEngineStore:
                     record.updated_at,
                     created_epoch_ms,
                     updated_epoch_ms,
+                    record.institution,
+                    record.authors,
+                    record.data_period,
+                    record.market,
+                    record.asset_class,
+                    record.sector,
+                    record.event_type,
+                    record.impact_level,
+                    1 if record.contains_commentary else 0,
+                    record.confidence,
+                    record.subject_freetext,
                 ),
             )
 
@@ -5208,6 +5287,17 @@ class SQLiteEngineStore:
                 if row["updated_epoch_ms"]
                 else _safe_epoch_ms(row["updated_at"])
             ),
+            institution=row["institution"] or "",
+            authors=row["authors"] or "",
+            data_period=row["data_period"] or "",
+            market=row["market"] or "",
+            asset_class=row["asset_class"] or "",
+            sector=row["sector"] or "",
+            event_type=row["event_type"] or "",
+            impact_level=row["impact_level"] or "",
+            contains_commentary=bool(row["contains_commentary"] or 0),
+            confidence=float(row["confidence"] or 0),
+            subject_freetext=row["subject_freetext"] or "",
         )
 
     def upsert_document_blob(self, record: DocumentBlobRecord) -> None:
@@ -5299,6 +5389,107 @@ class SQLiteEngineStore:
             document_id=row["document_id"],
             extra_json=json.loads(row["extra_json"]),
         )
+
+    # ── Document FTS5 ───────────────────────────────────────────────────
+
+    def _fts5_available(self, connection: sqlite3.Connection) -> bool:
+        row = connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='documents_fts' LIMIT 1"
+        ).fetchone()
+        return row is not None
+
+    def upsert_document_fts(
+        self, *, document_id: str, title: str, body: str
+    ) -> None:
+        """Rewrite a document's row in the documents_fts index.
+
+        Contentless FTS5 — the virtual table owns its own copy of
+        (document_id, title, body). Callers invoke this after writing the
+        document + its markdown blob. No-op if FTS5 is unavailable.
+        """
+        with self._connection(commit=True) as connection:
+            if not self._fts5_available(connection):
+                return
+            connection.execute(
+                "DELETE FROM documents_fts WHERE document_id = ?",
+                (document_id,),
+            )
+            connection.execute(
+                "INSERT INTO documents_fts(document_id, title, body) "
+                "VALUES (?, ?, ?)",
+                (document_id, title or "", body or ""),
+            )
+
+    def delete_document_fts(self, document_id: str) -> None:
+        with self._connection(commit=True) as connection:
+            if not self._fts5_available(connection):
+                return
+            connection.execute(
+                "DELETE FROM documents_fts WHERE document_id = ?",
+                (document_id,),
+            )
+
+    @staticmethod
+    def _quote_fts_query(query: str) -> str:
+        """Wrap each whitespace-separated token in double quotes so FTS5
+        metacharacters (``-``, ``:``, ``"``, ``/``, ``%``, unmatched quotes,
+        etc.) never reach the MATCH parser. Callers get literal phrase
+        matching per token joined by implicit AND, which is what a
+        user-facing keyword search expects.
+        """
+        tokens = (query or "").split()
+        if not tokens:
+            return ""
+        return " ".join(f'"{t.replace(chr(34), chr(34) * 2)}"' for t in tokens)
+
+    def search_documents(
+        self,
+        query: str,
+        *,
+        limit: int = 50,
+    ) -> list[DocumentRecord]:
+        """BM25-ranked full-text search across document title + body.
+
+        Falls back to LIKE over title + subtitle if FTS5 is unavailable or
+        if the MATCH query still fails after sanitization. Pass an empty
+        ``query`` to get the empty list — use :meth:`list_documents` for
+        the unfiltered recency feed.
+        """
+        query = (query or "").strip()
+        if not query:
+            return []
+        with self._connection(commit=False) as connection:
+            if self._fts5_available(connection):
+                sanitized = self._quote_fts_query(query)
+                if sanitized:
+                    try:
+                        rows = connection.execute(
+                            """
+                            SELECT document.*
+                            FROM documents_fts
+                            JOIN document
+                              ON document.document_id = documents_fts.document_id
+                            WHERE documents_fts MATCH ?
+                            ORDER BY rank
+                            LIMIT ?
+                            """,
+                            (sanitized, limit),
+                        ).fetchall()
+                        return [self._row_to_document(r) for r in rows]
+                    except sqlite3.OperationalError:
+                        pass  # defensive: fall through to LIKE
+            like = f"%{query}%"
+            rows = connection.execute(
+                """
+                SELECT * FROM document
+                WHERE title LIKE ? OR subtitle LIKE ?
+                ORDER BY published_epoch_ms DESC, published_date DESC
+                LIMIT ?
+                """,
+                (like, like, limit),
+            ).fetchall()
+        return [self._row_to_document(row) for row in rows]
 
     def seed_doc_sources_and_families(self, source_configs: dict[str, dict[str, dict[str, Any]]]) -> None:
         """Populate doc_source and doc_release_family from scraper config dicts.
