@@ -22,9 +22,7 @@ from typing import Any, Iterable
 import yaml
 
 
-_DEFAULT_YAML = (
-    Path(__file__).resolve().parents[2] / "config" / "subjects.yaml"
-)
+_DEFAULT_YAML = Path(__file__).resolve().parent / "subjects.yaml"
 
 STRUCTURED_CONFIDENCE = 1.0
 TITLE_CONFIDENCE = 0.8
@@ -118,6 +116,8 @@ class SubjectTagger:
         self,
         *,
         fred_series: str | Iterable[str] | None = None,
+        bls_series: str | Iterable[str] | None = None,
+        eia_series: str | Iterable[str] | None = None,
         ny_fed_series: str | Iterable[str] | None = None,
         fedwatch_series: str | Iterable[str] | None = None,
         calendar_indicator: str | None = None,
@@ -127,6 +127,8 @@ class SubjectTagger:
         hits: dict[str, float] = {}
         pairs = (
             ("fred_series", fred_series),
+            ("bls_series", bls_series),
+            ("eia_series", eia_series),
             ("ny_fed_series", ny_fed_series),
             ("fedwatch_series", fedwatch_series),
             ("calendar_indicator", calendar_indicator),

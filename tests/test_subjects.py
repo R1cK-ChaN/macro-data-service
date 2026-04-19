@@ -116,19 +116,45 @@ def test_tagger_structured_dedups_across_alias_types(
     assert hits == [("econ.cpi", STRUCTURED_CONFIDENCE)]
 
 
+@pytest.mark.parametrize(
+    "concept_id, expected_subject",
+    [
+        # FRED-sourced bridges
+        ("CPI_US", "econ.cpi"),
+        ("CORE_PCE_US", "econ.us.core_pce"),
+        ("UNEMP_US", "econ.unemployment"),
+        ("GDP_REAL_US", "econ.gdp"),
+        ("RETAIL_SALES_US", "econ.retail_sales"),
+        ("TREASURY_2Y_US", "rate.us.2y"),
+        ("TREASURY_10Y_US", "rate.us.10y"),
+        ("DOLLAR_INDEX_US", "fx.dxy"),
+        # BLS-sourced bridges (would break without bls_series aliases)
+        ("NFP_US", "econ.us.nfp"),
+        ("PPI_US", "econ.ppi"),
+        # EIA-sourced bridges (would break without eia_series aliases)
+        ("WTI_CRUDE", "commodity.wti"),
+        ("BRENT_CRUDE", "commodity.brent"),
+        # NY Fed bridges (the dual-form alias fix)
+        ("SOFR_US", "rate.us.sofr"),
+        ("OBFR_US", "rate.us.obfr"),
+    ],
+)
 def test_resolve_subjects_for_concept_bridges_vocabularies(
     store: SQLiteEngineStore,
+    concept_id: str,
+    expected_subject: str,
 ) -> None:
-    """concept_map (e.g. CPI_US → CPIAUCSL on fred) should resolve through
-    subject_aliases to the canonical subject econ.cpi — no bridge table,
-    just a join on provider_series_id ↔ alias_value.
+    """concept_map provider_series_id ↔ subject_aliases.alias_value is the
+    only bridge between the timeseries vocabulary and the subject vocabulary.
+    Every concept shipped in _CONCEPT_MAP_DEFS whose subject exists in the
+    yaml must resolve through this join.
     """
     store.seed_concept_map()
     sync_from_yaml(store)
-    subs = store.resolve_subjects_for_concept("CPI_US")
-    assert "econ.cpi" in subs
-    subs_sofr = store.resolve_subjects_for_concept("SOFR_US")
-    assert "rate.us.sofr" in subs_sofr
+    subs = store.resolve_subjects_for_concept(concept_id)
+    assert expected_subject in subs, (
+        f"{concept_id} did not bridge to {expected_subject}; got {subs}"
+    )
 
 
 def test_load_subjects_yaml_shape() -> None:

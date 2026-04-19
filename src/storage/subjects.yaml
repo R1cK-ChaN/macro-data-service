@@ -35,6 +35,7 @@ subjects:
     display: "PPI"
     aliases:
       fred_series: [PPIACO, PPIFIS]
+      bls_series: [WPSFD4, WPSFD49116]   # PPI_US, PPI_CORE_US in concept_map
       calendar_indicator: ["PPI", "Producer Price Index", "PPI MoM", "PPI YoY"]
       title_regex:
         - '\bPPI\b'
@@ -208,6 +209,7 @@ subjects:
     display: "WTI Crude Oil"
     aliases:
       fred_series: [DCOILWTICO]
+      eia_series: [EIA_WTI]               # WTI_CRUDE in concept_map
       calendar_indicator: []
       title_regex:
         - '\bWTI\b'
@@ -217,6 +219,7 @@ subjects:
     display: "Brent Crude Oil"
     aliases:
       fred_series: [DCOILBRENTEU]
+      eia_series: [EIA_BRENT]             # BRENT_CRUDE in concept_map
       calendar_indicator: []
       title_regex:
         - '\bbrent(?:\s+crude)?\b'
