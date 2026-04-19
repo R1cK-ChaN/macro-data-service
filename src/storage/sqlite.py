@@ -644,6 +644,20 @@ _NYFED_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "NYFED_OBFR": ("us.rates.obfr", "Overnight Bank Funding Rate",     "percent", "daily", "none"),
 }
 
+_RATEPROBABILITY_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
+    # FedWatch midpoint (CME-equivalent forward rate expectations). Per-meeting
+    # FEDPROB_<date> observations are also emitted for the forward curve but
+    # aren't concept-mapped — the meeting set rolls over each FOMC cycle.
+    "FEDWATCH_MIDPOINT": (
+        "us.rates.fedwatch_midpoint",
+        "FedWatch Midpoint (CME-equivalent)",
+        "percent",
+        "daily",
+        "none",
+    ),
+}
+
 _IMF_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
     "IMF_CN_CPI":         ("cn.inflation.cpi",          "China CPI Index",              "index",        "monthly",    "none"),
@@ -5830,6 +5844,7 @@ class SQLiteEngineStore:
             ("eia", _EIA_FAMILY_MAP),
             ("treasury_fiscal", _TREASURY_FAMILY_MAP),
             ("nyfed", _NYFED_FAMILY_MAP),
+            ("rateprobability", _RATEPROBABILITY_FAMILY_MAP),
             ("imf", _IMF_FAMILY_MAP),
             ("eurostat", _EUROSTAT_FAMILY_MAP),
             ("bis", _BIS_FAMILY_MAP),
@@ -5969,6 +5984,7 @@ class SQLiteEngineStore:
         ("POLICY_RATE_US",      "nyfed",          "NYFED_EFFR",     "us.rates.effr",                 1, "primary",     "NY Fed EFFR"),
         ("POLICY_RATE_US",      "fred",           "DFF",            "us.rates.fed_funds",            2, "secondary",   "Daily effective rate"),
         ("POLICY_RATE_US",      "bis",            "BIS_POLICY_US",  "us.rates.policy_bis",           3, "cross_check", "BIS central bank policy"),
+        ("FEDWATCH_US",         "rateprobability","FEDWATCH_MIDPOINT","us.rates.fedwatch_midpoint",  1, "primary",     "CME-equivalent midpoint, daily snapshot"),
         ("SOFR_US",             "nyfed",          "NYFED_SOFR",     "us.rates.sofr",                 1, "primary",     "Secured overnight"),
         ("OBFR_US",             "nyfed",          "NYFED_OBFR",     "us.rates.obfr",                 1, "primary",     "Overnight bank funding"),
         ("TREASURY_2Y_US",      "fred",           "DGS2",           "us.rates.treasury_2y",          1, "primary",     "Daily constant maturity"),

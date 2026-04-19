@@ -629,13 +629,32 @@ class IngestionOrchestrator:
 
     def _fetch_rate_probability_observations(self) -> list[IndicatorObservationRecord]:
         prob = self.rate_probability.fetch_probabilities()
+        as_of = prob.as_of[:10] if len(prob.as_of) >= 10 else prob.as_of
         observations: list[IndicatorObservationRecord] = []
+        # Concept-mapped daily midpoint: this is the series resolve_indicator
+        # returns for concept FEDWATCH_US and that the subject vocabulary
+        # aliases under rate.us.fedwatch.
+        if as_of and prob.midpoint is not None:
+            observations.append(
+                IndicatorObservationRecord(
+                    series_id="FEDWATCH_MIDPOINT",
+                    source="rateprobability",
+                    date=as_of,
+                    value=float(prob.midpoint),
+                    metadata={
+                        "current_band": prob.current_band,
+                        "effr": prob.effr,
+                    },
+                )
+            )
+        # Per-meeting forward curve: one observation per FOMC meeting, not
+        # concept-mapped because the meeting set rolls over each cycle.
         for meeting in prob.meetings:
             observations.append(
                 IndicatorObservationRecord(
                     series_id=f"FEDPROB_{meeting.meeting_date}",
                     source="rateprobability",
-                    date=prob.as_of[:10] if len(prob.as_of) >= 10 else prob.as_of,
+                    date=as_of,
                     value=meeting.implied_rate,
                     metadata={
                         "prob_move_pct": meeting.prob_move_pct,
