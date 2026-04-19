@@ -6142,6 +6142,38 @@ class SQLiteEngineStore:
                 ).fetchall()
             return [r[0] for r in rows]
 
+    def set_document_subjects(
+        self, document_id: str, subjects: dict[str, float]
+    ) -> None:
+        """Replace the item_subjects rows for ``document_id``.
+
+        ``subjects`` is a ``{subject_id: confidence}`` mapping produced by
+        :class:`storage.subjects.SubjectTagger` at ingest time. Rewriting
+        on every upsert keeps tagging idempotent.
+        """
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "DELETE FROM item_subjects WHERE item_sha = ?",
+                (document_id,),
+            )
+            if subjects:
+                connection.executemany(
+                    "INSERT INTO item_subjects "
+                    "(item_sha, subject_id, confidence) VALUES (?, ?, ?)",
+                    [(document_id, sid, float(c)) for sid, c in subjects.items()],
+                )
+
+    def list_document_subjects(self, document_id: str) -> list[tuple[str, float]]:
+        """Return ``(subject_id, confidence)`` tags for a document,
+        ordered by confidence descending."""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                "SELECT subject_id, confidence FROM item_subjects "
+                "WHERE item_sha = ? ORDER BY confidence DESC, subject_id",
+                (document_id,),
+            ).fetchall()
+        return [(r[0], float(r[1])) for r in rows]
+
     def resolve_subjects_for_concept(self, concept_id: str) -> list[str]:
         """Find subject_ids that alias any provider_series_id registered for
         ``concept_id`` in concept_map. Used at query time to pivot between

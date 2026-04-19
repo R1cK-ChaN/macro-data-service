@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -95,7 +95,10 @@ def test_gov_report_store_items_raises_when_every_item_fails(monkeypatch) -> Non
     client = GovReportIngestionClient()
     monkeypatch.setattr(client, "_ensure_seed", lambda store: None)
 
-    store = Mock()
+    # MagicMock (not Mock) supports the context-manager protocol used by
+    # store._connection(...), which the gov_report client opens to build
+    # the SubjectTagger at the top of store_items.
+    store = MagicMock()
     item = GovReportItem(
         source="gov_bls",
         source_id="us_bls_cpi",
@@ -120,7 +123,7 @@ def test_gov_report_store_items_stores_short_content_with_metadata(monkeypatch) 
     """Items with short content are stored as metadata-only (content_fetched=False)."""
     client = GovReportIngestionClient()
     monkeypatch.setattr(client, "_ensure_seed", lambda store: None)
-    store = Mock()
+    store = MagicMock()
     store.document_exists.return_value = False
     store.news_article_exists.return_value = False
     item = GovReportItem(
