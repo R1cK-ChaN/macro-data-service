@@ -164,6 +164,29 @@ class LocalMacroDataService:
             pass  # best-effort; yaml may be unavailable in test environments
         return {"subjects": self._store.list_subjects()}
 
+    def _op_backfill_document_indexes(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Run the one-shot FTS + subject-tag backfills.
+
+        Needed on DBs that accumulated ``document`` rows before Step 2
+        added ``documents_fts`` and Step 3 started calling
+        ``set_document_subjects`` at ingest. Both helpers are idempotent,
+        so calling this on a fresh DB does no work.
+        """
+        del arguments
+        # Ensure the vocabulary is seeded before tagging runs — otherwise
+        # the tagger sees an empty alias list and nothing gets tagged.
+        try:
+            from storage.subjects import sync_from_yaml
+            sync_from_yaml(self._store)
+        except (AttributeError, TypeError, FileNotFoundError):
+            pass
+        fts_written = self._store.backfill_documents_fts()
+        subjects_tagged = self._store.backfill_document_subjects()
+        return {
+            "fts_rows_written": fts_written,
+            "documents_subject_tagged": subjects_tagged,
+        }
+
     @staticmethod
     def _document_summary(doc: Any) -> dict[str, Any]:
         """Shape a DocumentRecord for API responses — omit internal-only

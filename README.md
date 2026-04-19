@@ -224,6 +224,7 @@ Key operations:
 | `list_items` | Merged document feed across news / gov reports / notes, filtered by `subject`, `q` (FTS5), `document_type`, `country_code`, `min_confidence` |
 | `get_document` | Single document by `document_id` or `hash_sha256` (17-field summary + markdown body + subject tags) |
 | `list_subjects` | Subject vocabulary (auto-synced from `src/storage/subjects.yaml`) |
+| `backfill_document_indexes` | One-shot FTS + subject-tag backfill for DBs whose documents predate the new sidecars (idempotent) |
 
 ## Information layer
 

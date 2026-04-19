@@ -6300,6 +6300,73 @@ class SQLiteEngineStore:
             ).fetchall()
         return [(r[0], float(r[1])) for r in rows]
 
+    def backfill_documents_fts(self) -> int:
+        """Populate ``documents_fts`` for documents missing an index row.
+
+        Needed on upgraded DBs that accumulated rows before Step 2 added
+        the virtual table. Rebuilds ``(document_id, title, body)`` from
+        ``document`` + the most recent ``document_blob`` markdown per
+        document. Idempotent: subsequent calls are no-ops once every
+        document has an FTS row.
+        """
+        with self._connection(commit=False) as connection:
+            if not self._fts5_available(connection):
+                return 0
+            rows = connection.execute(
+                """
+                SELECT d.document_id, d.title,
+                       COALESCE(
+                           (SELECT content_text FROM document_blob b
+                            WHERE b.document_id = d.document_id
+                              AND b.blob_role = 'markdown'
+                            ORDER BY b.extracted_at DESC LIMIT 1),
+                           ''
+                       ) AS body
+                FROM document d
+                WHERE d.document_id NOT IN (
+                    SELECT document_id FROM documents_fts
+                )
+                """
+            ).fetchall()
+        written = 0
+        for row in rows:
+            self.upsert_document_fts(
+                document_id=row["document_id"],
+                title=row["title"] or "",
+                body=row["body"] or "",
+            )
+            written += 1
+        return written
+
+    def backfill_document_subjects(self) -> int:
+        """Tag documents that have no ``item_subjects`` rows.
+
+        Runs the current :class:`storage.subjects.SubjectTagger` against
+        each untagged document's title and writes any title-regex matches.
+        Used by upgraded DBs to fill in subject tags for pre-merge rows;
+        new ingestion already tags at write time. Idempotent: documents
+        that are already tagged (even with zero matches left after a
+        re-tag) are skipped via the NOT IN filter.
+        """
+        from storage.subjects import SubjectTagger
+        with self._connection(commit=False) as connection:
+            tagger = SubjectTagger(connection)
+            untagged = connection.execute(
+                """
+                SELECT document_id, title FROM document
+                WHERE document_id NOT IN (
+                    SELECT item_sha FROM item_subjects
+                )
+                """
+            ).fetchall()
+        written = 0
+        for row in untagged:
+            tags = dict(tagger.tag_text(row["title"] or ""))
+            if tags:
+                self.set_document_subjects(row["document_id"], tags)
+                written += 1
+        return written
+
     def list_items_for_subject(
         self,
         subject_id: str,
