@@ -221,6 +221,48 @@ Key operations:
 | `get_recent_releases` | Recent economic data releases |
 | `get_upcoming_calendar` | Upcoming calendar events |
 | `get_market_snapshot` | Latest market prices |
+| `list_items` | Merged document feed across news / gov reports / notes, filtered by `subject`, `q` (FTS5), `document_type`, `country_code`, `min_confidence` |
+| `get_document` | Single document by `document_id` or `hash_sha256` (17-field summary + markdown body + subject tags) |
+| `list_subjects` | Subject vocabulary (auto-synced from `src/storage/subjects.yaml`) |
+| `backfill_document_indexes` | One-shot FTS + subject-tag backfill for DBs whose documents predate the new sidecars (idempotent) |
+
+## Information layer
+
+Non-numeric sources (news, gov reports, research notes) land in a
+shared `document` surface keyed by a canonical subject vocabulary, so
+downstream callers can pull them alongside the macro timeseries through
+one API. The schema additions live in `src/storage/sqlite.py`:
+
+- `subjects` / `subject_aliases` / `item_subjects` — canonical subject
+  IDs (`econ.cpi`, `rate.us.sofr`, …) and the aliases that map
+  source-native identifiers (FRED series, calendar indicators, title
+  regex) back to them. Seeded from `src/storage/subjects.yaml`.
+- `document` extended with 11 LLM-extraction columns (`institution`,
+  `authors`, `asset_class`, `impact_level`, `contains_commentary`,
+  `confidence`, …) plus a `documents_fts` FTS5 virtual table.
+- `obs_enrichment` sidecar — derived labels keyed by `(obs_family_id,
+  date, key)`. Currently used for VIX regime classification.
+
+Ingestion paths:
+
+- `news` — `NewsIngestionClient` mirrors each article into `document`
+  (document_type='report', source_id='news') + documents_fts +
+  item_subjects, alongside the legacy `news_articles` row.
+- `gov_reports` — `GovReportIngestionClient` merges scraper metadata
+  with optional LLM extraction into the 17-field document surface.
+- `notes` — `python -m ingestion.notes.ingest --input <dir>` parses
+  YAML-frontmatter markdown into `document` (source_id='notes',
+  document_type='report', confidence=1.0).
+- `FEDWATCH_US` — CME-equivalent midpoint persisted daily from
+  `rateprobability.com`; bridges to the `rate.us.fedwatch` subject.
+- `VIX_US` — FRED `VIXCLS` close; `refresh_vix_regime` writes a
+  low/elevated/stressed label into `obs_enrichment` per date.
+
+Optional LLM enrichment of `institution`, `asset_class`, `impact_level`
+and the rest of the 17-field surface is controlled by
+`DOCUMENT_EXTRACT_API_KEY` (or `OPENAI_API_KEY`) plus
+`DOCUMENT_EXTRACT_MODEL` / `DOCUMENT_EXTRACT_BASE_URL`. Unset → ingestion
+falls back to scraper-supplied metadata without LLM calls.
 
 ## Data model
 

@@ -8,6 +8,12 @@ import re
 from datetime import UTC, datetime
 
 from contracts import normalize_utc_iso, to_epoch_ms
+from ingestion.documents._extraction import (
+    DocumentExtractor,
+    ExtractionFields,
+    NullDocumentExtractor,
+    make_extractor_from_env,
+)
 from ingestion.scrapers.gov_report import GovReportClient, GovReportItem
 from ingestion.url_canon import canonicalize_url
 from storage import (
@@ -17,6 +23,7 @@ from storage import (
     NewsArticleRecord,
     SQLiteEngineStore,
 )
+from storage.subjects import SubjectTagger, sync_from_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +50,17 @@ class GovReportIngestionClient:
     document_blob / document_extra) **and** the legacy news_articles
     table so existing consumers keep working."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        extractor: DocumentExtractor | None = None,
+    ) -> None:
         self._client = GovReportClient()
         self._seeded = False
+        # Extractor enriches the 17-field surface. Defaults to env-driven
+        # LLM when DOCUMENT_EXTRACT_API_KEY / OPENAI_API_KEY is set,
+        # otherwise a no-op — the client always works without an LLM.
+        self._extractor: DocumentExtractor = extractor or make_extractor_from_env()
 
     def _ensure_seed(self, store: SQLiteEngineStore) -> None:
         if self._seeded:
@@ -62,6 +77,9 @@ class GovReportIngestionClient:
             "jp": _JP_SOURCES,
             "eu": _EU_SOURCES,
         })
+        # Make sure the subject vocabulary + aliases are loaded so ingest-
+        # time tagging has something to match against. Idempotent.
+        sync_from_yaml(store)
         self._seeded = True
 
     @staticmethod
@@ -84,6 +102,10 @@ class GovReportIngestionClient:
 
     def store_items(self, store: SQLiteEngineStore, items: list[GovReportItem]) -> int:
         self._ensure_seed(store)
+        # Build the subject tagger once per batch — it compiles title
+        # regex patterns and indexes non-regex aliases in memory.
+        with store._connection(commit=False) as c:
+            tagger = SubjectTagger(c)
         count = 0
         failures: list[str] = []
         now_dt = datetime.now(UTC)
@@ -126,6 +148,19 @@ class GovReportIngestionClient:
                     parts = item.source_id.split("_")
                     source_key = f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else item.source_id
 
+                    # Scraper-supplied metadata goes into the structured
+                    # columns unconditionally. LLM extraction (if
+                    # configured) overrides blanks only — scraper values
+                    # are considered authoritative for the fields they
+                    # cover.
+                    extracted: ExtractionFields = ExtractionFields()
+                    if content and not isinstance(self._extractor, NullDocumentExtractor):
+                        extracted = self._extractor.extract(
+                            title=item.title, markdown=content,
+                        )
+                    institution = item.institution or extracted.institution
+                    impact_level = (item.importance or extracted.impact_level or "")
+
                     doc = DocumentRecord(
                         document_id=doc_id,
                         release_family_id=release_family_id,
@@ -150,6 +185,18 @@ class GovReportIngestionClient:
                         published_epoch_ms=published_epoch_ms,
                         created_epoch_ms=now_epoch_ms,
                         updated_epoch_ms=now_epoch_ms,
+                        # 17-field surface
+                        institution=institution,
+                        authors=extracted.authors,
+                        data_period=extracted.data_period,
+                        market=extracted.market,
+                        asset_class=extracted.asset_class,
+                        sector=extracted.sector,
+                        event_type=extracted.event_type,
+                        impact_level=impact_level,
+                        contains_commentary=extracted.contains_commentary,
+                        confidence=extracted.confidence,
+                        subject_freetext=extracted.subject_freetext,
                     )
                     store.upsert_document(doc)
 
@@ -168,6 +215,22 @@ class GovReportIngestionClient:
                             extracted_at=now_iso,
                         )
                         store.upsert_document_blob(blob)
+
+                    # Index into documents_fts so /items?q= can find this
+                    # row. No-op on sqlite builds without FTS5.
+                    store.upsert_document_fts(
+                        document_id=doc_id,
+                        title=item.title,
+                        body=content,
+                    )
+
+                    # Tag against the subject vocabulary via title regex
+                    # (confidence 0.8). data_category is scraper-native
+                    # terminology that rarely maps cleanly to a single
+                    # subject — the title carries the real signal.
+                    title_tags = tagger.tag_text(item.title)
+                    if title_tags:
+                        store.set_document_subjects(doc_id, dict(title_tags))
 
                     if item.raw_json or item.importance:
                         extra_data = dict(item.raw_json) if item.raw_json else {}

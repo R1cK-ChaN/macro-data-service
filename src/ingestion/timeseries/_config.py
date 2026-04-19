@@ -62,6 +62,11 @@ MACRO_SERIES = {
     "DTWEXBGS": {"name": "Broad Dollar Index", "category": "fx", "freq": "daily"},
     "DEXCHUS": {"name": "CNY/USD Exchange Rate", "category": "fx", "freq": "daily"},
     "BAMLH0A0HYM2": {"name": "High Yield OAS", "category": "credit", "freq": "daily"},
+    # VIXCLS is required here (not just in _CONCEPT_MAP_DEFS) because
+    # FredFetcher.fetch_series reads MACRO_SERIES directly — omitting it
+    # would leave VIX_US empty after fred_daily / fred_full cycles, and
+    # refresh_vix_regime() would have nothing to classify.
+    "VIXCLS":       {"name": "CBOE VIX",       "category": "markets",  "freq": "daily"},
 }
 
 VINTAGE_SERIES = ["GDP", "GDPC1", "CPIAUCSL", "PAYEMS", "UNRATE", "INDPRO", "RSAFS"]

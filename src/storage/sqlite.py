@@ -526,6 +526,20 @@ class DocumentRecord:
     published_epoch_ms: int = 0
     created_epoch_ms: int = 0
     updated_epoch_ms: int = 0
+    # 17-field LLM extraction surface (information-layer port).
+    # All default blank/zero so gov_report / SDMX ingestion paths that
+    # never populate them stay valid.
+    institution: str = ""
+    authors: str = ""
+    data_period: str = ""
+    market: str = ""
+    asset_class: str = ""
+    sector: str = ""
+    event_type: str = ""
+    impact_level: str = ""
+    contains_commentary: bool = False
+    confidence: float = 0.0
+    subject_freetext: str = ""
 
 
 @dataclass(frozen=True)
@@ -605,6 +619,7 @@ _FRED_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "DTWEXBGS":     ("us.fx.dollar_index_broad",       "Broad Dollar Index",          "index",        "daily",     "none"),
     "DEXCHUS":      ("us.fx.cny_usd",                  "CNY/USD Exchange Rate",       "ratio",        "daily",     "none"),
     "BAMLH0A0HYM2": ("us.credit.hy_oas",              "High Yield OAS",              "percent",      "daily",     "none"),
+    "VIXCLS":       ("us.markets.vix",                 "CBOE VIX",                    "index",        "daily",     "none"),
 }
 
 _EIA_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
@@ -628,6 +643,20 @@ _NYFED_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "NYFED_SOFR": ("us.rates.sofr", "Secured Overnight Financing Rate", "percent", "daily", "none"),
     "NYFED_EFFR": ("us.rates.effr", "Effective Federal Funds Rate",     "percent", "daily", "none"),
     "NYFED_OBFR": ("us.rates.obfr", "Overnight Bank Funding Rate",     "percent", "daily", "none"),
+}
+
+_RATEPROBABILITY_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
+    # FedWatch midpoint (CME-equivalent forward rate expectations). Per-meeting
+    # FEDPROB_<date> observations are also emitted for the forward curve but
+    # aren't concept-mapped — the meeting set rolls over each FOMC cycle.
+    "FEDWATCH_MIDPOINT": (
+        "us.rates.fedwatch_midpoint",
+        "FedWatch Midpoint (CME-equivalent)",
+        "percent",
+        "daily",
+        "none",
+    ),
 }
 
 _IMF_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
@@ -1698,6 +1727,25 @@ class SQLiteEngineStore:
                     "published_epoch_ms": "INTEGER NOT NULL DEFAULT 0",
                     "created_epoch_ms": "INTEGER NOT NULL DEFAULT 0",
                     "updated_epoch_ms": "INTEGER NOT NULL DEFAULT 0",
+                    # ── 17-field LLM-extraction fields (information-layer) ──
+                    # Added for issue #3: port doc_parser / gov_report / news
+                    # pipelines onto the unified document table. All default
+                    # blank/zero so existing rows and non-LLM-extracted
+                    # sources stay valid.
+                    "institution": "TEXT NOT NULL DEFAULT ''",
+                    "authors": "TEXT NOT NULL DEFAULT ''",
+                    "data_period": "TEXT NOT NULL DEFAULT ''",
+                    "market": "TEXT NOT NULL DEFAULT ''",
+                    "asset_class": "TEXT NOT NULL DEFAULT ''",
+                    "sector": "TEXT NOT NULL DEFAULT ''",
+                    "event_type": "TEXT NOT NULL DEFAULT ''",
+                    "impact_level": "TEXT NOT NULL DEFAULT ''",
+                    "contains_commentary": "INTEGER NOT NULL DEFAULT 0",
+                    "confidence": "REAL NOT NULL DEFAULT 0",
+                    # Free-text subject string produced by the LLM before it is
+                    # resolved to a canonical subject_id. Stored for audit;
+                    # queries go through item_subjects / subject_aliases.
+                    "subject_freetext": "TEXT NOT NULL DEFAULT ''",
                 },
             )
             connection.execute(
@@ -1770,6 +1818,38 @@ class SQLiteEngineStore:
                 "CREATE INDEX IF NOT EXISTS idx_blob_document_role "
                 "ON document_blob(document_id, blob_role)"
             )
+            # -- Filter indexes for the 17-field extension --------------------
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_document_impact_level "
+                "ON document(impact_level)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_document_asset_class "
+                "ON document(asset_class)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_document_event_type "
+                "ON document(event_type)"
+            )
+            # -- FTS5 over document title + body ------------------------------
+            # Contentless (no content= link) — body lives in document_blob,
+            # so upsert_document_fts() writes the denormalized title+body
+            # row whenever a document or its markdown blob changes. Guarded
+            # against SQLite builds without FTS5; search_documents() falls
+            # back to LIKE if the virtual table is absent.
+            try:
+                connection.execute(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+                        document_id UNINDEXED,
+                        title,
+                        body,
+                        tokenize = 'porter unicode61'
+                    )
+                    """
+                )
+            except sqlite3.OperationalError:
+                pass  # FTS5 unavailable; document search falls back to LIKE
             # -- Observation family: 3-table hierarchy --------------------------
             connection.execute(
                 """
@@ -2087,6 +2167,71 @@ class SQLiteEngineStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_calendar_events_indicator_id "
                 "ON calendar_events(indicator_id)"
+            )
+            # ── Observation enrichment sidecar ─────────────────────────
+            # Stores derived labels / computed tags alongside an observation
+            # family + date without polluting the indicators schema. Used
+            # today for VIX regime classification (key='regime'); future
+            # enrichments (drawdown buckets, surprise z-scores, etc.) land
+            # under their own `key` values with the same (family, date) PK.
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS obs_enrichment (
+                    obs_family_id TEXT NOT NULL,
+                    date          TEXT NOT NULL,
+                    key           TEXT NOT NULL,
+                    value         TEXT NOT NULL,
+                    created_at    TEXT NOT NULL,
+                    PRIMARY KEY (obs_family_id, date, key)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_obs_enrichment_family_key "
+                "ON obs_enrichment(obs_family_id, key)"
+            )
+            # ── Unified subject vocabulary (issue #2) ──────────────────
+            # subject_id is the canonical cross-source identifier (e.g.
+            # 'econ.cpi', 'rate.us.sofr'). Aliases map source-native keys
+            # (FRED series, calendar indicator strings, title regex, ...)
+            # back to a subject. item_subjects tags documents at ingest;
+            # calendar_events and observations are resolved at query time
+            # via subject_alias lookups.
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS subjects (
+                    subject_id   TEXT PRIMARY KEY,
+                    display_name TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS subject_aliases (
+                    subject_id  TEXT NOT NULL,
+                    alias_type  TEXT NOT NULL,
+                    alias_value TEXT NOT NULL,
+                    PRIMARY KEY (subject_id, alias_type, alias_value)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_subject_aliases_lookup "
+                "ON subject_aliases(alias_type, alias_value)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS item_subjects (
+                    item_sha   TEXT NOT NULL,
+                    subject_id TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    PRIMARY KEY (item_sha, subject_id)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_item_subjects_subject "
+                "ON item_subjects(subject_id)"
             )
 
     def _ensure_table_columns(
@@ -5012,8 +5157,11 @@ class SQLiteEngineStore:
                     language_code, country_code, topic_code,
                     published_date, published_at, published_precision, published_epoch_ms, status, version_no,
                     parent_document_id, hash_sha256,
-                    created_at, updated_at, created_epoch_ms, updated_epoch_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, updated_at, created_epoch_ms, updated_epoch_ms,
+                    institution, authors, data_period, market, asset_class,
+                    sector, event_type, impact_level,
+                    contains_commentary, confidence, subject_freetext
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.document_id,
@@ -5039,6 +5187,17 @@ class SQLiteEngineStore:
                     record.updated_at,
                     created_epoch_ms,
                     updated_epoch_ms,
+                    record.institution,
+                    record.authors,
+                    record.data_period,
+                    record.market,
+                    record.asset_class,
+                    record.sector,
+                    record.event_type,
+                    record.impact_level,
+                    1 if record.contains_commentary else 0,
+                    record.confidence,
+                    record.subject_freetext,
                 ),
             )
 
@@ -5165,6 +5324,17 @@ class SQLiteEngineStore:
                 if row["updated_epoch_ms"]
                 else _safe_epoch_ms(row["updated_at"])
             ),
+            institution=row["institution"] or "",
+            authors=row["authors"] or "",
+            data_period=row["data_period"] or "",
+            market=row["market"] or "",
+            asset_class=row["asset_class"] or "",
+            sector=row["sector"] or "",
+            event_type=row["event_type"] or "",
+            impact_level=row["impact_level"] or "",
+            contains_commentary=bool(row["contains_commentary"] or 0),
+            confidence=float(row["confidence"] or 0),
+            subject_freetext=row["subject_freetext"] or "",
         )
 
     def upsert_document_blob(self, record: DocumentBlobRecord) -> None:
@@ -5256,6 +5426,107 @@ class SQLiteEngineStore:
             document_id=row["document_id"],
             extra_json=json.loads(row["extra_json"]),
         )
+
+    # ── Document FTS5 ───────────────────────────────────────────────────
+
+    def _fts5_available(self, connection: sqlite3.Connection) -> bool:
+        row = connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='documents_fts' LIMIT 1"
+        ).fetchone()
+        return row is not None
+
+    def upsert_document_fts(
+        self, *, document_id: str, title: str, body: str
+    ) -> None:
+        """Rewrite a document's row in the documents_fts index.
+
+        Contentless FTS5 — the virtual table owns its own copy of
+        (document_id, title, body). Callers invoke this after writing the
+        document + its markdown blob. No-op if FTS5 is unavailable.
+        """
+        with self._connection(commit=True) as connection:
+            if not self._fts5_available(connection):
+                return
+            connection.execute(
+                "DELETE FROM documents_fts WHERE document_id = ?",
+                (document_id,),
+            )
+            connection.execute(
+                "INSERT INTO documents_fts(document_id, title, body) "
+                "VALUES (?, ?, ?)",
+                (document_id, title or "", body or ""),
+            )
+
+    def delete_document_fts(self, document_id: str) -> None:
+        with self._connection(commit=True) as connection:
+            if not self._fts5_available(connection):
+                return
+            connection.execute(
+                "DELETE FROM documents_fts WHERE document_id = ?",
+                (document_id,),
+            )
+
+    @staticmethod
+    def _quote_fts_query(query: str) -> str:
+        """Wrap each whitespace-separated token in double quotes so FTS5
+        metacharacters (``-``, ``:``, ``"``, ``/``, ``%``, unmatched quotes,
+        etc.) never reach the MATCH parser. Callers get literal phrase
+        matching per token joined by implicit AND, which is what a
+        user-facing keyword search expects.
+        """
+        tokens = (query or "").split()
+        if not tokens:
+            return ""
+        return " ".join(f'"{t.replace(chr(34), chr(34) * 2)}"' for t in tokens)
+
+    def search_documents(
+        self,
+        query: str,
+        *,
+        limit: int = 50,
+    ) -> list[DocumentRecord]:
+        """BM25-ranked full-text search across document title + body.
+
+        Falls back to LIKE over title + subtitle if FTS5 is unavailable or
+        if the MATCH query still fails after sanitization. Pass an empty
+        ``query`` to get the empty list — use :meth:`list_documents` for
+        the unfiltered recency feed.
+        """
+        query = (query or "").strip()
+        if not query:
+            return []
+        with self._connection(commit=False) as connection:
+            if self._fts5_available(connection):
+                sanitized = self._quote_fts_query(query)
+                if sanitized:
+                    try:
+                        rows = connection.execute(
+                            """
+                            SELECT document.*
+                            FROM documents_fts
+                            JOIN document
+                              ON document.document_id = documents_fts.document_id
+                            WHERE documents_fts MATCH ?
+                            ORDER BY rank
+                            LIMIT ?
+                            """,
+                            (sanitized, limit),
+                        ).fetchall()
+                        return [self._row_to_document(r) for r in rows]
+                    except sqlite3.OperationalError:
+                        pass  # defensive: fall through to LIKE
+            like = f"%{query}%"
+            rows = connection.execute(
+                """
+                SELECT * FROM document
+                WHERE title LIKE ? OR subtitle LIKE ?
+                ORDER BY published_epoch_ms DESC, published_date DESC
+                LIMIT ?
+                """,
+                (like, like, limit),
+            ).fetchall()
+        return [self._row_to_document(row) for row in rows]
 
     def seed_doc_sources_and_families(self, source_configs: dict[str, dict[str, dict[str, Any]]]) -> None:
         """Populate doc_source and doc_release_family from scraper config dicts.
@@ -5596,6 +5867,7 @@ class SQLiteEngineStore:
             ("eia", _EIA_FAMILY_MAP),
             ("treasury_fiscal", _TREASURY_FAMILY_MAP),
             ("nyfed", _NYFED_FAMILY_MAP),
+            ("rateprobability", _RATEPROBABILITY_FAMILY_MAP),
             ("imf", _IMF_FAMILY_MAP),
             ("eurostat", _EUROSTAT_FAMILY_MAP),
             ("bis", _BIS_FAMILY_MAP),
@@ -5735,6 +6007,7 @@ class SQLiteEngineStore:
         ("POLICY_RATE_US",      "nyfed",          "NYFED_EFFR",     "us.rates.effr",                 1, "primary",     "NY Fed EFFR"),
         ("POLICY_RATE_US",      "fred",           "DFF",            "us.rates.fed_funds",            2, "secondary",   "Daily effective rate"),
         ("POLICY_RATE_US",      "bis",            "BIS_POLICY_US",  "us.rates.policy_bis",           3, "cross_check", "BIS central bank policy"),
+        ("FEDWATCH_US",         "rateprobability","FEDWATCH_MIDPOINT","us.rates.fedwatch_midpoint",  1, "primary",     "CME-equivalent midpoint, daily snapshot"),
         ("SOFR_US",             "nyfed",          "NYFED_SOFR",     "us.rates.sofr",                 1, "primary",     "Secured overnight"),
         ("OBFR_US",             "nyfed",          "NYFED_OBFR",     "us.rates.obfr",                 1, "primary",     "Overnight bank funding"),
         ("TREASURY_2Y_US",      "fred",           "DGS2",           "us.rates.treasury_2y",          1, "primary",     "Daily constant maturity"),
@@ -5757,6 +6030,7 @@ class SQLiteEngineStore:
         #
         # ── US Credit ────────────────────────────────────────────────
         ("HY_OAS_US",           "fred",           "BAMLH0A0HYM2",  "us.credit.hy_oas",              1, "primary",     "ICE BofA HY OAS"),
+        ("VIX_US",              "fred",           "VIXCLS",         "us.markets.vix",                1, "primary",     "CBOE VIX close, regime-classified via obs_enrichment"),
         ("CREDIT_GAP_US",       "bis",            "BIS_CREDIT_GAP_US","us.credit.gap",               1, "primary",     "Credit-to-GDP gap"),
         #
         # ── US Property ──────────────────────────────────────────────
@@ -5846,6 +6120,475 @@ class SQLiteEngineStore:
                     """,
                     (priority, role, concept_id, source_id, series_id),
                 )
+
+    # ── Unified subject vocabulary ───────────────────────────────────
+
+    def sync_subjects(self, subjects: list[dict]) -> None:
+        """Upsert the subject vocabulary and its aliases.
+
+        ``subjects`` is the list parsed from ``config/subjects.yaml`` — each
+        dict has ``id``, ``display``, and an ``aliases`` mapping of
+        alias_type → list of alias values. Existing subjects are replaced
+        and their alias rows rebuilt; subjects not in the input are left
+        alone so removal is always explicit.
+        """
+        with self._connection(commit=True) as connection:
+            for sub in subjects:
+                sid = sub["id"]
+                connection.execute(
+                    "INSERT OR REPLACE INTO subjects (subject_id, display_name) "
+                    "VALUES (?, ?)",
+                    (sid, sub["display"]),
+                )
+                connection.execute(
+                    "DELETE FROM subject_aliases WHERE subject_id = ?",
+                    (sid,),
+                )
+                alias_rows: list[tuple[str, str, str]] = []
+                for alias_type, values in (sub.get("aliases") or {}).items():
+                    for value in values or []:
+                        alias_rows.append((sid, alias_type, value))
+                if alias_rows:
+                    connection.executemany(
+                        "INSERT OR IGNORE INTO subject_aliases "
+                        "(subject_id, alias_type, alias_value) VALUES (?, ?, ?)",
+                        alias_rows,
+                    )
+
+    def list_subjects(self) -> list[dict[str, str]]:
+        """Return all subjects with their display names, ordered by id."""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                "SELECT subject_id, display_name FROM subjects ORDER BY subject_id"
+            ).fetchall()
+            return [{"subject_id": r["subject_id"], "display_name": r["display_name"]}
+                    for r in rows]
+
+    def get_subject_aliases(
+        self, subject_id: str, *, alias_type: str | None = None
+    ) -> list[str]:
+        """Return alias values for a subject, optionally filtered by type."""
+        with self._connection(commit=False) as connection:
+            if alias_type:
+                rows = connection.execute(
+                    "SELECT alias_value FROM subject_aliases "
+                    "WHERE subject_id = ? AND alias_type = ?",
+                    (subject_id, alias_type),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT alias_value FROM subject_aliases WHERE subject_id = ?",
+                    (subject_id,),
+                ).fetchall()
+            return [r[0] for r in rows]
+
+    # ── Observation enrichment (regime labels, etc.) ────────────────────
+
+    def set_obs_enrichment(
+        self, *, obs_family_id: str, date: str, key: str, value: str,
+    ) -> None:
+        """Upsert a single (family, date, key) enrichment row.
+
+        ``value`` is stored as text so the same sidecar can hold regime
+        labels, boolean-as-string flags, or numeric buckets without a
+        type-specific column.
+        """
+        now = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO obs_enrichment "
+                "(obs_family_id, date, key, value, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (obs_family_id, date, key, value, now),
+            )
+
+    def get_obs_enrichment(
+        self, *, obs_family_id: str, date: str, key: str,
+    ) -> str | None:
+        """Return the enrichment value for one (family, date, key) tuple,
+        or ``None`` if no row exists."""
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT value FROM obs_enrichment "
+                "WHERE obs_family_id = ? AND date = ? AND key = ?",
+                (obs_family_id, date, key),
+            ).fetchone()
+        return row["value"] if row else None
+
+    def list_obs_enrichment_for_family(
+        self, obs_family_id: str, *, key: str | None = None,
+    ) -> list[tuple[str, str, str]]:
+        """Return ``(date, key, value)`` rows for a family, optionally
+        filtered by ``key``, ordered by date descending."""
+        with self._connection(commit=False) as connection:
+            if key is not None:
+                rows = connection.execute(
+                    "SELECT date, key, value FROM obs_enrichment "
+                    "WHERE obs_family_id = ? AND key = ? "
+                    "ORDER BY date DESC",
+                    (obs_family_id, key),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT date, key, value FROM obs_enrichment "
+                    "WHERE obs_family_id = ? ORDER BY date DESC, key",
+                    (obs_family_id,),
+                ).fetchall()
+        return [(r["date"], r["key"], r["value"]) for r in rows]
+
+    def refresh_vix_regime(
+        self, *, source: str = "fred", series_id: str = "VIXCLS",
+        obs_family_id: str = "us.markets.vix",
+    ) -> int:
+        """Compute regime labels for every VIX close stored so far and
+        upsert them into obs_enrichment under key='regime'.
+
+        Callers can invoke this after a FRED refresh (or on a schedule)
+        so the latest snapshot always has a classification. Returns the
+        number of rows written.
+        """
+        from ingestion.timeseries.regimes import classify_vix_regime
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                "SELECT date, value FROM indicators "
+                "WHERE series_id = ? AND source = ?",
+                (series_id, source),
+            ).fetchall()
+        written = 0
+        for row in rows:
+            label = classify_vix_regime(row["value"])
+            if label is None:
+                continue
+            self.set_obs_enrichment(
+                obs_family_id=obs_family_id,
+                date=row["date"],
+                key="regime",
+                value=label,
+            )
+            written += 1
+        return written
+
+    def set_document_subjects(
+        self, document_id: str, subjects: dict[str, float]
+    ) -> None:
+        """Replace the item_subjects rows for ``document_id``.
+
+        ``subjects`` is a ``{subject_id: confidence}`` mapping produced by
+        :class:`storage.subjects.SubjectTagger` at ingest time. Rewriting
+        on every upsert keeps tagging idempotent.
+        """
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "DELETE FROM item_subjects WHERE item_sha = ?",
+                (document_id,),
+            )
+            if subjects:
+                connection.executemany(
+                    "INSERT INTO item_subjects "
+                    "(item_sha, subject_id, confidence) VALUES (?, ?, ?)",
+                    [(document_id, sid, float(c)) for sid, c in subjects.items()],
+                )
+
+    def list_document_subjects(self, document_id: str) -> list[tuple[str, float]]:
+        """Return ``(subject_id, confidence)`` tags for a document,
+        ordered by confidence descending."""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                "SELECT subject_id, confidence FROM item_subjects "
+                "WHERE item_sha = ? ORDER BY confidence DESC, subject_id",
+                (document_id,),
+            ).fetchall()
+        return [(r[0], float(r[1])) for r in rows]
+
+    def backfill_documents_fts(self) -> int:
+        """Populate ``documents_fts`` for documents missing an index row.
+
+        Needed on upgraded DBs that accumulated rows before Step 2 added
+        the virtual table. Rebuilds ``(document_id, title, body)`` from
+        ``document`` + the most recent ``document_blob`` markdown per
+        document. Idempotent: subsequent calls are no-ops once every
+        document has an FTS row.
+        """
+        with self._connection(commit=False) as connection:
+            if not self._fts5_available(connection):
+                return 0
+            rows = connection.execute(
+                """
+                SELECT d.document_id, d.title,
+                       COALESCE(
+                           (SELECT content_text FROM document_blob b
+                            WHERE b.document_id = d.document_id
+                              AND b.blob_role = 'markdown'
+                            ORDER BY b.extracted_at DESC LIMIT 1),
+                           ''
+                       ) AS body
+                FROM document d
+                WHERE d.document_id NOT IN (
+                    SELECT document_id FROM documents_fts
+                )
+                """
+            ).fetchall()
+        written = 0
+        for row in rows:
+            self.upsert_document_fts(
+                document_id=row["document_id"],
+                title=row["title"] or "",
+                body=row["body"] or "",
+            )
+            written += 1
+        return written
+
+    def backfill_document_subjects(self) -> int:
+        """Tag documents that have no ``item_subjects`` rows.
+
+        Runs the current :class:`storage.subjects.SubjectTagger` against
+        each untagged document's title and writes any title-regex matches.
+        Used by upgraded DBs to fill in subject tags for pre-merge rows;
+        new ingestion already tags at write time. Idempotent: documents
+        that are already tagged (even with zero matches left after a
+        re-tag) are skipped via the NOT IN filter.
+        """
+        from storage.subjects import SubjectTagger
+        with self._connection(commit=False) as connection:
+            tagger = SubjectTagger(connection)
+            untagged = connection.execute(
+                """
+                SELECT document_id, title FROM document
+                WHERE document_id NOT IN (
+                    SELECT item_sha FROM item_subjects
+                )
+                """
+            ).fetchall()
+        written = 0
+        for row in untagged:
+            tags = dict(tagger.tag_text(row["title"] or ""))
+            if tags:
+                self.set_document_subjects(row["document_id"], tags)
+                written += 1
+        return written
+
+    def list_items_for_subject(
+        self,
+        subject_id: str,
+        *,
+        limit: int = 50,
+        min_confidence: float = 0.0,
+        document_type: str | None = None,
+        country_code: str | None = None,
+    ) -> list[DocumentRecord]:
+        """Return documents tagged with ``subject_id`` (confidence >= the
+        filter), most-recent first. Joins item_subjects + document and
+        applies document_type / country_code predicates in SQL so the
+        caller doesn't have to post-filter a capped window."""
+        sql = [
+            "SELECT document.*",
+            "FROM item_subjects",
+            "JOIN document",
+            "  ON document.document_id = item_subjects.item_sha",
+            "WHERE item_subjects.subject_id = ?",
+            "  AND item_subjects.confidence >= ?",
+        ]
+        params: list[Any] = [subject_id, min_confidence]
+        if document_type:
+            sql.append("  AND document.document_type = ?")
+            params.append(document_type)
+        if country_code:
+            sql.append("  AND document.country_code = ?")
+            params.append(country_code)
+        sql.append("ORDER BY document.published_epoch_ms DESC,")
+        sql.append("         document.published_date DESC")
+        sql.append("LIMIT ?")
+        params.append(limit)
+        with self._connection(commit=False) as connection:
+            rows = connection.execute("\n".join(sql), params).fetchall()
+        return [self._row_to_document(r) for r in rows]
+
+    def list_items_combined(
+        self,
+        *,
+        subject_id: str | None,
+        query: str | None,
+        limit: int = 50,
+        min_confidence: float = 0.0,
+        document_type: str | None = None,
+        country_code: str | None = None,
+    ) -> list[DocumentRecord]:
+        """Return documents matching both a subject tag AND an FTS query.
+
+        Filters are applied in SQL so the limit bounds the *final*
+        result set — not a candidate pool that might miss valid matches
+        beyond the window. Falls back to LIKE when FTS5 is unavailable
+        or the MATCH query fails after quoting. When only one of
+        ``subject_id`` / ``query`` is given, routes to
+        :meth:`list_items_for_subject` or :meth:`search_documents`
+        respectively (with the same extra predicates applied).
+        """
+        subject_id = (subject_id or "").strip() or None
+        query = (query or "").strip() or None
+
+        if subject_id and not query:
+            return self.list_items_for_subject(
+                subject_id, limit=limit, min_confidence=min_confidence,
+                document_type=document_type, country_code=country_code,
+            )
+        if query and not subject_id:
+            return self._search_documents_filtered(
+                query, limit=limit,
+                document_type=document_type, country_code=country_code,
+            )
+        if not subject_id and not query:
+            return self.list_documents(
+                document_type=document_type, country_code=country_code,
+                limit=limit,
+            )
+
+        # Both set — combine in one query so the limit isn't eaten by a
+        # pre-intersection cap.
+        type_clause = " AND document.document_type = ?" if document_type else ""
+        country_clause = " AND document.country_code = ?" if country_code else ""
+        extra_params: list[Any] = []
+        if document_type:
+            extra_params.append(document_type)
+        if country_code:
+            extra_params.append(country_code)
+
+        with self._connection(commit=False) as connection:
+            if self._fts5_available(connection):
+                sanitized = self._quote_fts_query(query or "")
+                if sanitized:
+                    try:
+                        rows = connection.execute(
+                            f"""
+                            SELECT document.*
+                            FROM documents_fts
+                            JOIN document
+                              ON document.document_id = documents_fts.document_id
+                            JOIN item_subjects
+                              ON item_subjects.item_sha = document.document_id
+                            WHERE documents_fts MATCH ?
+                              AND item_subjects.subject_id = ?
+                              AND item_subjects.confidence >= ?
+                              {type_clause}{country_clause}
+                            ORDER BY rank
+                            LIMIT ?
+                            """,
+                            [sanitized, subject_id, min_confidence, *extra_params, limit],
+                        ).fetchall()
+                        return [self._row_to_document(r) for r in rows]
+                    except sqlite3.OperationalError:
+                        pass  # fall through to LIKE
+            like = f"%{query}%"
+            rows = connection.execute(
+                f"""
+                SELECT document.*
+                FROM document
+                JOIN item_subjects
+                  ON item_subjects.item_sha = document.document_id
+                WHERE item_subjects.subject_id = ?
+                  AND item_subjects.confidence >= ?
+                  AND (document.title LIKE ? OR document.subtitle LIKE ?)
+                  {type_clause}{country_clause}
+                ORDER BY document.published_epoch_ms DESC,
+                         document.published_date DESC
+                LIMIT ?
+                """,
+                [subject_id, min_confidence, like, like, *extra_params, limit],
+            ).fetchall()
+        return [self._row_to_document(r) for r in rows]
+
+    def _search_documents_filtered(
+        self,
+        query: str,
+        *,
+        limit: int,
+        document_type: str | None,
+        country_code: str | None,
+    ) -> list[DocumentRecord]:
+        """Like :meth:`search_documents` but with document_type / country
+        predicates applied in SQL so the limit counts post-filter rows."""
+        if not (document_type or country_code):
+            return self.search_documents(query, limit=limit)
+        query = query.strip()
+        if not query:
+            return []
+        type_clause = " AND document.document_type = ?" if document_type else ""
+        country_clause = " AND document.country_code = ?" if country_code else ""
+        extra_params: list[Any] = []
+        if document_type:
+            extra_params.append(document_type)
+        if country_code:
+            extra_params.append(country_code)
+        with self._connection(commit=False) as connection:
+            if self._fts5_available(connection):
+                sanitized = self._quote_fts_query(query)
+                if sanitized:
+                    try:
+                        rows = connection.execute(
+                            f"""
+                            SELECT document.*
+                            FROM documents_fts
+                            JOIN document
+                              ON document.document_id = documents_fts.document_id
+                            WHERE documents_fts MATCH ?
+                              {type_clause}{country_clause}
+                            ORDER BY rank
+                            LIMIT ?
+                            """,
+                            [sanitized, *extra_params, limit],
+                        ).fetchall()
+                        return [self._row_to_document(r) for r in rows]
+                    except sqlite3.OperationalError:
+                        pass
+            like = f"%{query}%"
+            rows = connection.execute(
+                f"""
+                SELECT * FROM document
+                WHERE (title LIKE ? OR subtitle LIKE ?)
+                  {type_clause}{country_clause}
+                ORDER BY published_epoch_ms DESC, published_date DESC
+                LIMIT ?
+                """,
+                [like, like, *extra_params, limit],
+            ).fetchall()
+        return [self._row_to_document(r) for r in rows]
+
+    def get_document_body(self, document_id: str) -> str:
+        """Return the markdown body text for a document, empty string
+        when no blob has been persisted yet."""
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT content_text FROM document_blob "
+                "WHERE document_id = ? AND blob_role = 'markdown' "
+                "ORDER BY extracted_at DESC LIMIT 1",
+                (document_id,),
+            ).fetchone()
+        return row["content_text"] if row and row["content_text"] else ""
+
+    def get_document_by_sha(self, hash_sha256: str) -> DocumentRecord | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM document WHERE hash_sha256 = ? LIMIT 1",
+                (hash_sha256,),
+            ).fetchone()
+        return self._row_to_document(row) if row else None
+
+    def resolve_subjects_for_concept(self, concept_id: str) -> list[str]:
+        """Find subject_ids that alias any provider_series_id registered for
+        ``concept_id`` in concept_map. Used at query time to pivot between
+        the timeseries vocabulary (CPI_US) and the subject vocabulary
+        (econ.cpi) without a dedicated bridge table.
+        """
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT sa.subject_id
+                FROM concept_map cm
+                JOIN subject_aliases sa ON sa.alias_value = cm.provider_series_id
+                WHERE cm.concept_id = ?
+                """,
+                (concept_id,),
+            ).fetchall()
+            return [r[0] for r in rows]
 
     def get_concept_series(self, concept_id: str) -> list[ConceptMapRecord]:
         """Return all source mappings for a given concept, ordered by priority."""

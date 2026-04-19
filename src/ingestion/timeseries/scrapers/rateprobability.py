@@ -25,11 +25,17 @@ class FedMeetingProbability:
 
 @dataclass(frozen=True)
 class FedRateProbability:
-    """Full snapshot of Fed rate probabilities from rateprobability.com."""
+    """Full snapshot of Fed rate probabilities from rateprobability.com.
+
+    ``midpoint`` is ``None`` when the upstream payload omits the field,
+    so downstream ingestion can skip publishing a synthetic 0% value to
+    ``FEDWATCH_US`` / ``FEDWATCH_MIDPOINT`` — the concept resolver would
+    otherwise return 0.0 as if it were a real rate.
+    """
 
     as_of: str
     current_band: str
-    midpoint: float
+    midpoint: float | None
     effr: float
     meetings: list[FedMeetingProbability]
     snapshots: dict[str, list[FedMeetingProbability]] = field(default_factory=dict)
@@ -58,7 +64,15 @@ class RateProbabilityClient:
         today = data.get("today", {})
         as_of = today.get("as_of", "")
         current_band = today.get("current band", "")
-        midpoint = float(today.get("midpoint", 0))
+        # Preserve None for a missing midpoint — a concept-mapped series
+        # must not publish a synthetic 0% rate when the upstream field is
+        # absent. See codex review of the FedWatch ingestion commit.
+        raw_midpoint = today.get("midpoint")
+        midpoint: float | None
+        try:
+            midpoint = float(raw_midpoint) if raw_midpoint is not None else None
+        except (TypeError, ValueError):
+            midpoint = None
         effr = float(today.get("most_recent_effr", 0))
 
         meetings = self._parse_meetings(today.get("rows", []))
