@@ -2088,6 +2088,49 @@ class SQLiteEngineStore:
                 "CREATE INDEX IF NOT EXISTS idx_calendar_events_indicator_id "
                 "ON calendar_events(indicator_id)"
             )
+            # ── Unified subject vocabulary (issue #2) ──────────────────
+            # subject_id is the canonical cross-source identifier (e.g.
+            # 'econ.cpi', 'rate.us.sofr'). Aliases map source-native keys
+            # (FRED series, calendar indicator strings, title regex, ...)
+            # back to a subject. item_subjects tags documents at ingest;
+            # calendar_events and observations are resolved at query time
+            # via subject_alias lookups.
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS subjects (
+                    subject_id   TEXT PRIMARY KEY,
+                    display_name TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS subject_aliases (
+                    subject_id  TEXT NOT NULL,
+                    alias_type  TEXT NOT NULL,
+                    alias_value TEXT NOT NULL,
+                    PRIMARY KEY (subject_id, alias_type, alias_value)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_subject_aliases_lookup "
+                "ON subject_aliases(alias_type, alias_value)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS item_subjects (
+                    item_sha   TEXT NOT NULL,
+                    subject_id TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    PRIMARY KEY (item_sha, subject_id)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_item_subjects_subject "
+                "ON item_subjects(subject_id)"
+            )
 
     def _ensure_table_columns(
         self,
@@ -5846,6 +5889,85 @@ class SQLiteEngineStore:
                     """,
                     (priority, role, concept_id, source_id, series_id),
                 )
+
+    # ── Unified subject vocabulary ───────────────────────────────────
+
+    def sync_subjects(self, subjects: list[dict]) -> None:
+        """Upsert the subject vocabulary and its aliases.
+
+        ``subjects`` is the list parsed from ``config/subjects.yaml`` — each
+        dict has ``id``, ``display``, and an ``aliases`` mapping of
+        alias_type → list of alias values. Existing subjects are replaced
+        and their alias rows rebuilt; subjects not in the input are left
+        alone so removal is always explicit.
+        """
+        with self._connection(commit=True) as connection:
+            for sub in subjects:
+                sid = sub["id"]
+                connection.execute(
+                    "INSERT OR REPLACE INTO subjects (subject_id, display_name) "
+                    "VALUES (?, ?)",
+                    (sid, sub["display"]),
+                )
+                connection.execute(
+                    "DELETE FROM subject_aliases WHERE subject_id = ?",
+                    (sid,),
+                )
+                alias_rows: list[tuple[str, str, str]] = []
+                for alias_type, values in (sub.get("aliases") or {}).items():
+                    for value in values or []:
+                        alias_rows.append((sid, alias_type, value))
+                if alias_rows:
+                    connection.executemany(
+                        "INSERT OR IGNORE INTO subject_aliases "
+                        "(subject_id, alias_type, alias_value) VALUES (?, ?, ?)",
+                        alias_rows,
+                    )
+
+    def list_subjects(self) -> list[dict[str, str]]:
+        """Return all subjects with their display names, ordered by id."""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                "SELECT subject_id, display_name FROM subjects ORDER BY subject_id"
+            ).fetchall()
+            return [{"subject_id": r["subject_id"], "display_name": r["display_name"]}
+                    for r in rows]
+
+    def get_subject_aliases(
+        self, subject_id: str, *, alias_type: str | None = None
+    ) -> list[str]:
+        """Return alias values for a subject, optionally filtered by type."""
+        with self._connection(commit=False) as connection:
+            if alias_type:
+                rows = connection.execute(
+                    "SELECT alias_value FROM subject_aliases "
+                    "WHERE subject_id = ? AND alias_type = ?",
+                    (subject_id, alias_type),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT alias_value FROM subject_aliases WHERE subject_id = ?",
+                    (subject_id,),
+                ).fetchall()
+            return [r[0] for r in rows]
+
+    def resolve_subjects_for_concept(self, concept_id: str) -> list[str]:
+        """Find subject_ids that alias any provider_series_id registered for
+        ``concept_id`` in concept_map. Used at query time to pivot between
+        the timeseries vocabulary (CPI_US) and the subject vocabulary
+        (econ.cpi) without a dedicated bridge table.
+        """
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT sa.subject_id
+                FROM concept_map cm
+                JOIN subject_aliases sa ON sa.alias_value = cm.provider_series_id
+                WHERE cm.concept_id = ?
+                """,
+                (concept_id,),
+            ).fetchall()
+            return [r[0] for r in rows]
 
     def get_concept_series(self, concept_id: str) -> list[ConceptMapRecord]:
         """Return all source mappings for a given concept, ordered by priority."""

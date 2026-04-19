@@ -1,0 +1,261 @@
+# Unified subject vocabulary — issue #2 v1 (20 seed subjects).
+#
+# Each subject has:
+#   id:              canonical flat identifier, stable across sources
+#   display:         human-readable label
+#   aliases:
+#     fred_series:       FRED series IDs (matched against macro_data series_id)
+#     calendar_indicator: calendar_events.indicator values
+#     title_regex:       regex patterns matched against news/newsletter titles
+#                        (word-boundary, case-insensitive, confidence 0.8)
+#
+# Keep flat. No parent hierarchy, no negative patterns, no disambiguation rules
+# in v1 — add only when observed false positives justify the complexity.
+
+subjects:
+
+  # ----- US economic indicators -----
+
+  # Geo-neutral subjects: regex matches the concept without a country prefix,
+  # so the subject ID avoids claiming a specific country. If you need
+  # country-scoped results, filter by `country` on the returned rows.
+
+  - id: econ.cpi
+    display: "CPI"
+    aliases:
+      fred_series: [CPIAUCSL, CPILFESL, CUUR0000SA0]
+      calendar_indicator: ["CPI", "Core CPI", "Consumer Price Index", "CPI MoM", "CPI YoY"]
+      title_regex:
+        - '\bCPI\b'
+        - '\bconsumer price(?:s|\s+index)\b'
+        - '\bheadline inflation\b'
+        - '\bcore inflation\b'
+
+  - id: econ.ppi
+    display: "PPI"
+    aliases:
+      fred_series: [PPIACO, PPIFIS]
+      calendar_indicator: ["PPI", "Producer Price Index", "PPI MoM", "PPI YoY"]
+      title_regex:
+        - '\bPPI\b'
+        - '\bproducer price(?:s|\s+index)\b'
+
+  - id: econ.us.core_pce
+    display: "US Core PCE"
+    aliases:
+      fred_series: [PCEPILFE, PCEPI]
+      calendar_indicator: ["Core PCE Price Index", "PCE Price Index", "Core PCE"]
+      title_regex:
+        - '\b(?:core\s+)?PCE\b'
+        - '\bpersonal consumption expenditures\b'
+
+  - id: econ.us.nfp
+    display: "US Nonfarm Payrolls"
+    aliases:
+      fred_series: [PAYEMS]
+      calendar_indicator: ["Nonfarm Payrolls", "Non-Farm Payrolls", "NFP"]
+      title_regex:
+        - '\bNFP\b'
+        - '\bnon[- ]?farm payroll'
+        - '\bjobs report\b'
+        - '\bpayrolls report\b'
+
+  - id: econ.unemployment
+    display: "Unemployment Rate"
+    aliases:
+      fred_series: [UNRATE]
+      calendar_indicator: ["Unemployment Rate"]
+      title_regex:
+        - '\bunemployment rate\b'
+        - '\bjobless rate\b'
+
+  - id: econ.gdp
+    display: "GDP"
+    aliases:
+      fred_series: [GDPC1, GDP]
+      calendar_indicator: ["GDP", "GDP Growth Rate", "GDP Annualized QoQ", "GDP QoQ"]
+      title_regex:
+        - '\bGDP\b'
+        - '\bgross domestic product\b'
+
+  - id: econ.retail_sales
+    display: "Retail Sales"
+    aliases:
+      fred_series: [RSAFS, RRSFS]
+      calendar_indicator: ["Retail Sales", "Retail Sales MoM", "Retail Sales YoY"]
+      title_regex:
+        - '\bretail sales\b'
+
+  # ----- Central bank rates -----
+
+  - id: rate.us.fed_funds
+    display: "US Fed Funds Rate"
+    aliases:
+      fred_series: [FEDFUNDS, DFF]
+      calendar_indicator: ["Fed Interest Rate Decision", "FOMC Rate Decision", "Federal Funds Rate"]
+      title_regex:
+        - '\bfed funds\b'
+        - '\bfederal funds rate\b'
+        - '\bFOMC\b'
+        - '\bfed(?:eral reserve)?\s+rate\b'
+
+  - id: rate.eu.ecb_depo
+    display: "ECB Deposit Rate"
+    aliases:
+      fred_series: [ECBDFR]
+      calendar_indicator: ["ECB Interest Rate Decision", "Deposit Facility Rate"]
+      title_regex:
+        - '\bECB\b'
+        - '\beuropean central bank\b'
+        - '\bdeposit (?:facility )?rate\b'
+
+  - id: rate.jp.boj
+    display: "BOJ Policy Rate"
+    aliases:
+      fred_series: [IRSTCI01JPM156N]
+      calendar_indicator: ["BoJ Interest Rate Decision", "BOJ Rate Decision"]
+      title_regex:
+        - '\bBOJ\b'
+        - '\bbank of japan\b'
+
+  # ----- Sovereign yields -----
+
+  - id: rate.us.2y
+    display: "US 2Y Treasury Yield"
+    aliases:
+      fred_series: [DGS2]
+      calendar_indicator: []
+      title_regex:
+        - '\b2[- ]?year (?:treasury|yield|note)\b'
+        - '\btwo[- ]year (?:treasury|yield|note)\b'
+        - '\b2Y\b'
+
+  - id: rate.us.10y
+    display: "US 10Y Treasury Yield"
+    aliases:
+      fred_series: [DGS10]
+      calendar_indicator: []
+      title_regex:
+        - '\b10[- ]?year (?:treasury|yield|note)\b'
+        - '\bten[- ]year (?:treasury|yield|note)\b'
+        - '\b10Y\b'
+
+  # ----- Reference rates (NY Fed) -----
+
+  # NY Fed rates store two alias forms for the same series: the natural
+  # name (SOFR/EFFR/OBFR) that humans and news titles use, plus the
+  # NYFED_-prefixed form that macro-data-service's concept_map records
+  # as provider_series_id. Listing both lets the query-time bridge
+  # resolve either direction without a normalization layer.
+
+  - id: rate.us.sofr
+    display: "US SOFR"
+    aliases:
+      ny_fed_series: [SOFR, NYFED_SOFR]
+      title_regex:
+        - '\bSOFR\b'
+        - '\bsecured overnight financing rate\b'
+
+  - id: rate.us.effr
+    display: "US EFFR"
+    aliases:
+      ny_fed_series: [EFFR, NYFED_EFFR]
+      title_regex:
+        - '\bEFFR\b'
+        - '\beffective fed(?:eral)? funds rate\b'
+
+  - id: rate.us.obfr
+    display: "US OBFR"
+    aliases:
+      ny_fed_series: [OBFR, NYFED_OBFR]
+      title_regex:
+        - '\bOBFR\b'
+        - '\bovernight bank funding rate\b'
+
+  - id: rate.us.fedwatch
+    display: "US FedWatch (rate expectations)"
+    aliases:
+      fedwatch_series: [FEDWATCH_MIDPOINT]
+      title_regex:
+        - '\bFedWatch\b'
+        - '\brate expectation'
+        - '\bimplied (?:fed )?rate'
+        - '\bFOMC probabilit'
+
+  # ----- Volatility & FX -----
+
+  - id: vol.vix
+    display: "VIX"
+    aliases:
+      fred_series: [VIXCLS]
+      calendar_indicator: []
+      title_regex:
+        - '\bVIX\b'
+        - '\bvolatility index\b'
+
+  - id: fx.dxy
+    display: "Dollar Index (DXY)"
+    aliases:
+      fred_series: [DTWEXBGS, DTWEXM]
+      calendar_indicator: []
+      title_regex:
+        - '\bDXY\b'
+        - '\bdollar index\b'
+
+  # ----- Commodities -----
+
+  - id: commodity.wti
+    display: "WTI Crude Oil"
+    aliases:
+      fred_series: [DCOILWTICO]
+      calendar_indicator: []
+      title_regex:
+        - '\bWTI\b'
+        - '\bwest texas intermediate\b'
+
+  - id: commodity.brent
+    display: "Brent Crude Oil"
+    aliases:
+      fred_series: [DCOILBRENTEU]
+      calendar_indicator: []
+      title_regex:
+        - '\bbrent(?:\s+crude)?\b'
+
+  - id: commodity.gold
+    display: "Gold"
+    aliases:
+      fred_series: [GOLDAMGBD228NLBM]
+      calendar_indicator: []
+      title_regex:
+        - '\bgold price(?:s)?\b'
+        - '\bgold futures\b'
+        - '\bspot gold\b'
+
+  # ----- Equities (US large-cap examples) -----
+
+  - id: equity.us.aapl
+    display: "Apple (AAPL)"
+    aliases:
+      fred_series: []
+      calendar_indicator: []
+      title_regex:
+        - '\bAAPL\b'
+        - '\bapple(?:\s+inc)?\b'
+
+  - id: equity.us.msft
+    display: "Microsoft (MSFT)"
+    aliases:
+      fred_series: []
+      calendar_indicator: []
+      title_regex:
+        - '\bMSFT\b'
+        - '\bmicrosoft\b'
+
+  - id: equity.us.nvda
+    display: "Nvidia (NVDA)"
+    aliases:
+      fred_series: []
+      calendar_indicator: []
+      title_regex:
+        - '\bNVDA\b'
+        - '\bnvidia\b'
