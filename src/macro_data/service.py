@@ -79,6 +79,122 @@ class LocalMacroDataService:
             return {"error": "calendar refresh unavailable"}
         return dict(self._ingestion.refresh_calendar())
 
+    # ── Unified document queries (issue #2 / #3) ────────────────────────
+
+    def _op_list_items(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Merged feed across the unified document surface.
+
+        Arguments:
+          subject         — subject_id to filter on (e.g. "econ.cpi")
+          q               — free-text query (FTS5 over title + body)
+          min_confidence  — default 0.0; filters item_subjects rows
+          limit           — default 50, capped at 500
+          document_type   — optional exact match (e.g. "report")
+          country_code    — optional 2-letter ISO filter
+
+        Returns ``{"items": [...], "total": N}`` with summary rows
+        (no body) — use get_document to fetch a single markdown.
+        """
+        subject = (arguments.get("subject") or "").strip() or None
+        query = (arguments.get("q") or "").strip() or None
+        document_type = (arguments.get("document_type") or "").strip() or None
+        country_code = (arguments.get("country_code") or "").strip() or None
+        try:
+            limit = int(arguments.get("limit") or 50)
+        except (TypeError, ValueError):
+            limit = 50
+        limit = max(1, min(limit, 500))
+        # min_confidence matches the `limit` handling: malformed input
+        # falls back to the default so a string-typed argument never
+        # bubbles up as a 500 from the HTTP handler.
+        raw_conf = arguments.get("min_confidence")
+        try:
+            min_conf = float(raw_conf) if raw_conf is not None else 0.0
+        except (TypeError, ValueError):
+            min_conf = 0.0
+
+        # Filters live in SQL via list_items_combined so the limit
+        # bounds the final result set — no pre-intersection cap that
+        # could hide matches beyond the candidate window.
+        candidates = self._store.list_items_combined(
+            subject_id=subject,
+            query=query,
+            limit=limit,
+            min_confidence=min_conf,
+            document_type=document_type,
+            country_code=country_code,
+        )
+
+        items = [self._document_summary(d) for d in candidates]
+        return {"total": len(items), "items": items}
+
+    def _op_get_document(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Fetch one document (metadata + markdown body + subject tags).
+
+        Accepts either ``document_id`` (internal TEXT id) or
+        ``hash_sha256`` (content hash stored on the row).
+        """
+        document_id = (arguments.get("document_id") or "").strip()
+        sha = (arguments.get("hash_sha256") or "").strip()
+        if not document_id and not sha:
+            return {"error": "document_id or hash_sha256 is required"}
+        doc = (
+            self._store.get_document(document_id)
+            if document_id
+            else self._store.get_document_by_sha(sha)
+        )
+        if doc is None:
+            return {"document": None}
+        body = self._store.get_document_body(doc.document_id)
+        subjects = self._store.list_document_subjects(doc.document_id)
+        return {
+            "document": self._document_summary(doc),
+            "body": body,
+            "subjects": [{"subject_id": s, "confidence": c} for s, c in subjects],
+        }
+
+    def _op_list_subjects(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """List the subject vocabulary. Seeds the yaml on first call so
+        the response is always complete on a fresh DB."""
+        del arguments
+        try:
+            from storage.subjects import sync_from_yaml
+            sync_from_yaml(self._store)
+        except (AttributeError, TypeError, FileNotFoundError):
+            pass  # best-effort; yaml may be unavailable in test environments
+        return {"subjects": self._store.list_subjects()}
+
+    @staticmethod
+    def _document_summary(doc: Any) -> dict[str, Any]:
+        """Shape a DocumentRecord for API responses — omit internal-only
+        fields (epoch_ms duplicates, release_family_id) to keep the
+        payload lean."""
+        return {
+            "document_id": doc.document_id,
+            "hash_sha256": doc.hash_sha256,
+            "title": doc.title,
+            "subtitle": doc.subtitle,
+            "source_id": doc.source_id,
+            "document_type": doc.document_type,
+            "country_code": doc.country_code,
+            "language_code": doc.language_code,
+            "topic_code": doc.topic_code,
+            "published_date": doc.published_date,
+            "published_at": doc.published_at,
+            "institution": doc.institution,
+            "authors": doc.authors,
+            "data_period": doc.data_period,
+            "market": doc.market,
+            "asset_class": doc.asset_class,
+            "sector": doc.sector,
+            "event_type": doc.event_type,
+            "impact_level": doc.impact_level,
+            "contains_commentary": doc.contains_commentary,
+            "confidence": doc.confidence,
+            "subject_freetext": doc.subject_freetext,
+            "canonical_url": doc.canonical_url,
+        }
+
     def _op_refresh_news(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if self._ingestion is None:
             return {"error": "news refresh unavailable"}

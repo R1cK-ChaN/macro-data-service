@@ -6300,6 +6300,211 @@ class SQLiteEngineStore:
             ).fetchall()
         return [(r[0], float(r[1])) for r in rows]
 
+    def list_items_for_subject(
+        self,
+        subject_id: str,
+        *,
+        limit: int = 50,
+        min_confidence: float = 0.0,
+        document_type: str | None = None,
+        country_code: str | None = None,
+    ) -> list[DocumentRecord]:
+        """Return documents tagged with ``subject_id`` (confidence >= the
+        filter), most-recent first. Joins item_subjects + document and
+        applies document_type / country_code predicates in SQL so the
+        caller doesn't have to post-filter a capped window."""
+        sql = [
+            "SELECT document.*",
+            "FROM item_subjects",
+            "JOIN document",
+            "  ON document.document_id = item_subjects.item_sha",
+            "WHERE item_subjects.subject_id = ?",
+            "  AND item_subjects.confidence >= ?",
+        ]
+        params: list[Any] = [subject_id, min_confidence]
+        if document_type:
+            sql.append("  AND document.document_type = ?")
+            params.append(document_type)
+        if country_code:
+            sql.append("  AND document.country_code = ?")
+            params.append(country_code)
+        sql.append("ORDER BY document.published_epoch_ms DESC,")
+        sql.append("         document.published_date DESC")
+        sql.append("LIMIT ?")
+        params.append(limit)
+        with self._connection(commit=False) as connection:
+            rows = connection.execute("\n".join(sql), params).fetchall()
+        return [self._row_to_document(r) for r in rows]
+
+    def list_items_combined(
+        self,
+        *,
+        subject_id: str | None,
+        query: str | None,
+        limit: int = 50,
+        min_confidence: float = 0.0,
+        document_type: str | None = None,
+        country_code: str | None = None,
+    ) -> list[DocumentRecord]:
+        """Return documents matching both a subject tag AND an FTS query.
+
+        Filters are applied in SQL so the limit bounds the *final*
+        result set — not a candidate pool that might miss valid matches
+        beyond the window. Falls back to LIKE when FTS5 is unavailable
+        or the MATCH query fails after quoting. When only one of
+        ``subject_id`` / ``query`` is given, routes to
+        :meth:`list_items_for_subject` or :meth:`search_documents`
+        respectively (with the same extra predicates applied).
+        """
+        subject_id = (subject_id or "").strip() or None
+        query = (query or "").strip() or None
+
+        if subject_id and not query:
+            return self.list_items_for_subject(
+                subject_id, limit=limit, min_confidence=min_confidence,
+                document_type=document_type, country_code=country_code,
+            )
+        if query and not subject_id:
+            return self._search_documents_filtered(
+                query, limit=limit,
+                document_type=document_type, country_code=country_code,
+            )
+        if not subject_id and not query:
+            return self.list_documents(
+                document_type=document_type, country_code=country_code,
+                limit=limit,
+            )
+
+        # Both set — combine in one query so the limit isn't eaten by a
+        # pre-intersection cap.
+        type_clause = " AND document.document_type = ?" if document_type else ""
+        country_clause = " AND document.country_code = ?" if country_code else ""
+        extra_params: list[Any] = []
+        if document_type:
+            extra_params.append(document_type)
+        if country_code:
+            extra_params.append(country_code)
+
+        with self._connection(commit=False) as connection:
+            if self._fts5_available(connection):
+                sanitized = self._quote_fts_query(query or "")
+                if sanitized:
+                    try:
+                        rows = connection.execute(
+                            f"""
+                            SELECT document.*
+                            FROM documents_fts
+                            JOIN document
+                              ON document.document_id = documents_fts.document_id
+                            JOIN item_subjects
+                              ON item_subjects.item_sha = document.document_id
+                            WHERE documents_fts MATCH ?
+                              AND item_subjects.subject_id = ?
+                              AND item_subjects.confidence >= ?
+                              {type_clause}{country_clause}
+                            ORDER BY rank
+                            LIMIT ?
+                            """,
+                            [sanitized, subject_id, min_confidence, *extra_params, limit],
+                        ).fetchall()
+                        return [self._row_to_document(r) for r in rows]
+                    except sqlite3.OperationalError:
+                        pass  # fall through to LIKE
+            like = f"%{query}%"
+            rows = connection.execute(
+                f"""
+                SELECT document.*
+                FROM document
+                JOIN item_subjects
+                  ON item_subjects.item_sha = document.document_id
+                WHERE item_subjects.subject_id = ?
+                  AND item_subjects.confidence >= ?
+                  AND (document.title LIKE ? OR document.subtitle LIKE ?)
+                  {type_clause}{country_clause}
+                ORDER BY document.published_epoch_ms DESC,
+                         document.published_date DESC
+                LIMIT ?
+                """,
+                [subject_id, min_confidence, like, like, *extra_params, limit],
+            ).fetchall()
+        return [self._row_to_document(r) for r in rows]
+
+    def _search_documents_filtered(
+        self,
+        query: str,
+        *,
+        limit: int,
+        document_type: str | None,
+        country_code: str | None,
+    ) -> list[DocumentRecord]:
+        """Like :meth:`search_documents` but with document_type / country
+        predicates applied in SQL so the limit counts post-filter rows."""
+        if not (document_type or country_code):
+            return self.search_documents(query, limit=limit)
+        query = query.strip()
+        if not query:
+            return []
+        type_clause = " AND document.document_type = ?" if document_type else ""
+        country_clause = " AND document.country_code = ?" if country_code else ""
+        extra_params: list[Any] = []
+        if document_type:
+            extra_params.append(document_type)
+        if country_code:
+            extra_params.append(country_code)
+        with self._connection(commit=False) as connection:
+            if self._fts5_available(connection):
+                sanitized = self._quote_fts_query(query)
+                if sanitized:
+                    try:
+                        rows = connection.execute(
+                            f"""
+                            SELECT document.*
+                            FROM documents_fts
+                            JOIN document
+                              ON document.document_id = documents_fts.document_id
+                            WHERE documents_fts MATCH ?
+                              {type_clause}{country_clause}
+                            ORDER BY rank
+                            LIMIT ?
+                            """,
+                            [sanitized, *extra_params, limit],
+                        ).fetchall()
+                        return [self._row_to_document(r) for r in rows]
+                    except sqlite3.OperationalError:
+                        pass
+            like = f"%{query}%"
+            rows = connection.execute(
+                f"""
+                SELECT * FROM document
+                WHERE (title LIKE ? OR subtitle LIKE ?)
+                  {type_clause}{country_clause}
+                ORDER BY published_epoch_ms DESC, published_date DESC
+                LIMIT ?
+                """,
+                [like, like, *extra_params, limit],
+            ).fetchall()
+        return [self._row_to_document(r) for r in rows]
+
+    def get_document_body(self, document_id: str) -> str:
+        """Return the markdown body text for a document, empty string
+        when no blob has been persisted yet."""
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT content_text FROM document_blob "
+                "WHERE document_id = ? AND blob_role = 'markdown' "
+                "ORDER BY extracted_at DESC LIMIT 1",
+                (document_id,),
+            ).fetchone()
+        return row["content_text"] if row and row["content_text"] else ""
+
+    def get_document_by_sha(self, hash_sha256: str) -> DocumentRecord | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM document WHERE hash_sha256 = ? LIMIT 1",
+                (hash_sha256,),
+            ).fetchone()
+        return self._row_to_document(row) if row else None
+
     def resolve_subjects_for_concept(self, concept_id: str) -> list[str]:
         """Find subject_ids that alias any provider_series_id registered for
         ``concept_id`` in concept_map. Used at query time to pivot between
