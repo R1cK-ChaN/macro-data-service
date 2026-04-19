@@ -619,6 +619,7 @@ _FRED_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "DTWEXBGS":     ("us.fx.dollar_index_broad",       "Broad Dollar Index",          "index",        "daily",     "none"),
     "DEXCHUS":      ("us.fx.cny_usd",                  "CNY/USD Exchange Rate",       "ratio",        "daily",     "none"),
     "BAMLH0A0HYM2": ("us.credit.hy_oas",              "High Yield OAS",              "percent",      "daily",     "none"),
+    "VIXCLS":       ("us.markets.vix",                 "CBOE VIX",                    "index",        "daily",     "none"),
 }
 
 _EIA_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
@@ -2166,6 +2167,28 @@ class SQLiteEngineStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_calendar_events_indicator_id "
                 "ON calendar_events(indicator_id)"
+            )
+            # ── Observation enrichment sidecar ─────────────────────────
+            # Stores derived labels / computed tags alongside an observation
+            # family + date without polluting the indicators schema. Used
+            # today for VIX regime classification (key='regime'); future
+            # enrichments (drawdown buckets, surprise z-scores, etc.) land
+            # under their own `key` values with the same (family, date) PK.
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS obs_enrichment (
+                    obs_family_id TEXT NOT NULL,
+                    date          TEXT NOT NULL,
+                    key           TEXT NOT NULL,
+                    value         TEXT NOT NULL,
+                    created_at    TEXT NOT NULL,
+                    PRIMARY KEY (obs_family_id, date, key)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_obs_enrichment_family_key "
+                "ON obs_enrichment(obs_family_id, key)"
             )
             # ── Unified subject vocabulary (issue #2) ──────────────────
             # subject_id is the canonical cross-source identifier (e.g.
@@ -6007,6 +6030,7 @@ class SQLiteEngineStore:
         #
         # ── US Credit ────────────────────────────────────────────────
         ("HY_OAS_US",           "fred",           "BAMLH0A0HYM2",  "us.credit.hy_oas",              1, "primary",     "ICE BofA HY OAS"),
+        ("VIX_US",              "fred",           "VIXCLS",         "us.markets.vix",                1, "primary",     "CBOE VIX close, regime-classified via obs_enrichment"),
         ("CREDIT_GAP_US",       "bis",            "BIS_CREDIT_GAP_US","us.credit.gap",               1, "primary",     "Credit-to-GDP gap"),
         #
         # ── US Property ──────────────────────────────────────────────
@@ -6157,6 +6181,92 @@ class SQLiteEngineStore:
                     (subject_id,),
                 ).fetchall()
             return [r[0] for r in rows]
+
+    # ── Observation enrichment (regime labels, etc.) ────────────────────
+
+    def set_obs_enrichment(
+        self, *, obs_family_id: str, date: str, key: str, value: str,
+    ) -> None:
+        """Upsert a single (family, date, key) enrichment row.
+
+        ``value`` is stored as text so the same sidecar can hold regime
+        labels, boolean-as-string flags, or numeric buckets without a
+        type-specific column.
+        """
+        now = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO obs_enrichment "
+                "(obs_family_id, date, key, value, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (obs_family_id, date, key, value, now),
+            )
+
+    def get_obs_enrichment(
+        self, *, obs_family_id: str, date: str, key: str,
+    ) -> str | None:
+        """Return the enrichment value for one (family, date, key) tuple,
+        or ``None`` if no row exists."""
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT value FROM obs_enrichment "
+                "WHERE obs_family_id = ? AND date = ? AND key = ?",
+                (obs_family_id, date, key),
+            ).fetchone()
+        return row["value"] if row else None
+
+    def list_obs_enrichment_for_family(
+        self, obs_family_id: str, *, key: str | None = None,
+    ) -> list[tuple[str, str, str]]:
+        """Return ``(date, key, value)`` rows for a family, optionally
+        filtered by ``key``, ordered by date descending."""
+        with self._connection(commit=False) as connection:
+            if key is not None:
+                rows = connection.execute(
+                    "SELECT date, key, value FROM obs_enrichment "
+                    "WHERE obs_family_id = ? AND key = ? "
+                    "ORDER BY date DESC",
+                    (obs_family_id, key),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT date, key, value FROM obs_enrichment "
+                    "WHERE obs_family_id = ? ORDER BY date DESC, key",
+                    (obs_family_id,),
+                ).fetchall()
+        return [(r["date"], r["key"], r["value"]) for r in rows]
+
+    def refresh_vix_regime(
+        self, *, source: str = "fred", series_id: str = "VIXCLS",
+        obs_family_id: str = "us.markets.vix",
+    ) -> int:
+        """Compute regime labels for every VIX close stored so far and
+        upsert them into obs_enrichment under key='regime'.
+
+        Callers can invoke this after a FRED refresh (or on a schedule)
+        so the latest snapshot always has a classification. Returns the
+        number of rows written.
+        """
+        from ingestion.timeseries.regimes import classify_vix_regime
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                "SELECT date, value FROM indicators "
+                "WHERE series_id = ? AND source = ?",
+                (series_id, source),
+            ).fetchall()
+        written = 0
+        for row in rows:
+            label = classify_vix_regime(row["value"])
+            if label is None:
+                continue
+            self.set_obs_enrichment(
+                obs_family_id=obs_family_id,
+                date=row["date"],
+                key="regime",
+                value=label,
+            )
+            written += 1
+        return written
 
     def set_document_subjects(
         self, document_id: str, subjects: dict[str, float]
