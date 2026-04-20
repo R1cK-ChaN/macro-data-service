@@ -1,0 +1,216 @@
+# Architecture — current state
+
+**Version:** 0.1.0 — *mini-Bloomberg foundations* (pre-1.0)
+**Target:** 1.0 = mini-Bloomberg for macro + markets. One terminal-shaped
+surface covering real-time quotes, macro time series, economic + corporate
+calendar, research documents, news flow, release-aware scheduling, cross-source
+resolution, and a RAG/agent layer — all off a single canonical store, pulled
+from ~25 free/licensed upstreams instead of BBG's paid feed.
+**Role in the monorepo:** the data-aggregation layer. Ingests, normalizes, and
+resolves macro + market + calendar + document data from ~25 upstreams into a
+single SQLite store that downstream services (analyst UI, RAG, agents) read
+through one service interface.
+**Last updated:** 2026-04-20 (branch `feat/issue-8-calendar-two-lane-schema`)
+
+### Bloomberg-capability coverage (current → 1.0)
+
+| BBG capability | Our equivalent | Status |
+|---|---|---|
+| Real-time quotes, EOD bars | `market_price_bars` + Tiingo/EODHD/macro projection | shipped (issue #1) |
+| `<GO>` command surface (HDB, ECO, CALT, …) | `macro-data-service` CLI + thin HTTP | shipped; expanding |
+| ECO — economic calendar | `cal_econ_*` + TE backfill + official sources | in flight (issue #8) |
+| EVTS — corporate calendar | `cal_corp_*` + EODHD | in flight (issue #8) |
+| Terminal News (N) | `news_articles` + 140-feed RSS pipeline + classifier | shipped core; dedup + ranking ongoing |
+| Research / NIM | `document` + `document_blob` (+ RAG index) | shipped core; Fed + gov-report wired |
+| PORT / PRTU analytics | `portfolio_*`, `trade_signals`, `performance_records` | scaffolded; awaiting downstream |
+| FLDS / SRCH (metadata search) | `subjects` + `concept_map` + `list_items` family filter | shipped (issues #2, #5) |
+| Release alerts, SRCY | `release_schedule` + `release_status` + 3 alert types | shipped |
+| Terminal chat (IB / MSG) | `conversation_threads` / `_messages`, `group_*`, `delivery_queue` | scaffolded |
+
+"Shipped" = tables + code in place. "In flight" = current work. "Scaffolded" =
+schema exists; population pending downstream services.
+
+This doc is the shared context surface for other agents (Claude subagents,
+Codex, fresh sessions) starting cold. README.md is the user-facing intro; this
+file is "what's wired up right now, where it lives, and what's in flight."
+
+When the doc disagrees with the code, trust the code and update the doc.
+
+---
+
+## One-paragraph mental model
+
+Sources → per-source ingestion clients → storage (SQLite, `engine.db`) → a
+unified resolution layer (`resolve_indicator`, `get_market_history`,
+`list_items`, soon `v_calendar_item`) → thin HTTP/CLI service. Every table is
+keyed for point-in-time queries; revisions and vintages are preserved rather
+than overwritten. Downstream never talks to upstream providers — it talks to
+the resolution layer.
+
+---
+
+## Layers
+
+| Layer | Lives in | Role |
+|---|---|---|
+| **Sources** | ~25 upstream APIs / RSS feeds / HTML endpoints | Raw data |
+| **Ingestion** | `src/ingestion/` | Fetch, normalize, validate, write |
+| **Storage** | `src/storage/sqlite.py` (8.8k lines, ~60 tables) | Canonical persistence |
+| **Resolution** | `src/macro_data/service.py` + storage helpers | Cross-source ranking, PIT queries, unified views |
+| **Service** | `src/macro_data/cli.py`, `server.py` | CLI + HTTP boundary |
+| **RAG sidecar** | `src/rag/` | Local semantic index + retrieval (Milvus optional) |
+
+Everything else (agents, UIs, notebooks) is a consumer.
+
+---
+
+## Domains and current status
+
+### 1. Macro time-series (the backbone)
+
+- **Sources wired** (11): BLS, FRED, EIA, NYFed, Treasury, IMF, Eurostat, BIS, ECB, OECD, World Bank. SDMX providers unified under `ingestion/sdmx/` (6 of the 11 go through it).
+- **Schema:** `obs_source`, `obs_family`, `indicators`, `indicator_vintages`. `concept_map` bridges source-native IDs to 86 canonical concepts; `subject_aliases` lets text queries resolve back to concepts.
+- **Resolution:** `resolve_indicator(concept_id)` ranks sources by `concept_map.priority`, returns primary + alternates. Vintages preserved for PIT reconstruction.
+- **Status:** architecture complete; first-pass ingestion bootstrap underway. DB starts empty; Phase 1 (top US macro, 10 indicators) is the immediate next milestone, not more code.
+
+### 2. Documents (government reports + central-bank comms)
+
+- **5-table normalized schema:** `doc_source` → `doc_release_family` → `document` → `document_blob` + `document_extra`. Covers ~40 publishers across US/CN/JP/EU.
+- **Clients:** `GovReportIngestionClient`, `FedIngestionClient` (Fed speeches/minutes), news pipeline for wire stories.
+- **Linkage:** `obs_family_document` connects an obs family to the release family that produced it (produced_by / derived_from / related_to). Subject tagging happens at ingest via `storage/subjects.py`.
+
+### 3. News
+
+- **Clients:** `NewsIngestionClient` over 140 RSS feeds (`ingestion/news/_config.py`). Fingerprinting in `article_fingerprint` handles de-dup.
+- **Classifier pipeline:** `news_classify.py` + `news_extract.py` for content extraction, domain detection, trend bucketing.
+
+### 4. Market data (issue #1 — shipped)
+
+- **Identity-first design.** Instruments resolved through OpenFIGI / ISIN / EODHD symbol history — `market_instruments` + `market_symbol_history` + `market_price_bars`.
+- **Providers:** Tiingo (US equities/ETFs, P0), EODHD (global + delistings, P1), FRED/EIA/ECB projections (`MacroMarketProvider`, P2), `IdentityRepairService` (lazy repair on `break_detected`).
+- **Universe:** 11 US macro ETFs + 6 global instruments seeded; extendable via `_tiingo_universe.py` / `_eodhd_universe.py`.
+
+### 5. Calendar (issue #8 — in progress on `feat/issue-8-calendar-two-lane-schema`)
+
+Two physical lanes behind one downstream contract (see `src/storage/STORAGE.md` → "Unified calendar").
+
+- **Economic lane** — `cal_econ_raw` / `cal_econ_event` / `cal_econ_drops`. TradingEconomics now (paid key enabled 2026-04-20, API survey in `analyst/te_endpoint/`); BLS/ECB/Fed/NBS later via `cal_provider.precedence`.
+- **Corporate lane** — `cal_corp_raw` / `cal_corp_event`. EODHD earnings / IPOs / splits / dividends / earnings_trends.
+- **Unified view:** `v_calendar_item` `UNION ALL`s both lanes into the `CalendarItem` DTO shape. Downstream sees one target.
+- **Revision model:** content-hash over mutable fields; append-only raw; PIT projection as the queryable layer. Mirrors `obs_family` / `indicator_vintages`.
+- **Legacy `calendar_events`** (HTML-scraped) untouched until slice-2 API fetcher proves parity.
+
+Slices 2–5 (TE backfill, EODHD fetcher, official-source replacement, HTTP surface) are staged in issue #8.
+
+### 6. Release scheduling + availability
+
+- `release_schedule` (rules) + `release_status` (per-release tracking). Date-math resolvers in `ingestion/release_schedule.py` compute `next_expected` per concept.
+- State machine: `PENDING → WAITING → FETCHED → CONFIRMED / STALE / FAILED`. Retry ladder 1m / 5m / 15m / 1h / 4h.
+- Three alert types: `DELAY` (missed expected release by 30m), `FAILED` (retries exhausted), `MISMATCH` (cross-source divergence over threshold).
+
+### 7. Source capabilities + catalog sync
+
+- `source_capability` registers each source's discovery / latest-sync / status contract. `catalog_entity` + `catalog_sync_*` persist crawled catalogs and run logs — used for OECD / World Bank / ILO / SDMX catalogs.
+
+### 8. RAG sidecar
+
+- `src/rag/`: chunker, BM25 lexical, embeddings, Milvus vector store, reranker, retriever, orchestrator, policy layer. Reads from `document_blob`; writes to a sibling index. Optional at runtime.
+
+### 9. Trading / research artifacts (scaffolded)
+
+- `trade_signals`, `decision_log`, `position_state`, `performance_records`, `analytical_observations`, `research_artifacts`, `generated_notes`, `regime_snapshots`, `portfolio_*`, `group_*`, `client_profiles`, `conversation_threads` / `_messages`, `delivery_queue`, `subagent_runs`. Tables exist; most are scaffolding pending the downstream services that will populate them.
+
+---
+
+## Service boundary
+
+**HTTP API is the only downstream contract.** Every feature this repo ships
+must be reachable through `macro-data-api` routes. Downstream services (analyst
+UI, RAG consumers, agents, notebooks, scheduled jobs, external teams) are not
+permitted to:
+
+- import from `src/` as a Python library,
+- read `engine.db` directly,
+- shell out to the `macro-data-service` CLI,
+- tail files, parse logs, or scrape any internal artifact.
+
+If a consumer needs a capability, the path is always: add a service op →
+expose an HTTP route → call it. No exceptions, no "for now we'll just
+import it." Breaking this rule couples downstream to our storage shape and
+defeats the whole aggregation-layer premise.
+
+- **HTTP API** (`macro-data-api`) — the contract. Routes are a thin mapping
+  over `LocalMacroDataService` ops; schema is the `contracts.py` DTOs.
+- **CLI** (`macro-data-service`) — operational only. Subcommands like
+  `refresh`, `refresh-source`, `schedule --run`, `health`, plus the new
+  `list_items` op (issue #5). Used for bootstrap, backfills, and debugging
+  by repo maintainers. Not part of the downstream contract.
+- **Source family discriminator** (issue #5, shipped): every
+  `IngestionSourceDefinition` carries a `family` tag; `list_sources` returns
+  `[{name, family}, ...]`. `list_items` unions documents + indicators +
+  market bars under a single subject, with a `family` filter — exposed over
+  HTTP, not only via CLI.
+
+---
+
+## Where things live — quick map
+
+```
+src/
+  contracts.py              Core DTOs (Event, CalendarItem, MarketSnapshot, RegimeState, ...)
+  storage/
+    sqlite.py               All CREATE TABLE statements + all read/write helpers
+    STORAGE.md              Table-by-table narrative (kept in sync with sqlite.py)
+    subjects.py             Subject vocabulary loader + tagger
+    subjects.yaml           Canonical subject list (edit here, sync via subjects.py)
+  ingestion/
+    sources.py              IngestionOrchestrator — scheduling, retry, health, source family
+    source_capabilities.py  Capability registry + discovery/latest-sync adapters
+    release_schedule.py     Date-math resolvers + availability state machine
+    validation/             Data quality + cross-source checks
+    sdmx/                   Unified SDMX engine (base client, parsing, providers/)
+    timeseries/, news/, documents/, trends/, market/, calendar/  One dir per domain
+    _shared/                http_transport, url_canon, selector versioning
+  macro_data/
+    service.py              LocalMacroDataService — the one interface downstream reads
+    cli.py, server.py       Thin boundaries
+    factory.py, client.py   Wiring + programmatic access
+  rag/                      Local RAG (see src/rag/README.md)
+```
+
+---
+
+## In flight right now
+
+| Issue | Branch | Slice |
+|---|---|---|
+| #8 | `feat/issue-8-calendar-two-lane-schema` | P0 shipped: six new tables + v_calendar_item + extended CalendarItem + 9 smoke tests. Slices 2–5 pending (TE backfill, EODHD fetcher, official sources, HTTP surface). |
+
+Closed recently (context only — the code is the source of truth):
+
+- #5 — source family tag + cross-type `list_items`.
+- #1 — market-data layer with OpenFIGI/ISIN identity + lazy repair.
+- #2 — unified subject vocabulary.
+
+---
+
+## Invariants worth knowing
+
+1. **Downstream consumes only the HTTP API.** No library imports, no direct
+   `engine.db` reads, no CLI shelling, no file/log tailing. Every feature ships
+   with a route or it doesn't ship. (See "Service boundary" above for the full
+   rule.)
+2. **Revisions are never lost.** `indicator_vintages`, `cal_econ_raw` /
+   `cal_corp_raw` append; PIT projections are derived views over them.
+3. **The service layer exposes one contract.** Storage lanes can split (macro
+   vs calendar vs corporate) but resolution presents a single shape —
+   `resolve_indicator`, `get_market_history`, `list_items`, and (coming)
+   `v_calendar_item` reads, all via HTTP.
+4. **Upstream IDs are kept.** `provider_event_id`, `provider_series_id`,
+   `canonical_url` — we never discard the upstream handle, even when we
+   synthesize our own.
+5. **Concept map is the cross-source bridge.** Source-native IDs → canonical
+   concept IDs (CPI_US, UNEMP_US, …) → `resolve_indicator` ranks and returns
+   with provenance.
+6. **`subjects.yaml` is authoritative for the subject vocabulary.**
+   `subjects` / `subject_aliases` / `item_subjects` tables are derived.
