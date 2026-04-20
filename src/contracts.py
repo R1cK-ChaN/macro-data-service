@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone, tzinfo
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -149,6 +149,20 @@ class CalendarItem(Serializable):
     previous: str | None = None
     notes: str = ""
     references: list[SourceReference] = field(default_factory=list)
+    # issue #8 — unified-calendar extension. Macro call sites keep working
+    # unchanged; corporate rows populate the new fields and leave the legacy
+    # ones as empty strings / Importance.MEDIUM per the adapter layer.
+    domain: Literal["economic", "corporate"] = "economic"
+    subtype: str = "release"
+    provider: str = ""
+    title: str = ""
+    ticker: str | None = None
+    exchange: str | None = None
+    currency: str | None = None
+    reference_date: str | None = None
+    values: dict[str, str | None] = field(default_factory=dict)
+    last_update_epoch_ms: int | None = None
+    source_url: str = ""
 
 
 @dataclass(frozen=True)
