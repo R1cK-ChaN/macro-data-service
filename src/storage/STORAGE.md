@@ -131,6 +131,9 @@ This populates 16 sources and 41 release families.
 | `upsert_document_blob()` | Insert/update a blob |
 | `get_document_blob()` / `list_document_blobs()` | Query blobs by doc + role |
 | `upsert_document_extra()` / `get_document_extra()` | JSON overflow metadata |
+| `list_items_for_subject()` / `list_items_combined()` | Subject-filtered document feed; accepts a `family` kwarg that pushes a family predicate (`news`, `note`, `calendar`, `release_report`) into SQL so the LIMIT bounds matching rows |
+| `list_subject_indicators()` | Indicator observations reached from a `subject_id` — unions the `subject_aliases → concept_map → indicators` bridge (pivoted through `concept_id`, constrained by alias source) with a direct `subject_aliases → indicators` path; applies per-series fair-share before the cap |
+| `list_subject_market_bars()` | Market-price bars reached from a `subject_id` via `primary_ticker` / `instrument_id` / `provider_symbols_json` matches against subject aliases |
 
 ---
 
