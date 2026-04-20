@@ -32,7 +32,7 @@ class MacroMarketEntry:
     description_for_agent: str = ""
 
 
-# Rates — FRED daily series, values are percent.
+# Rates — FRED (US) + ECB (euro area) series. Values are percent.
 RATES_UNIVERSE: tuple[MacroMarketEntry, ...] = (
     MacroMarketEntry(
         instrument_id="MACRO_RATES_US_FEDFUNDS",
@@ -106,10 +106,22 @@ RATES_UNIVERSE: tuple[MacroMarketEntry, ...] = (
         series_id="T10Y2Y",
         description_for_agent="10Y minus 2Y Treasury yield spread (percentage points).",
     ),
+    MacroMarketEntry(
+        instrument_id="MACRO_RATES_EA_DEPOSIT",
+        ticker="EADEPO",
+        name="ECB Deposit Facility Rate",
+        asset_class="rate",
+        market="Euro area policy rate",
+        currency="EUR",
+        unit="percent",
+        source="ecb",
+        series_id="ECB_EA_DEPOSIT_RATE",
+        description_for_agent="ECB deposit facility rate — the policy floor of the euro area corridor (percent).",
+    ),
 )
 
 
-# FX — FRED daily series, values are spot exchange rates.
+# FX — FRED (broad dollar, CNY) + ECB (EUR/USD). Values are spot exchange rates.
 FX_UNIVERSE: tuple[MacroMarketEntry, ...] = (
     MacroMarketEntry(
         instrument_id="MACRO_FX_DXY_BROAD",
@@ -134,6 +146,20 @@ FX_UNIVERSE: tuple[MacroMarketEntry, ...] = (
         source="fred",
         series_id="DEXCHUS",
         description_for_agent="Chinese yuan per US dollar (spot).",
+    ),
+    MacroMarketEntry(
+        instrument_id="MACRO_FX_EURUSD",
+        ticker="EURUSD",
+        name="EUR/USD Spot",
+        asset_class="fx",
+        market="Euro / US dollar spot",
+        currency="USD",
+        unit="usd_per_eur",
+        source="ecb",
+        # Daily EXR series — the monthly ECB_EURUSD average would otherwise
+        # surface as 12 bars/year on a 1d interval.
+        series_id="ECB_EURUSD_D",
+        description_for_agent="US dollars per euro (ECB daily reference rate).",
     ),
 )
 

@@ -321,8 +321,6 @@ class IngestionOrchestrator:
             self._build_nyfed_rates_source(),
             self._build_gov_reports_source(),
             self._build_eia_source(),
-            self._build_macro_market_source(),
-            self._build_identity_repair_source(),
             self._build_treasury_fiscal_source(),
             self._build_imf_source(),
             self._build_imf_vintages_source(),
@@ -333,6 +331,10 @@ class IngestionOrchestrator:
             self._build_worldbank_source(),
             self._build_worldbank_catalog_source(),
             self._build_bls_source(),
+            # Macro projection + identity repair run last so all upstream
+            # sources (FRED/EIA/ECB) have populated `indicators` first.
+            self._build_macro_market_source(),
+            self._build_identity_repair_source(),
         ]
         for definition in definitions:
             self.register_source(definition)
@@ -350,8 +352,6 @@ class IngestionOrchestrator:
             "nyfed_rates",
             "gov_reports",
             "eia",
-            "macro_market",
-            "identity_repair",
             "treasury_fiscal",
             "imf",
             "imf_vintages",
@@ -363,6 +363,10 @@ class IngestionOrchestrator:
             "worldbank_catalog",
             "bls",
             "fred_nondaily",
+            # Macro projection + identity repair run last so every upstream
+            # source has populated the indicators table first.
+            "macro_market",
+            "identity_repair",
         ]
 
     @staticmethod

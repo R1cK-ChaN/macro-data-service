@@ -663,6 +663,7 @@ ECB_SERIES = {
     "m3_growth":     {"dataflow": "BSI", "key": "M.U2.N.V.M30.X.I.U2.2300.Z01.A", "series_id": "ECB_EA_M3_GROWTH",     "category": "liquidity"},
     "deposit_rate":  {"dataflow": "FM",  "key": "B.U2.EUR.4F.KR.DFR.LEV",        "series_id": "ECB_EA_DEPOSIT_RATE",  "category": "rates"},
     "eurusd":        {"dataflow": "EXR", "key": "M.USD.EUR.SP00.A",              "series_id": "ECB_EURUSD",           "category": "fx"},
+    "eurusd_daily":  {"dataflow": "EXR", "key": "D.USD.EUR.SP00.A",              "series_id": "ECB_EURUSD_D",         "category": "fx"},
 }
 
 # ---------------------------------------------------------------------------

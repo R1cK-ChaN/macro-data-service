@@ -60,6 +60,12 @@ def test_universe_covers_rates_fx_and_commodities() -> None:
     assert {"rate", "fx", "commodity"}.issubset(classes)
 
 
+def test_universe_includes_fred_eia_and_ecb_sources() -> None:
+    """Issue #1 P1 explicitly names FRED / ECB / EIA — all three must project."""
+    sources = {e.source for e in MACRO_MARKET_UNIVERSE}
+    assert {"fred", "eia", "ecb"}.issubset(sources)
+
+
 def test_ticker_lookup_for_us10y_returns_fred_dgs10() -> None:
     entry = MACRO_MARKET_BY_TICKER["US10Y"]
     assert entry.source == "fred" and entry.series_id == "DGS10"
@@ -173,6 +179,39 @@ def test_get_market_history_returns_agent_native_shape(store: SQLiteEngineStore)
     assert "US10Y yield closed at 4.290%" in first["agent_summary"]
 
 
+def test_refresh_projects_ecb_deposit_rate(store: SQLiteEngineStore) -> None:
+    _seed_indicator(
+        store, source="ecb", series_id="ECB_EA_DEPOSIT_RATE",
+        date="2026-04-17", value=3.00,
+    )
+    provider = MacroMarketProvider()
+    stats = provider.refresh_market_history(store, "EADEPO")
+    assert stats.count == 1
+
+    rows = provider.get_market_history(store, "EADEPO")
+    assert rows[0]["ticker"] == "EADEPO"
+    assert rows[0]["asset_class"] == "rate"
+    assert rows[0]["source"] == "ECB"
+    assert "EADEPO yield closed at 3.000%" in rows[0]["agent_summary"]
+
+
+def test_refresh_projects_ecb_eurusd(store: SQLiteEngineStore) -> None:
+    # The market-layer EURUSD is backed by the daily ECB EXR series, not
+    # the monthly one — a 1d bar must correspond to a daily observation.
+    _seed_indicator(
+        store, source="ecb", series_id="ECB_EURUSD_D",
+        date="2026-04-17", value=1.0725,
+    )
+    provider = MacroMarketProvider()
+    stats = provider.refresh_market_history(store, "EURUSD")
+    assert stats.count == 1
+
+    bar = store.list_market_price_bars("MACRO_FX_EURUSD")[0]
+    assert bar.source_name == "ECB"
+    assert bar.source_symbol == "ECB_EURUSD_D"
+    assert bar.close == pytest.approx(1.0725)
+
+
 def test_get_market_history_for_commodity_uses_usd_summary(
     store: SQLiteEngineStore,
 ) -> None:
@@ -197,18 +236,19 @@ def test_orchestrator_registers_macro_market_source(store: SQLiteEngineStore) ->
 # ── Review-driven invariants ──────────────────────────────────────────────
 
 
-def test_source_registration_order_runs_after_fred_and_eia(
+def test_source_registration_order_runs_after_upstream_sources(
     store: SQLiteEngineStore,
 ) -> None:
     """Scheduled cycles iterate `_sources` in registration order, so the
-    macro projection must be registered after its upstream sources,
-    otherwise scheduled runs project stale data."""
+    macro projection must be registered after every upstream source whose
+    rows it projects (FRED / EIA / ECB)."""
     from ingestion.sources import IngestionOrchestrator
 
     orch = IngestionOrchestrator(store=store)
     order = orch.list_sources()
     assert order.index("fred_daily") < order.index("macro_market")
     assert order.index("eia") < order.index("macro_market")
+    assert order.index("ecb") < order.index("macro_market")
 
 
 def test_refresh_universe_ingests_custom_universe_entries(
