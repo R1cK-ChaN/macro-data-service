@@ -518,6 +518,27 @@ actual/estimate EPS, `deal_type` lifecycle) live in `payload_json` — the raw
 layer already holds the full upstream row. Promote a field to a typed
 column only when three concrete queries need SQL-level access.
 
+### Backfill cursor (issue #8 slice 2)
+
+`cal_backfill_cursor` — per-`(provider, phase)` resumability for the
+economic-lane API fetcher. One row per phase keeps the recent / mid /
+early sweeps independent so a mid-sweep budget breach only rewinds its
+own phase.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `provider` | TEXT PK | e.g. `tradingeconomics` |
+| `phase` | TEXT PK | `p1_recent`, `p2_mid`, `p3_early` |
+| `cursor_date` | TEXT | Next `window_start` to execute (ISO date) |
+| `window_end_date` | TEXT | End date of the last completed window |
+| `rows_ingested` | INTEGER | Cumulative across resumes |
+| `requests_spent` | INTEGER | Cumulative across resumes |
+| `last_run_at` | TEXT | ISO timestamp of the last executed window |
+| `is_complete` | INTEGER | 1 when the phase's `window_end_date` ≥ phase end |
+
+Budget accounting also reads from this table (sum `requests_spent` across
+phases for the current month) — no separate `cal_budget` table.
+
 ### Unified read view
 
 `v_calendar_item` projects both tables into the `CalendarItem` column set:

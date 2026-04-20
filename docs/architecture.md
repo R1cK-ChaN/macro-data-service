@@ -100,7 +100,11 @@ Two physical lanes behind one downstream contract (see `src/storage/STORAGE.md` 
 - **Revision model:** content-hash over mutable fields; append-only raw; PIT projection as the queryable layer. Mirrors `obs_family` / `indicator_vintages`.
 - **Legacy `calendar_events`** (HTML-scraped) untouched until slice-2 API fetcher proves parity.
 
-Slices 2–5 (TE backfill, EODHD fetcher, official-source replacement, HTTP surface) are staged in issue #8.
+Slice progress:
+
+- **P0 (shipped):** six new tables + `v_calendar_item` VIEW + extended `CalendarItem` DTO + 9 smoke tests.
+- **P1 (shipped — scaffold):** TE API scaffold under `src/ingestion/calendar/te_api/` — `client.py` (auth / 1 r/s / 409 backoff / URL guard), `parser.py` (22-field → raw + event records, content-hash over 6 mutable fields), `projector.py` (idempotent raw inserts + snapshot-aware event upsert + drop audit), `backfill.py` (era-bracketed adaptive window planner + cursor-persisting runner), `updates.py` (`/calendar/updates` → `/calendarid` reconciler). Service ops `calendar_econ_backfill` + `calendar_econ_sync_updates` exposed over HTTP with `dry_run=True` default. Nothing auto-runs. 21 new tests, fully mocked via `respx` — no real TE calls in CI.
+- **P2–P5 (pending):** full 2013→today backfill execution, EODHD corporate fetcher, BLS/ECB/Fed official-source replacement, retirement of legacy HTML-scraped `calendar_events`.
 
 ### 6. Release scheduling + availability
 
@@ -184,7 +188,7 @@ src/
 
 | Issue | Branch | Slice |
 |---|---|---|
-| #8 | `feat/issue-8-calendar-two-lane-schema` | P0 shipped: six new tables + v_calendar_item + extended CalendarItem + 9 smoke tests. Slices 2–5 pending (TE backfill, EODHD fetcher, official sources, HTTP surface). |
+| #8 | `feat/issue-8-calendar-two-lane-schema` | P0 shipped (two-lane schema + DTO + view). P1 shipped (TE API scaffold + dry-run HTTP ops). Slices P2–P5 pending (backfill execution, EODHD fetcher, official sources, legacy retirement). |
 
 Closed recently (context only — the code is the source of truth):
 

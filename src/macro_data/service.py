@@ -138,6 +138,164 @@ class LocalMacroDataService:
             return {"error": "calendar refresh unavailable"}
         return dict(self._ingestion.refresh_calendar())
 
+    # ── Economic calendar API backfill (issue #8 slice 2) ──────────────
+
+    def _op_calendar_econ_backfill(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Plan or run a TE Calendar API backfill window.
+
+        Arguments:
+          from           — ISO date ``YYYY-MM-DD``. Default 2023-01-01.
+          to             — ISO date. Default today (UTC).
+          phases         — optional list of phase names
+                           (``p1_recent`` / ``p2_mid`` / ``p3_early``);
+                           omit to cover whichever phases the date range
+                           overlaps.
+          dry_run        — default True. Returns the plan + cursor state
+                           without issuing any HTTP request.
+          max_requests   — default 50. Caps how many windows a single
+                           invocation will fetch.
+
+        Dry-run returns ``{windows_planned, windows: [...], cursor_state}``
+        with no HTTP traffic. Execute mode returns the same plus
+        ``{requests_spent, rows_raw_inserted, events_upserted,
+           truncated_windows, stopped_reason}``.
+        """
+        from datetime import date as _date, datetime as _dt, timezone as _tz
+
+        from ingestion.calendar.te_api import BackfillRunner, TEAPIClient, plan_windows
+
+        dry_run = bool(arguments.get("dry_run", True))
+        try:
+            max_requests = max(1, int(arguments.get("max_requests") or 50))
+        except (TypeError, ValueError):
+            max_requests = 50
+
+        default_start = _date(2023, 1, 1)
+        default_end = _dt.now(_tz.utc).date()
+        try:
+            start = _date.fromisoformat(str(arguments.get("from") or default_start.isoformat()))
+        except ValueError:
+            start = default_start
+        try:
+            end = _date.fromisoformat(str(arguments.get("to") or default_end.isoformat()))
+        except ValueError:
+            end = default_end
+        raw_phases = arguments.get("phases")
+        phases = None
+        if isinstance(raw_phases, list) and raw_phases:
+            phases = [str(p) for p in raw_phases]
+
+        windows = plan_windows(start=start, end=end, phases=phases)
+        base_payload: dict[str, Any] = {
+            "dry_run": dry_run,
+            "from": start.isoformat(),
+            "to": end.isoformat(),
+            "phases_planned": sorted({w.phase for w in windows}),
+            "windows_planned": len(windows),
+            "windows": [
+                {"phase": w.phase, "start": w.start.isoformat(), "end": w.end.isoformat()}
+                for w in windows[:10]  # preview only; full list on-demand via a later op
+            ],
+        }
+
+        if dry_run:
+            base_payload["stopped_reason"] = "dry_run"
+            return base_payload
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        with TEAPIClient() as client:
+            connection = get_conn()
+            try:
+                runner = BackfillRunner(
+                    connection=connection,
+                    client=client,
+                    max_requests=max_requests,
+                )
+                summary = runner.run(
+                    start=start, end=end, phases=phases, dry_run=False,
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+        base_payload.update({
+            "requests_spent":    summary.requests_spent,
+            "rows_raw_inserted": summary.rows_raw_inserted,
+            "events_upserted":   summary.events_upserted,
+            "windows_fetched":   summary.windows_fetched,
+            "truncated_windows": summary.truncated_windows,
+            "budget_halt":       summary.budget_halt,
+            "stopped_reason":    summary.stopped_reason,
+            "cursor_state":      summary.cursor_state,
+        })
+        return base_payload
+
+    def _op_calendar_econ_sync_updates(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Run the ``/calendar/updates`` → ``/calendarid`` reconciliation loop.
+
+        Arguments:
+          dry_run         — default True. Returns the plan shape without
+                            issuing any HTTP request.
+          batch_id_count  — default 30. Upper bound on ids per rehydrate
+                            batch; URL-length guard still applies.
+
+        Execute mode returns counts for updates fetched, ids rehydrated,
+        batches issued, raw rows inserted, events upserted, and drops
+        recorded.
+        """
+        from ingestion.calendar.te_api import TEAPIClient, UpdatesReconciler
+
+        dry_run = bool(arguments.get("dry_run", True))
+        try:
+            batch_id_count = max(1, int(arguments.get("batch_id_count") or 30))
+        except (TypeError, ValueError):
+            batch_id_count = 30
+
+        if dry_run:
+            return {
+                "dry_run": True,
+                "batch_id_count": batch_id_count,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        with TEAPIClient() as client:
+            connection = get_conn()
+            try:
+                reconciler = UpdatesReconciler(
+                    connection=connection,
+                    client=client,
+                    batch_id_count=batch_id_count,
+                )
+                summary = reconciler.sync(dry_run=False)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+        return {
+            "dry_run":             False,
+            "updates_fetched":     summary.updates_fetched,
+            "ids_to_rehydrate":    summary.ids_to_rehydrate,
+            "batches_planned":     summary.batches_planned,
+            "batches_fetched":     summary.batches_fetched,
+            "rows_raw_inserted":   summary.rows_raw_inserted,
+            "events_upserted":     summary.events_upserted,
+            "drops_recorded":      summary.drops_recorded,
+            "requests_spent":      summary.requests_spent,
+            "batch_preview":       summary.batch_preview,
+            "stopped_reason":      summary.stopped_reason,
+        }
+
     # ── Unified document queries (issue #2 / #3) ────────────────────────
 
     def _op_list_items(self, arguments: dict[str, Any]) -> dict[str, Any]:

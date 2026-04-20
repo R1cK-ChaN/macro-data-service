@@ -2538,6 +2538,26 @@ class SQLiteEngineStore:
                 """
             )
 
+            # Backfill cursor — per (provider, phase) resumability for the
+            # economic-lane API fetcher. `phase` lets us drive the recent /
+            # mid / early sweeps independently so a mid-phase budget breach
+            # doesn't reset the others.
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cal_backfill_cursor (
+                    provider         TEXT NOT NULL,
+                    phase            TEXT NOT NULL,
+                    cursor_date      TEXT NOT NULL,
+                    window_end_date  TEXT NOT NULL,
+                    rows_ingested    INTEGER NOT NULL DEFAULT 0,
+                    requests_spent   INTEGER NOT NULL DEFAULT 0,
+                    last_run_at      TEXT NOT NULL DEFAULT '',
+                    is_complete      INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (provider, phase)
+                )
+                """
+            )
+
             # Seed provider dim. INSERT OR IGNORE = idempotent on repeated
             # init_schema calls.
             _now_iso = datetime.now(timezone.utc).isoformat()
