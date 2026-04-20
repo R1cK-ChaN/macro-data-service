@@ -176,6 +176,7 @@ from ingestion.clients._fed import FedIngestionClient
 from ingestion.clients._market import MarketPriceClient
 from ingestion.market.clients._tiingo import TiingoMarketDataProvider
 from ingestion.market.clients._eodhd import EODHDMarketDataProvider
+from ingestion.market.clients._macro_market import MacroMarketProvider
 from ingestion.clients._trends import (
     RawNewsEntry,
     PreparedNewsRecord,
@@ -202,6 +203,7 @@ class IngestionOrchestrator:
         market: MarketPriceClient | None = None,
         tiingo: TiingoMarketDataProvider | None = None,
         eodhd: EODHDMarketDataProvider | None = None,
+        macro_market: MacroMarketProvider | None = None,
         news: NewsIngestionClient | None = None,
         reddit_trends: RedditTrendIngestionClient | None = None,
         weibo_trends: WeiboTrendIngestionClient | None = None,
@@ -228,6 +230,7 @@ class IngestionOrchestrator:
         self.market = market or MarketPriceClient()
         self.tiingo = tiingo or TiingoMarketDataProvider()
         self.eodhd = eodhd or EODHDMarketDataProvider()
+        self.macro_market = macro_market or MacroMarketProvider()
         self.news = news or NewsIngestionClient()
         self.reddit_trends = reddit_trends or RedditTrendIngestionClient()
         self.weibo_trends = weibo_trends or WeiboTrendIngestionClient()
@@ -315,6 +318,7 @@ class IngestionOrchestrator:
             self._build_nyfed_rates_source(),
             self._build_gov_reports_source(),
             self._build_eia_source(),
+            self._build_macro_market_source(),
             self._build_treasury_fiscal_source(),
             self._build_imf_source(),
             self._build_imf_vintages_source(),
@@ -342,6 +346,7 @@ class IngestionOrchestrator:
             "nyfed_rates",
             "gov_reports",
             "eia",
+            "macro_market",
             "treasury_fiscal",
             "imf",
             "imf_vintages",
@@ -611,6 +616,13 @@ class IngestionOrchestrator:
                 self.store,
                 lookback_days=lookback_days,
             ).count,
+        )
+
+    def _build_macro_market_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="macro_market",
+            interval_seconds=86_400,
+            execute=lambda: self.macro_market.refresh_universe(self.store).count,
         )
 
     def _build_news_source(self, *, category: str | None = None) -> IngestionSourceDefinition:
