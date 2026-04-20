@@ -121,6 +121,7 @@ class RefreshStats:
 class IngestionRunReport:
     source: str
     stored: int
+    family: str = ""
     fetched: int | None = None
     normalized: int | None = None
     validated: int | None = None
@@ -143,9 +144,46 @@ class IngestionRunReport:
         return payload
 
 
+SOURCE_FAMILIES: dict[str, str] = {
+    # economic_data
+    "fred_daily": "economic_data",
+    "fred_nondaily": "economic_data",
+    "fred_full": "economic_data",
+    "fred_vintages": "economic_data",
+    "bls": "economic_data",
+    "eia": "economic_data",
+    "treasury_fiscal": "economic_data",
+    "nyfed_rates": "economic_data",
+    "imf": "economic_data",
+    "imf_vintages": "economic_data",
+    "eurostat": "economic_data",
+    "bis": "economic_data",
+    "ecb": "economic_data",
+    "oecd": "economic_data",
+    "worldbank": "economic_data",
+    "worldbank_catalog": "economic_data",
+    # market_price
+    "market": "market_price",
+    "tiingo_market": "market_price",
+    "eodhd_market": "market_price",
+    "macro_market": "market_price",
+    "identity_repair": "market_price",
+    # release_report
+    "gov_reports": "release_report",
+    "fed": "release_report",
+    # news / calendar / trend / signal
+    "news": "news",
+    "calendar": "calendar",
+    "reddit_trends": "trend",
+    "weibo_trends": "trend",
+    "rate_probability": "signal",
+}
+
+
 @dataclass(frozen=True)
 class IngestionSourceDefinition:
     name: str
+    family: str = ""
     interval_seconds: int | None = None
     prepare: Callable[[], None] | None = None
     fetch: Callable[[], Iterable[Any]] | None = None
@@ -289,10 +327,17 @@ class IngestionOrchestrator:
         return event
 
     def register_source(self, definition: IngestionSourceDefinition) -> None:
+        if not definition.family:
+            family = SOURCE_FAMILIES.get(definition.name, "")
+            if family:
+                definition = dataclasses.replace(definition, family=family)
         self._sources[definition.name] = definition
 
-    def list_sources(self) -> list[str]:
-        return list(self._sources)
+    def list_sources(self) -> list[dict[str, str]]:
+        return [
+            {"name": name, "family": definition.family}
+            for name, definition in self._sources.items()
+        ]
 
     def last_run_report(self, source: str) -> IngestionRunReport | None:
         return self._last_run_reports.get(source)
@@ -399,6 +444,7 @@ class IngestionOrchestrator:
                     report = IngestionRunReport(
                         source=definition.name,
                         stored=stored,
+                        family=definition.family,
                         duration_ms=int((time.perf_counter() - started) * 1000),
                         retries=attempt,
                     )
@@ -417,6 +463,7 @@ class IngestionOrchestrator:
                 report = IngestionRunReport(
                     source=definition.name,
                     stored=int(stored if stored is not None else len(deduplicated_items)),
+                    family=definition.family,
                     fetched=len(raw_items),
                     normalized=len(normalized_items),
                     validated=len(validated_items),
@@ -437,6 +484,7 @@ class IngestionOrchestrator:
                 report = IngestionRunReport(
                     source=definition.name,
                     stored=0,
+                    family=definition.family,
                     duration_ms=int((time.perf_counter() - started) * 1000),
                     retries=attempt,
                     error=str(exc),

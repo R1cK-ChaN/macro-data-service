@@ -53,6 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
     refresh_source.add_argument("--source", required=True)
     refresh_source.add_argument("--db-path", default=None)
 
+    list_sources = subparsers.add_parser("list-sources")
+    list_sources.add_argument("--family", default=None)
+    list_sources.add_argument("--db-path", default=None)
+
     capabilities = subparsers.add_parser("sources-capabilities")
     capabilities.add_argument("--all", action="store_true", dest="include_internal")
     capabilities.add_argument("--db-path", default=None)
@@ -665,6 +669,12 @@ def main(argv: list[str] | None = None) -> int:
 
     service = build_local_macro_data_service(db_path=Path(args.db_path) if hasattr(args, "db_path") and args.db_path else None)
 
+    if args.command == "list-sources":
+        return _run_service_json(
+            service,
+            "list_sources",
+            {"family": args.family} if args.family else {},
+        )
     if args.command == "sources-capabilities":
         return _run_service_json(
             service,

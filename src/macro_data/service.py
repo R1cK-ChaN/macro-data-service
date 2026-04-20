@@ -238,6 +238,19 @@ class LocalMacroDataService:
                 "available_sources": self._ingestion.list_sources(),
             }
 
+    def _op_list_sources(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Return registered ingestion sources as ``[{name, family}, ...]``.
+
+        Optional ``family`` filter narrows to a single family tag.
+        """
+        if self._ingestion is None:
+            return {"error": "sources unavailable", "sources": []}
+        family = (arguments.get("family") or "").strip() or None
+        sources = self._ingestion.list_sources()
+        if family:
+            sources = [s for s in sources if s.get("family") == family]
+        return {"total": len(sources), "sources": sources}
+
     def _op_list_source_capabilities(self, arguments: dict[str, Any]) -> dict[str, Any]:
         include_internal = bool(arguments.get("include_internal", False))
         if self._ingestion is None:

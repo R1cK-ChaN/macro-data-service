@@ -260,3 +260,47 @@ def test_get_document_not_found_returns_null(
 ) -> None:
     resp = service.invoke("get_document", {"document_id": "nonexistent_id"})
     assert resp["document"] is None
+
+
+# ── list_sources (issue #5 Slice 1) ─────────────────────────────────────
+
+
+class _StubIngestion:
+    def __init__(self, rows: list[dict[str, str]]) -> None:
+        self._rows = rows
+
+    def list_sources(self) -> list[dict[str, str]]:
+        return list(self._rows)
+
+
+def test_list_sources_returns_name_family_rows(tmp_path: Path) -> None:
+    store = SQLiteEngineStore(db_path=tmp_path / "engine.db")
+    ingestion = _StubIngestion([
+        {"name": "fred_daily", "family": "economic_data"},
+        {"name": "tiingo_market", "family": "market_price"},
+        {"name": "news", "family": "news"},
+    ])
+    svc = LocalMacroDataService(store=store, ingestion=ingestion)
+    resp = svc.invoke("list_sources", {})
+    assert resp["total"] == 3
+    assert resp["sources"][0] == {"name": "fred_daily", "family": "economic_data"}
+
+
+def test_list_sources_filters_by_family(tmp_path: Path) -> None:
+    store = SQLiteEngineStore(db_path=tmp_path / "engine.db")
+    ingestion = _StubIngestion([
+        {"name": "fred_daily", "family": "economic_data"},
+        {"name": "tiingo_market", "family": "market_price"},
+        {"name": "news", "family": "news"},
+    ])
+    svc = LocalMacroDataService(store=store, ingestion=ingestion)
+    resp = svc.invoke("list_sources", {"family": "market_price"})
+    assert resp["total"] == 1
+    assert resp["sources"] == [{"name": "tiingo_market", "family": "market_price"}]
+
+
+def test_list_sources_without_ingestion_returns_error(tmp_path: Path) -> None:
+    store = SQLiteEngineStore(db_path=tmp_path / "engine.db")
+    svc = LocalMacroDataService(store=store, ingestion=None)
+    resp = svc.invoke("list_sources", {})
+    assert resp == {"error": "sources unavailable", "sources": []}
