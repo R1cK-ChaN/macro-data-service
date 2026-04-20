@@ -15,6 +15,41 @@ _NEWS_PRESETS: dict[str, tuple[str, ...]] = {
     "premium": ("bloomberg", "ft", "wsj", "reuters"),
     "free": ("investing", "forexfactory", "tradingeconomics"),
 }
+
+# Maps a DocumentRecord.source_id to its ingestion family tag. Exact-match
+# sources are listed here; `GovReportIngestionClient` writes documents with
+# derived source ids like ``us.bls`` / ``cn.stats`` (country.agency), so
+# ``_document_family`` also treats any dotted source id as a gov report
+# and tags it ``release_report``.
+_DOCUMENT_SOURCE_FAMILY: dict[str, str] = {
+    "news": "news",
+    "notes": "note",
+    "calendar": "calendar",
+}
+
+
+def _document_family(doc: Any) -> str:
+    source_id = getattr(doc, "source_id", "") or ""
+    fam = _DOCUMENT_SOURCE_FAMILY.get(source_id)
+    if fam:
+        return fam
+    # Gov report source ids are derived as "country.agency" — treat any
+    # dotted id as a gov release so the family filter actually matches.
+    if "." in source_id:
+        return "release_report"
+    return ""
+
+
+# Families whose rows live in the document table (as opposed to
+# indicators / market_price_bars). When the caller's family filter is one
+# of these, the indicator + market-bar branches are skipped; otherwise
+# only those branches run and documents are skipped. ``trend`` is stored
+# in ``trend_topics`` — list_items does not yet project it, so it is
+# omitted here on purpose (returning documents under a `trend` filter
+# would mislabel the rows).
+_DOCUMENT_FAMILIES: frozenset[str] = frozenset(
+    {"news", "note", "calendar", "release_report"}
+)
 _VALID_MARKET_ASSET_CLASSES = {"index", "commodity", "fx", "bond", "stock", "crypto"}
 _VALID_RATE_TYPES = {"sofr", "effr", "obfr", "all"}
 _ARTICLE_DOMAIN_MAP: dict[str, str] = {
@@ -45,6 +80,7 @@ class LocalMacroDataService:
         self._ingestion = ingestion
         self._retriever = retriever
         self._ontology_seeded = False
+        self._subject_vocabulary_seeded = False
 
     def invoke(self, operation: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         handler = getattr(self, f"_op_{operation}", None)
@@ -59,6 +95,29 @@ class LocalMacroDataService:
         if callable(seed):
             seed()
         self._ontology_seeded = True
+
+    def _ensure_subject_vocabulary(self) -> None:
+        """Seed subject_aliases + concept_map once per process.
+
+        The cross-type ``list_items`` branches (indicators, market bars)
+        read ``subject_aliases`` and ``concept_map``. On a DB populated
+        only through time-series refresh paths neither table is filled,
+        so we load the yaml vocabulary + default concept map on demand
+        — both helpers are idempotent so repeat calls are cheap."""
+        if self._subject_vocabulary_seeded:
+            return
+        try:
+            from storage.subjects import sync_from_yaml
+            sync_from_yaml(self._store)
+        except (AttributeError, TypeError, FileNotFoundError):
+            pass
+        seed_cm = getattr(self._store, "seed_concept_map", None)
+        if callable(seed_cm):
+            try:
+                seed_cm()
+            except Exception:
+                logger.warning("seed_concept_map failed", exc_info=True)
+        self._subject_vocabulary_seeded = True
 
     def _op_refresh_all_sources(self, arguments: dict[str, Any]) -> dict[str, Any]:
         del arguments
@@ -82,21 +141,29 @@ class LocalMacroDataService:
     # ── Unified document queries (issue #2 / #3) ────────────────────────
 
     def _op_list_items(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Merged feed across the unified document surface.
+        """Merged feed across the unified surface: documents + indicator
+        observations + market-price bars, all filterable by ``subject``.
 
         Arguments:
           subject         — subject_id to filter on (e.g. "econ.cpi")
-          q               — free-text query (FTS5 over title + body)
+          q               — free-text query (FTS5 over title + body;
+                            applies to documents only)
+          family          — optional family filter (e.g. "economic_data",
+                            "market_price", "news"). When unset, rows
+                            from every family are returned.
           min_confidence  — default 0.0; filters item_subjects rows
           limit           — default 50, capped at 500
           document_type   — optional exact match (e.g. "report")
           country_code    — optional 2-letter ISO filter
 
-        Returns ``{"items": [...], "total": N}`` with summary rows
-        (no body) — use get_document to fetch a single markdown.
+        Each item carries a ``family`` and ``kind`` tag so callers can
+        dispatch without a second lookup. Documents keep the existing
+        summary shape; indicator / market-bar rows carry only the
+        columns relevant to their type.
         """
         subject = (arguments.get("subject") or "").strip() or None
         query = (arguments.get("q") or "").strip() or None
+        family_filter = (arguments.get("family") or "").strip() or None
         document_type = (arguments.get("document_type") or "").strip() or None
         country_code = (arguments.get("country_code") or "").strip() or None
         try:
@@ -104,28 +171,69 @@ class LocalMacroDataService:
         except (TypeError, ValueError):
             limit = 50
         limit = max(1, min(limit, 500))
-        # min_confidence matches the `limit` handling: malformed input
-        # falls back to the default so a string-typed argument never
-        # bubbles up as a 500 from the HTTP handler.
         raw_conf = arguments.get("min_confidence")
         try:
             min_conf = float(raw_conf) if raw_conf is not None else 0.0
         except (TypeError, ValueError):
             min_conf = 0.0
 
-        # Filters live in SQL via list_items_combined so the limit
-        # bounds the final result set — no pre-intersection cap that
-        # could hide matches beyond the candidate window.
-        candidates = self._store.list_items_combined(
-            subject_id=subject,
-            query=query,
-            limit=limit,
-            min_confidence=min_conf,
-            document_type=document_type,
-            country_code=country_code,
-        )
+        # Subject-driven branches need the yaml vocabulary + default
+        # concept_map loaded. Both helpers are idempotent.
+        if subject:
+            self._ensure_subject_vocabulary()
 
-        items = [self._document_summary(d) for d in candidates]
+        items: list[dict[str, Any]] = []
+
+        # Documents branch. Non-document filters (document_type /
+        # country_code) only make sense here — indicator + market-bar
+        # rows carry no such metadata, so including them when the
+        # caller asked for `document_type="report"` would violate the
+        # filter contract.
+        want_documents = family_filter is None or family_filter in _DOCUMENT_FAMILIES
+        if want_documents:
+            # The family predicate runs in SQL now (see
+            # SQLiteEngineStore._family_predicate) so the server-side
+            # limit bounds the matching document rows directly — no
+            # widen-then-post-filter sleight of hand.
+            candidates = self._store.list_items_combined(
+                subject_id=subject,
+                query=query,
+                limit=limit,
+                min_confidence=min_conf,
+                document_type=document_type,
+                country_code=country_code,
+                family=family_filter if family_filter in _DOCUMENT_FAMILIES else None,
+            )
+            for doc in candidates:
+                summary = self._document_summary(doc)
+                summary["family"] = _document_family(doc)
+                summary["kind"] = "document"
+                items.append(summary)
+
+        # Indicator + market-bar branches only run when the caller is
+        # asking by subject. Without a subject the join chain
+        # (subject_aliases → concept_map / market_instruments) can't
+        # produce meaningful rows, and widening the branches to "all
+        # indicators" would explode the result set.
+        if subject and not query and not document_type and not country_code:
+            if family_filter in (None, "economic_data"):
+                items.extend(
+                    self._store.list_subject_indicators(subject, limit=limit)
+                )
+            if family_filter in (None, "market_price"):
+                items.extend(
+                    self._store.list_subject_market_bars(subject, limit=limit)
+                )
+
+        # When a family filter is set, only one branch ran and its own
+        # SQL LIMIT has already capped the result to `limit`. Without a
+        # filter, every branch returns up to `limit` rows so the
+        # envelope can carry up to ``3 * limit`` — intentional, since
+        # the callers asked for cross-type visibility and dropping the
+        # later branches to fit a global `limit` would re-introduce the
+        # crowding bug Codex flagged.
+        if family_filter:
+            items = items[:limit]
         return {"total": len(items), "items": items}
 
     def _op_get_document(self, arguments: dict[str, Any]) -> dict[str, Any]:
