@@ -6756,6 +6756,26 @@ class SQLiteEngineStore:
                 written += 1
         return written
 
+    # Family-name → SQL predicate over ``document.source_id``. Keeps the
+    # family filter in SQL so the LIMIT bounds matching rows, not a
+    # candidate pool that may have already dropped them. ``release_report``
+    # matches any dotted source_id (``us.bls``, ``cn.stats`` …) written by
+    # GovReportIngestionClient.
+    _DOCUMENT_FAMILY_SQL: dict[str, tuple[str, tuple[Any, ...]]] = {
+        "news":           ("document.source_id = ?",                ("news",)),
+        "note":           ("document.source_id = ?",                ("notes",)),
+        "calendar":       ("document.source_id = ?",                ("calendar",)),
+        "release_report": ("instr(document.source_id, '.') > 0",    ()),
+    }
+
+    @classmethod
+    def _family_predicate(cls, family: str | None) -> tuple[str, tuple[Any, ...]]:
+        """Return ``(sql_fragment, params)`` for a doc family filter, or
+        an empty clause if ``family`` isn't a known document family."""
+        if not family:
+            return "", ()
+        return cls._DOCUMENT_FAMILY_SQL.get(family, ("", ()))
+
     def list_items_for_subject(
         self,
         subject_id: str,
@@ -6764,11 +6784,12 @@ class SQLiteEngineStore:
         min_confidence: float = 0.0,
         document_type: str | None = None,
         country_code: str | None = None,
+        family: str | None = None,
     ) -> list[DocumentRecord]:
         """Return documents tagged with ``subject_id`` (confidence >= the
         filter), most-recent first. Joins item_subjects + document and
-        applies document_type / country_code predicates in SQL so the
-        caller doesn't have to post-filter a capped window."""
+        applies document_type / country_code / family predicates in SQL
+        so the caller doesn't have to post-filter a capped window."""
         sql = [
             "SELECT document.*",
             "FROM item_subjects",
@@ -6784,6 +6805,10 @@ class SQLiteEngineStore:
         if country_code:
             sql.append("  AND document.country_code = ?")
             params.append(country_code)
+        family_sql, family_params = self._family_predicate(family)
+        if family_sql:
+            sql.append(f"  AND {family_sql}")
+            params.extend(family_params)
         sql.append("ORDER BY document.published_epoch_ms DESC,")
         sql.append("         document.published_date DESC")
         sql.append("LIMIT ?")
@@ -6801,6 +6826,7 @@ class SQLiteEngineStore:
         min_confidence: float = 0.0,
         document_type: str | None = None,
         country_code: str | None = None,
+        family: str | None = None,
     ) -> list[DocumentRecord]:
         """Return documents matching both a subject tag AND an FTS query.
 
@@ -6819,27 +6845,60 @@ class SQLiteEngineStore:
             return self.list_items_for_subject(
                 subject_id, limit=limit, min_confidence=min_confidence,
                 document_type=document_type, country_code=country_code,
+                family=family,
             )
         if query and not subject_id:
             return self._search_documents_filtered(
                 query, limit=limit,
                 document_type=document_type, country_code=country_code,
+                family=family,
             )
         if not subject_id and not query:
-            return self.list_documents(
-                document_type=document_type, country_code=country_code,
-                limit=limit,
-            )
+            family_sql, family_params = self._family_predicate(family)
+            if not family_sql:
+                return self.list_documents(
+                    document_type=document_type, country_code=country_code,
+                    limit=limit,
+                )
+            # Recency feed with a family filter — the LIMIT must bound
+            # rows *after* the family predicate applies, so run a direct
+            # SQL query rather than calling list_documents and trimming.
+            type_clause = " AND document.document_type = ?" if document_type else ""
+            country_clause = " AND document.country_code = ?" if country_code else ""
+            # Order matches the WHERE clause: family_sql first, then the
+            # type_clause and country_clause appended after it.
+            direct_params: list[Any] = list(family_params)
+            if document_type:
+                direct_params.append(document_type)
+            if country_code:
+                direct_params.append(country_code)
+            with self._connection(commit=False) as connection:
+                rows = connection.execute(
+                    f"""
+                    SELECT document.*
+                    FROM document
+                    WHERE {family_sql}
+                      {type_clause}{country_clause}
+                    ORDER BY document.published_epoch_ms DESC,
+                             document.published_date DESC
+                    LIMIT ?
+                    """,
+                    [*direct_params, limit],
+                ).fetchall()
+            return [self._row_to_document(r) for r in rows]
 
         # Both set — combine in one query so the limit isn't eaten by a
         # pre-intersection cap.
         type_clause = " AND document.document_type = ?" if document_type else ""
         country_clause = " AND document.country_code = ?" if country_code else ""
+        family_sql, family_params = self._family_predicate(family)
+        family_clause = f" AND {family_sql}" if family_sql else ""
         extra_params: list[Any] = []
         if document_type:
             extra_params.append(document_type)
         if country_code:
             extra_params.append(country_code)
+        extra_params.extend(family_params)
 
         with self._connection(commit=False) as connection:
             if self._fts5_available(connection):
@@ -6857,7 +6916,7 @@ class SQLiteEngineStore:
                             WHERE documents_fts MATCH ?
                               AND item_subjects.subject_id = ?
                               AND item_subjects.confidence >= ?
-                              {type_clause}{country_clause}
+                              {type_clause}{country_clause}{family_clause}
                             ORDER BY rank
                             LIMIT ?
                             """,
@@ -6876,7 +6935,7 @@ class SQLiteEngineStore:
                 WHERE item_subjects.subject_id = ?
                   AND item_subjects.confidence >= ?
                   AND (document.title LIKE ? OR document.subtitle LIKE ?)
-                  {type_clause}{country_clause}
+                  {type_clause}{country_clause}{family_clause}
                 ORDER BY document.published_epoch_ms DESC,
                          document.published_date DESC
                 LIMIT ?
@@ -6885,6 +6944,225 @@ class SQLiteEngineStore:
             ).fetchall()
         return [self._row_to_document(r) for r in rows]
 
+    # Mapping from `subject_aliases.alias_type` to the `indicators.source`
+    # value that alias implies. Kept in-module because it's a storage-layer
+    # fact about how the live seeded subjects relate to the indicators
+    # table — duplicating it on ingestion would invert the dependency.
+    _ALIAS_TYPE_TO_INDICATOR_SOURCE: dict[str, str] = {
+        "fred_series": "fred",
+        "bls_series": "bls",
+        "eia_series": "eia",
+        "ny_fed_series": "nyfed",
+        "fedwatch_series": "rateprobability",
+        "imf_series": "imf",
+        "ecb_series": "ecb",
+        "bis_series": "bis",
+        "eurostat_series": "eurostat",
+        "oecd_series": "oecd",
+        "worldbank_series": "worldbank",
+        "treasury_series": "treasury_fiscal",
+    }
+
+    def list_subject_indicators(
+        self, subject_id: str, *, limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return indicator observations reached from ``subject_id``.
+
+        Two branches are unioned and tagged ``family = 'economic_data'``:
+
+        1. **concept_map bridge** — ``subject_aliases → concept_map →
+           indicators``, matching ``resolve_indicator``'s live chain.
+           Carries the ``concept_id`` so cross-source aliases surface.
+        2. **direct alias match** — ``subject_aliases → indicators`` keyed
+           by ``(alias_type, alias_value)``. Covers subjects whose alias
+           points straight at an ``indicators.(source, series_id)`` row
+           without a concept_map entry (``commodity.gold`` →
+           ``GOLDAMGBD228NLBM``, etc.).
+
+        Dedup is on ``(source, series_id, date)`` — the concept_map row
+        wins when both branches resolve to the same observation, so the
+        richer ``concept_id`` annotation is preserved."""
+        # Per-query fetch is intentionally wider than `limit`: the final
+        # slice applies a per-series cap (see below), and a tight
+        # per-query LIMIT would drop older series before the fair-share
+        # logic runs. The ceiling keeps worst-case memory bounded.
+        internal_cap = max(limit * 10, 500)
+        with self._connection(commit=False) as connection:
+            # Pivot through concept_id so every (source, provider_series_id)
+            # row in concept_map that shares a concept with a subject alias
+            # contributes. Stopping at the one matched row would hide the
+            # cross-source alternates the concept_map is meant to express
+            # (``econ.unemployment`` via FRED ``UNRATE`` still needs to
+            # surface the BLS ``LNS14000000`` observations under ``UNEMP_US``).
+            #
+            # The `cm_in.source_id` CASE mirrors the direct-alias branch:
+            # if a provider series id is reused across sources (same id
+            # under ``fred`` and ``imf``), a ``fred_series`` alias must not
+            # attach to the ``imf`` concept row and fan out through
+            # unrelated observations.
+            case_branches_concept = " ".join(
+                f"WHEN sa.alias_type = '{at}' THEN '{src}'"
+                for at, src in self._ALIAS_TYPE_TO_INDICATOR_SOURCE.items()
+            )
+            concept_rows = connection.execute(
+                f"""
+                SELECT DISTINCT
+                  i.source AS source, i.series_id AS series_id,
+                  i.date AS date, i.value AS value,
+                  cm_out.concept_id AS concept_id
+                FROM subject_aliases sa
+                JOIN concept_map cm_in
+                  ON cm_in.provider_series_id = sa.alias_value
+                 AND cm_in.source_id = (CASE {case_branches_concept} END)
+                JOIN concept_map cm_out
+                  ON cm_out.concept_id = cm_in.concept_id
+                JOIN indicators i
+                  ON i.source = cm_out.source_id
+                 AND i.series_id = cm_out.provider_series_id
+                WHERE sa.subject_id = ?
+                ORDER BY i.date DESC
+                LIMIT ?
+                """,
+                (subject_id, internal_cap),
+            ).fetchall()
+            alias_rows: list[Any] = []
+            if self._ALIAS_TYPE_TO_INDICATOR_SOURCE:
+                placeholders = ",".join(
+                    "?" * len(self._ALIAS_TYPE_TO_INDICATOR_SOURCE)
+                )
+                # Build a CASE so the JOIN predicate compares the alias to
+                # the correct `indicators.source` per alias_type.
+                case_branches = " ".join(
+                    f"WHEN sa.alias_type = '{at}' THEN '{src}'"
+                    for at, src in self._ALIAS_TYPE_TO_INDICATOR_SOURCE.items()
+                )
+                alias_rows = connection.execute(
+                    f"""
+                    SELECT DISTINCT
+                      i.source AS source, i.series_id AS series_id,
+                      i.date AS date, i.value AS value
+                    FROM subject_aliases sa
+                    JOIN indicators i
+                      ON i.series_id = sa.alias_value
+                     AND i.source = (CASE {case_branches} END)
+                    WHERE sa.subject_id = ?
+                      AND sa.alias_type IN ({placeholders})
+                    ORDER BY i.date DESC
+                    LIMIT ?
+                    """,
+                    (
+                        subject_id,
+                        *self._ALIAS_TYPE_TO_INDICATOR_SOURCE.keys(),
+                        internal_cap,
+                    ),
+                ).fetchall()
+
+        # Merge both queries keyed on (source, series_id, date) so the
+        # concept row wins on dedup (its concept_id annotation is
+        # richer) while direct-only series still contribute.
+        merged: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for r in concept_rows:
+            key = (r["source"], r["series_id"], r["date"])
+            merged[key] = {
+                "family": "economic_data",
+                "kind": "indicator",
+                "source": r["source"],
+                "series_id": r["series_id"],
+                "concept_id": r["concept_id"],
+                "date": r["date"],
+                "value": r["value"],
+            }
+        for r in alias_rows:
+            key = (r["source"], r["series_id"], r["date"])
+            if key in merged:
+                continue
+            merged[key] = {
+                "family": "economic_data",
+                "kind": "indicator",
+                "source": r["source"],
+                "series_id": r["series_id"],
+                "concept_id": "",
+                "date": r["date"],
+                "value": r["value"],
+            }
+
+        # Group by (source, series_id) so each series gets a fair
+        # share of the final limit — a subject whose concept path has
+        # 100 recent DFF observations must not bury the direct-only
+        # FEDFUNDS series. Per-series cap = ceil(limit / N) with a
+        # floor of 1 so even many series each surface at least once.
+        by_series: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for row in merged.values():
+            by_series.setdefault((row["source"], row["series_id"]), []).append(row)
+        if not by_series:
+            return []
+        per_series_cap = max(1, -(-limit // len(by_series)))  # ceil div
+        kept: list[dict[str, Any]] = []
+        for rows in by_series.values():
+            rows.sort(key=lambda r: r["date"], reverse=True)
+            kept.extend(rows[:per_series_cap])
+        kept.sort(
+            key=lambda r: (r["date"], r["source"], r["series_id"]),
+            reverse=True,
+        )
+        return kept[:limit]
+
+    def list_subject_market_bars(
+        self, subject_id: str, *, limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return market-price bars reached from ``subject_id``.
+
+        A subject links to a market instrument when any of its aliases
+        match ``market_instruments.primary_ticker``, ``.instrument_id``,
+        or appears as a value in ``.provider_symbols_json`` — the last
+        branch covers synthetic macro instruments (e.g.
+        ``MACRO_RATES_US_10Y``) whose ``provider_symbols_json`` stores
+        the underlying indicator series id (``DGS10``). Rows are tagged
+        ``family = 'market_price'``."""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT
+                  mi.instrument_id AS instrument_id,
+                  mi.primary_ticker AS primary_ticker,
+                  mi.asset_class AS asset_class,
+                  bars.date AS date,
+                  bars.bar_interval AS bar_interval,
+                  bars.open AS open, bars.high AS high,
+                  bars.low AS low, bars.close AS close,
+                  bars.volume AS volume
+                FROM subject_aliases sa
+                JOIN market_instruments mi
+                  ON mi.primary_ticker = sa.alias_value
+                  OR mi.instrument_id = sa.alias_value
+                  OR EXISTS (
+                    SELECT 1 FROM json_each(mi.provider_symbols_json) je
+                    WHERE je.value = sa.alias_value
+                  )
+                JOIN market_price_bars bars
+                  ON bars.instrument_id = mi.instrument_id
+                WHERE sa.subject_id = ?
+                ORDER BY bars.date DESC
+                LIMIT ?
+                """,
+                (subject_id, limit),
+            ).fetchall()
+        return [
+            {
+                "family": "market_price",
+                "kind": "market_bar",
+                "instrument_id": r["instrument_id"],
+                "ticker": r["primary_ticker"],
+                "asset_class": r["asset_class"],
+                "date": r["date"],
+                "bar_interval": r["bar_interval"],
+                "open": r["open"], "high": r["high"],
+                "low": r["low"], "close": r["close"],
+                "volume": r["volume"],
+            }
+            for r in rows
+        ]
+
     def _search_documents_filtered(
         self,
         query: str,
@@ -6892,21 +7170,26 @@ class SQLiteEngineStore:
         limit: int,
         document_type: str | None,
         country_code: str | None,
+        family: str | None = None,
     ) -> list[DocumentRecord]:
         """Like :meth:`search_documents` but with document_type / country
-        predicates applied in SQL so the limit counts post-filter rows."""
-        if not (document_type or country_code):
+        / family predicates applied in SQL so the limit counts post-filter
+        rows."""
+        if not (document_type or country_code or family):
             return self.search_documents(query, limit=limit)
         query = query.strip()
         if not query:
             return []
         type_clause = " AND document.document_type = ?" if document_type else ""
         country_clause = " AND document.country_code = ?" if country_code else ""
+        family_sql, family_params = self._family_predicate(family)
+        family_clause = f" AND {family_sql}" if family_sql else ""
         extra_params: list[Any] = []
         if document_type:
             extra_params.append(document_type)
         if country_code:
             extra_params.append(country_code)
+        extra_params.extend(family_params)
         with self._connection(commit=False) as connection:
             if self._fts5_available(connection):
                 sanitized = self._quote_fts_query(query)
@@ -6919,7 +7202,7 @@ class SQLiteEngineStore:
                             JOIN document
                               ON document.document_id = documents_fts.document_id
                             WHERE documents_fts MATCH ?
-                              {type_clause}{country_clause}
+                              {type_clause}{country_clause}{family_clause}
                             ORDER BY rank
                             LIMIT ?
                             """,
@@ -6928,12 +7211,17 @@ class SQLiteEngineStore:
                         return [self._row_to_document(r) for r in rows]
                     except sqlite3.OperationalError:
                         pass
+            # LIKE fallback uses unqualified column names (no `document.`
+            # alias) because the FROM clause is `document` directly — so
+            # the family predicate fragment (which says `document.source_id`)
+            # needs stripping of the table prefix.
             like = f"%{query}%"
+            like_family_clause = family_clause.replace("document.", "")
             rows = connection.execute(
                 f"""
                 SELECT * FROM document
                 WHERE (title LIKE ? OR subtitle LIKE ?)
-                  {type_clause}{country_clause}
+                  {type_clause}{country_clause}{like_family_clause}
                 ORDER BY published_epoch_ms DESC, published_date DESC
                 LIMIT ?
                 """,

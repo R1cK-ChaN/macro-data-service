@@ -490,7 +490,8 @@ def test_orchestrator_registers_identity_repair_source(store: SQLiteEngineStore)
     from ingestion.sources import IngestionOrchestrator
 
     orch = IngestionOrchestrator(store=store)
-    assert "identity_repair" in orch.list_sources()
+    names = [s["name"] for s in orch.list_sources()]
+    assert "identity_repair" in names
 
 
 def test_source_registration_runs_after_market_providers(store: SQLiteEngineStore) -> None:
@@ -499,7 +500,7 @@ def test_source_registration_runs_after_market_providers(store: SQLiteEngineStor
     from ingestion.sources import IngestionOrchestrator
 
     orch = IngestionOrchestrator(store=store)
-    order = orch.list_sources()
+    order = [s["name"] for s in orch.list_sources()]
     assert order.index("tiingo_market") < order.index("identity_repair")
     assert order.index("eodhd_market") < order.index("identity_repair")
 

@@ -9,6 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from ingestion import IngestionOrchestrator, IngestionSourceDefinition
+from ingestion.sources import SOURCE_FAMILIES
 
 
 class IngestionOrchestratorTest(unittest.TestCase):
@@ -182,6 +183,77 @@ class IngestionOrchestratorTest(unittest.TestCase):
         self.assertEqual(report.validated, 2)
         self.assertEqual(report.deduplicated, 1)
         self.assertEqual(report.stored, 1)
+
+
+class SourceFamilyTaggingTest(unittest.TestCase):
+    """Issue #5 Slice 1 — every default source carries a family tag, and the
+    tag flows through list_sources() and IngestionRunReport.to_dict()."""
+
+    def _build_orchestrator(self) -> IngestionOrchestrator:
+        return IngestionOrchestrator(
+            store=Mock(),
+            fred=Mock(), investing=Mock(), forexfactory=Mock(),
+            tradingeconomics=Mock(), fed=Mock(), market=Mock(),
+            news=Mock(), reddit_trends=Mock(), weibo_trends=Mock(),
+            rate_probability=Mock(), nyfed=Mock(), gov_report=Mock(),
+            eia=Mock(), treasury_fiscal=Mock(), imf=Mock(),
+            eurostat=Mock(), bis=Mock(), ecb=Mock(), oecd=Mock(),
+            worldbank=Mock(),
+        )
+
+    def test_every_registered_default_source_has_non_empty_family(self) -> None:
+        orch = self._build_orchestrator()
+        offenders = [s for s in orch.list_sources() if not s["family"]]
+        self.assertEqual(offenders, [], f"sources without family: {offenders}")
+
+    def test_list_sources_returns_name_family_dicts(self) -> None:
+        orch = self._build_orchestrator()
+        rows = orch.list_sources()
+        self.assertTrue(all(set(r.keys()) == {"name", "family"} for r in rows))
+        by_name = {r["name"]: r["family"] for r in rows}
+        # Spot-check one entry per family bucket.
+        self.assertEqual(by_name["fred_daily"], "economic_data")
+        self.assertEqual(by_name["tiingo_market"], "market_price")
+        self.assertEqual(by_name["gov_reports"], "release_report")
+        self.assertEqual(by_name["fed"], "release_report")
+        self.assertEqual(by_name["news"], "news")
+        self.assertEqual(by_name["calendar"], "calendar")
+        self.assertEqual(by_name["reddit_trends"], "trend")
+        self.assertEqual(by_name["rate_probability"], "signal")
+
+    def test_registered_definition_picks_up_family_from_registry(self) -> None:
+        orch = self._build_orchestrator()
+        orch.register_source(
+            IngestionSourceDefinition(name="fred_daily", fetch=lambda: [], store=lambda _: 0)
+        )
+        self.assertEqual(orch._sources["fred_daily"].family, "economic_data")
+
+    def test_custom_source_without_family_stays_empty(self) -> None:
+        orch = self._build_orchestrator()
+        orch.register_source(
+            IngestionSourceDefinition(name="adhoc", fetch=lambda: [], store=lambda _: 0)
+        )
+        self.assertEqual(orch._sources["adhoc"].family, "")
+
+    def test_run_report_to_dict_includes_family(self) -> None:
+        orch = self._build_orchestrator()
+        orch.register_source(
+            IngestionSourceDefinition(
+                name="fred_daily",
+                execute=lambda: 7,
+            )
+        )
+        report = orch.run_source("fred_daily")
+        payload = report.to_dict()
+        self.assertEqual(payload["family"], "economic_data")
+        self.assertEqual(payload["source"], "fred_daily")
+        self.assertEqual(payload["stored"], 7)
+
+    def test_source_families_registry_covers_all_defaults(self) -> None:
+        orch = self._build_orchestrator()
+        registered = {s["name"] for s in orch.list_sources()}
+        missing = registered - set(SOURCE_FAMILIES)
+        self.assertEqual(missing, set(), f"registry missing entries: {missing}")
 
 
 if __name__ == "__main__":

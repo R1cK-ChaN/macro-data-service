@@ -244,7 +244,8 @@ def test_orchestrator_registers_eodhd_market_source(store: SQLiteEngineStore) ->
     from ingestion.sources import IngestionOrchestrator
 
     orch = IngestionOrchestrator(store=store)
-    assert "eodhd_market" in orch.list_sources()
+    names = [s["name"] for s in orch.list_sources()]
+    assert "eodhd_market" in names
 
 
 # ── Review-driven invariants ──────────────────────────────────────────────

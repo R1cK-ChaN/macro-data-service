@@ -230,7 +230,8 @@ def test_orchestrator_registers_macro_market_source(store: SQLiteEngineStore) ->
     from ingestion.sources import IngestionOrchestrator
 
     orch = IngestionOrchestrator(store=store)
-    assert "macro_market" in orch.list_sources()
+    names = [s["name"] for s in orch.list_sources()]
+    assert "macro_market" in names
 
 
 # ── Review-driven invariants ──────────────────────────────────────────────
@@ -245,7 +246,7 @@ def test_source_registration_order_runs_after_upstream_sources(
     from ingestion.sources import IngestionOrchestrator
 
     orch = IngestionOrchestrator(store=store)
-    order = orch.list_sources()
+    order = [s["name"] for s in orch.list_sources()]
     assert order.index("fred_daily") < order.index("macro_market")
     assert order.index("eia") < order.index("macro_market")
     assert order.index("ecb") < order.index("macro_market")
