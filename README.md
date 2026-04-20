@@ -199,6 +199,8 @@ macro-data-service wb-indicators --query gdp
 ### Source capabilities and catalog sync
 
 ```bash
+macro-data-service list-sources                                # every registered source as {name, family}
+macro-data-service list-sources --family market_price          # filter to one family
 macro-data-service sources-capabilities
 macro-data-service catalog-list --source oecd --refresh --limit 10
 macro-data-service catalog-structure --source ecb --entity ECB_EA_DEPOSIT_RATE
@@ -240,6 +242,7 @@ Key operations:
 | `get_release_status` | Availability tracking status |
 | `get_health` | Per-source health dashboard |
 | `get_alerts` | Active alerts (DELAY, FAILED, MISMATCH) |
+| `list_sources` | Registered ingestion sources as `{name, family}` rows, optional `family` filter |
 | `list_source_capabilities` | Capability registry for all known sources |
 | `get_source_health_dashboard` | Customer-facing per-source health summary |
 | `sync_catalog_discovery` | Persist discovered provider entities for a source |
@@ -253,7 +256,7 @@ Key operations:
 | `get_recent_releases` | Recent economic data releases |
 | `get_upcoming_calendar` | Upcoming calendar events |
 | `get_market_snapshot` | Latest market prices |
-| `list_items` | Merged document feed across news / gov reports / notes, filtered by `subject`, `q` (FTS5), `document_type`, `country_code`, `min_confidence` |
+| `list_items` | Cross-type feed for a subject: documents (news / gov reports / notes) unioned with indicator observations (via `concept_map` + direct `subject_aliases`) and market-price bars (via `market_instruments`). Every row carries a `family` + `kind` tag; optional `family` filter narrows to one bucket. Still accepts `q` (FTS5, documents only), `document_type`, `country_code`, `min_confidence` |
 | `get_document` | Single document by `document_id` or `hash_sha256` (17-field summary + markdown body + subject tags) |
 | `list_subjects` | Subject vocabulary (auto-synced from `src/storage/subjects.yaml`) |
 | `backfill_document_indexes` | One-shot FTS + subject-tag backfill for DBs whose documents predate the new sidecars (idempotent) |
@@ -295,6 +298,33 @@ and the rest of the 17-field surface is controlled by
 `DOCUMENT_EXTRACT_API_KEY` (or `OPENAI_API_KEY`) plus
 `DOCUMENT_EXTRACT_MODEL` / `DOCUMENT_EXTRACT_BASE_URL`. Unset → ingestion
 falls back to scraper-supplied metadata without LLM calls.
+
+### Source families (issue #5)
+
+Every `IngestionSourceDefinition` carries a `family` tag applied at
+registration via `SOURCE_FAMILIES` in `src/ingestion/sources.py`. The
+tag flows through `IngestionRunReport.to_dict()`, the `list_sources`
+op and the `list_items` envelope so downstream callers can group
+sources and rows by type without reflecting on names:
+
+| Family | Sources |
+|---|---|
+| `economic_data` | `fred_daily`, `fred_nondaily`, `fred_full`, `fred_vintages`, `bls`, `eia`, `treasury_fiscal`, `nyfed_rates`, `imf`, `imf_vintages`, `eurostat`, `bis`, `ecb`, `oecd`, `worldbank`, `worldbank_catalog` |
+| `market_price` | `market`, `tiingo_market`, `eodhd_market`, `macro_market`, `identity_repair` |
+| `release_report` | `gov_reports`, `fed` |
+| `news` | `news` |
+| `calendar` | `calendar` |
+| `trend` | `reddit_trends`, `weibo_trends` |
+| `signal` | `rate_probability` |
+
+`list_items(subject="econ.cpi")` returns the merged envelope:
+documents (via `item_subjects`), indicator observations (via
+`subject_aliases → concept_map → indicators`, pivoted through
+`concept_id` so cross-source alternates surface), and market-price
+bars (via `subject_aliases → market_instruments`, matching
+`primary_ticker` / `instrument_id` / values in
+`provider_symbols_json`). Each row carries a `family` + `kind`
+discriminator; an optional `family` filter narrows the result.
 
 ## Market-data layer
 
