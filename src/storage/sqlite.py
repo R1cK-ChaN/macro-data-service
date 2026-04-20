@@ -86,6 +86,71 @@ class MarketPriceRecord:
 
 
 @dataclass(frozen=True)
+class MarketInstrumentRecord:
+    instrument_id: str                      # e.g. "US_SPY"
+    primary_ticker: str                     # current trading ticker
+    name: str                               # "SPDR S&P 500 ETF"
+    asset_class: str                        # equity_etf, equity, bond_etf, commodity_etf
+    market: str                             # "United States equity market"
+    exchange_code: str = ""                 # e.g. "NYSEARCA", "NASDAQ"
+    currency: str = "USD"
+    isin: str = ""
+    openfigi: str = ""
+    composite_figi: str = ""
+    share_class_figi: str = ""
+    cusip: str = ""
+    lei: str = ""
+    primary_provider: str = "tiingo"
+    provider_symbols_json: dict[str, str] = field(default_factory=dict)
+    history_status: str = "provider_continuous"  # provider_continuous|break_detected|stitched|manual_review
+    description_for_agent: str = ""
+
+
+@dataclass(frozen=True)
+class MarketSymbolHistoryRecord:
+    segment_id: str                         # stable, e.g. f"{instrument_id}:{valid_from}:{ticker}"
+    instrument_id: str
+    ticker: str
+    provider_name: str
+    valid_from: str                         # YYYY-MM-DD
+    valid_to: str = ""                      # YYYY-MM-DD or "" for open-ended
+    exchange_code: str = ""
+    isin: str = ""
+    figi: str = ""
+    event_type: str = "listing_start"       # listing_start|ticker_rename|exchange_change|delisting|manual_link
+    mapping_confidence: str = "provider_native"  # provider_native|auto_isin|auto_figi|name_match|manual
+    source_name: str = ""
+    raw_json: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class MarketPriceBarRecord:
+    instrument_id: str
+    date: str                               # YYYY-MM-DD
+    bar_interval: str                       # "1d"
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    source_name: str                        # "Tiingo"
+    source_symbol: str                      # ticker used at the provider
+    source_segment_id: str = ""
+    adjusted_open: float | None = None
+    adjusted_high: float | None = None
+    adjusted_low: float | None = None
+    adjusted_close: float | None = None
+    adjusted_volume: float | None = None
+    dividend_cash: float = 0.0
+    split_factor: float = 1.0
+    has_break_detected: bool = False
+    has_pre2018_delisted: bool = False
+    has_missing_corp_acts: bool = False
+    has_mapping_review_needed: bool = False
+    quality_flags_json: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class CentralBankCommunicationRecord:
     source: str
     title: str
@@ -1099,6 +1164,95 @@ class SQLiteEngineStore:
                     scraped_at TEXT NOT NULL
                 )
                 """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS market_instruments (
+                    instrument_id TEXT PRIMARY KEY,
+                    primary_ticker TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    asset_class TEXT NOT NULL,
+                    market TEXT NOT NULL,
+                    exchange_code TEXT NOT NULL DEFAULT '',
+                    currency TEXT NOT NULL DEFAULT 'USD',
+                    isin TEXT NOT NULL DEFAULT '',
+                    openfigi TEXT NOT NULL DEFAULT '',
+                    composite_figi TEXT NOT NULL DEFAULT '',
+                    share_class_figi TEXT NOT NULL DEFAULT '',
+                    cusip TEXT NOT NULL DEFAULT '',
+                    lei TEXT NOT NULL DEFAULT '',
+                    primary_provider TEXT NOT NULL DEFAULT 'tiingo',
+                    provider_symbols_json TEXT NOT NULL DEFAULT '{}',
+                    history_status TEXT NOT NULL DEFAULT 'provider_continuous',
+                    description_for_agent TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_market_instruments_ticker ON market_instruments(primary_ticker)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS market_symbol_history (
+                    segment_id TEXT PRIMARY KEY,
+                    instrument_id TEXT NOT NULL,
+                    ticker TEXT NOT NULL,
+                    provider_name TEXT NOT NULL,
+                    exchange_code TEXT NOT NULL DEFAULT '',
+                    isin TEXT NOT NULL DEFAULT '',
+                    figi TEXT NOT NULL DEFAULT '',
+                    valid_from TEXT NOT NULL,
+                    valid_to TEXT NOT NULL DEFAULT '',
+                    event_type TEXT NOT NULL DEFAULT 'listing_start',
+                    mapping_confidence TEXT NOT NULL DEFAULT 'provider_native',
+                    source_name TEXT NOT NULL DEFAULT '',
+                    raw_json TEXT NOT NULL DEFAULT '{}',
+                    collected_at TEXT NOT NULL,
+                    FOREIGN KEY(instrument_id) REFERENCES market_instruments(instrument_id)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_symbol_history_instrument ON market_symbol_history(instrument_id)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_symbol_history_ticker ON market_symbol_history(ticker)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS market_price_bars (
+                    instrument_id TEXT NOT NULL,
+                    source_segment_id TEXT NOT NULL DEFAULT '',
+                    date TEXT NOT NULL,
+                    bar_interval TEXT NOT NULL DEFAULT '1d',
+                    open REAL NOT NULL,
+                    high REAL NOT NULL,
+                    low REAL NOT NULL,
+                    close REAL NOT NULL,
+                    volume REAL NOT NULL,
+                    adjusted_open REAL,
+                    adjusted_high REAL,
+                    adjusted_low REAL,
+                    adjusted_close REAL,
+                    adjusted_volume REAL,
+                    dividend_cash REAL NOT NULL DEFAULT 0,
+                    split_factor REAL NOT NULL DEFAULT 1,
+                    source_name TEXT NOT NULL,
+                    source_symbol TEXT NOT NULL,
+                    has_break_detected INTEGER NOT NULL DEFAULT 0,
+                    has_pre2018_delisted INTEGER NOT NULL DEFAULT 0,
+                    has_missing_corp_acts INTEGER NOT NULL DEFAULT 0,
+                    has_mapping_review_needed INTEGER NOT NULL DEFAULT 0,
+                    quality_flags_json TEXT NOT NULL DEFAULT '{}',
+                    collected_at TEXT NOT NULL,
+                    PRIMARY KEY (instrument_id, date, bar_interval, source_name, source_symbol)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_price_bars_instrument_date ON market_price_bars(instrument_id, date)"
             )
             connection.execute(
                 """
@@ -2319,6 +2473,241 @@ class SQLiteEngineStore:
                     utc_now().isoformat(),
                 ),
             )
+
+    def upsert_market_instrument(self, instrument: MarketInstrumentRecord) -> None:
+        now = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            existing = connection.execute(
+                "SELECT created_at FROM market_instruments WHERE instrument_id = ?",
+                (instrument.instrument_id,),
+            ).fetchone()
+            created_at = existing["created_at"] if existing else now
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO market_instruments (
+                    instrument_id, primary_ticker, name, asset_class, market,
+                    exchange_code, currency, isin, openfigi, composite_figi,
+                    share_class_figi, cusip, lei, primary_provider,
+                    provider_symbols_json, history_status, description_for_agent,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    instrument.instrument_id,
+                    instrument.primary_ticker,
+                    instrument.name,
+                    instrument.asset_class,
+                    instrument.market,
+                    instrument.exchange_code,
+                    instrument.currency,
+                    instrument.isin,
+                    instrument.openfigi,
+                    instrument.composite_figi,
+                    instrument.share_class_figi,
+                    instrument.cusip,
+                    instrument.lei,
+                    instrument.primary_provider,
+                    json.dumps(instrument.provider_symbols_json, ensure_ascii=True, sort_keys=True),
+                    instrument.history_status,
+                    instrument.description_for_agent,
+                    created_at,
+                    now,
+                ),
+            )
+
+    def get_market_instrument(self, instrument_id: str) -> MarketInstrumentRecord | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM market_instruments WHERE instrument_id = ?",
+                (instrument_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_market_instrument(row)
+
+    def find_market_instrument_by_ticker(self, ticker: str) -> MarketInstrumentRecord | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM market_instruments WHERE primary_ticker = ? LIMIT 1",
+                (ticker.upper(),),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_market_instrument(row)
+
+    @staticmethod
+    def _row_to_market_instrument(row: sqlite3.Row) -> MarketInstrumentRecord:
+        return MarketInstrumentRecord(
+            instrument_id=row["instrument_id"],
+            primary_ticker=row["primary_ticker"],
+            name=row["name"],
+            asset_class=row["asset_class"],
+            market=row["market"],
+            exchange_code=row["exchange_code"],
+            currency=row["currency"],
+            isin=row["isin"],
+            openfigi=row["openfigi"],
+            composite_figi=row["composite_figi"],
+            share_class_figi=row["share_class_figi"],
+            cusip=row["cusip"],
+            lei=row["lei"],
+            primary_provider=row["primary_provider"],
+            provider_symbols_json=json.loads(row["provider_symbols_json"] or "{}"),
+            history_status=row["history_status"],
+            description_for_agent=row["description_for_agent"],
+        )
+
+    def update_instrument_history_status(self, instrument_id: str, history_status: str) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "UPDATE market_instruments SET history_status = ?, updated_at = ? WHERE instrument_id = ?",
+                (history_status, utc_now().isoformat(), instrument_id),
+            )
+
+    def upsert_market_symbol_segment(self, segment: MarketSymbolHistoryRecord) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO market_symbol_history (
+                    segment_id, instrument_id, ticker, provider_name,
+                    exchange_code, isin, figi, valid_from, valid_to,
+                    event_type, mapping_confidence, source_name, raw_json, collected_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    segment.segment_id,
+                    segment.instrument_id,
+                    segment.ticker,
+                    segment.provider_name,
+                    segment.exchange_code,
+                    segment.isin,
+                    segment.figi,
+                    segment.valid_from,
+                    segment.valid_to,
+                    segment.event_type,
+                    segment.mapping_confidence,
+                    segment.source_name,
+                    json.dumps(segment.raw_json, ensure_ascii=True, sort_keys=True),
+                    utc_now().isoformat(),
+                ),
+            )
+
+    def list_symbol_segments(self, instrument_id: str) -> list[MarketSymbolHistoryRecord]:
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                "SELECT * FROM market_symbol_history WHERE instrument_id = ? ORDER BY valid_from",
+                (instrument_id,),
+            ).fetchall()
+        return [
+            MarketSymbolHistoryRecord(
+                segment_id=row["segment_id"],
+                instrument_id=row["instrument_id"],
+                ticker=row["ticker"],
+                provider_name=row["provider_name"],
+                valid_from=row["valid_from"],
+                valid_to=row["valid_to"],
+                exchange_code=row["exchange_code"],
+                isin=row["isin"],
+                figi=row["figi"],
+                event_type=row["event_type"],
+                mapping_confidence=row["mapping_confidence"],
+                source_name=row["source_name"],
+                raw_json=json.loads(row["raw_json"] or "{}"),
+            )
+            for row in rows
+        ]
+
+    def upsert_market_price_bar(self, bar: MarketPriceBarRecord) -> None:
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO market_price_bars (
+                    instrument_id, source_segment_id, date, bar_interval,
+                    open, high, low, close, volume,
+                    adjusted_open, adjusted_high, adjusted_low, adjusted_close, adjusted_volume,
+                    dividend_cash, split_factor, source_name, source_symbol,
+                    has_break_detected, has_pre2018_delisted,
+                    has_missing_corp_acts, has_mapping_review_needed,
+                    quality_flags_json, collected_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    bar.instrument_id,
+                    bar.source_segment_id,
+                    bar.date,
+                    bar.bar_interval,
+                    bar.open,
+                    bar.high,
+                    bar.low,
+                    bar.close,
+                    bar.volume,
+                    bar.adjusted_open,
+                    bar.adjusted_high,
+                    bar.adjusted_low,
+                    bar.adjusted_close,
+                    bar.adjusted_volume,
+                    bar.dividend_cash,
+                    bar.split_factor,
+                    bar.source_name,
+                    bar.source_symbol,
+                    1 if bar.has_break_detected else 0,
+                    1 if bar.has_pre2018_delisted else 0,
+                    1 if bar.has_missing_corp_acts else 0,
+                    1 if bar.has_mapping_review_needed else 0,
+                    json.dumps(bar.quality_flags_json, ensure_ascii=True, sort_keys=True),
+                    utc_now().isoformat(),
+                ),
+            )
+
+    def list_market_price_bars(
+        self,
+        instrument_id: str,
+        *,
+        start: str | None = None,
+        end: str | None = None,
+        bar_interval: str = "1d",
+    ) -> list[MarketPriceBarRecord]:
+        sql = [
+            "SELECT * FROM market_price_bars WHERE instrument_id = ? AND bar_interval = ?",
+        ]
+        params: list[Any] = [instrument_id, bar_interval]
+        if start:
+            sql.append("AND date >= ?")
+            params.append(start)
+        if end:
+            sql.append("AND date <= ?")
+            params.append(end)
+        sql.append("ORDER BY date")
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(" ".join(sql), params).fetchall()
+        return [
+            MarketPriceBarRecord(
+                instrument_id=row["instrument_id"],
+                source_segment_id=row["source_segment_id"],
+                date=row["date"],
+                bar_interval=row["bar_interval"],
+                open=row["open"],
+                high=row["high"],
+                low=row["low"],
+                close=row["close"],
+                volume=row["volume"],
+                adjusted_open=row["adjusted_open"],
+                adjusted_high=row["adjusted_high"],
+                adjusted_low=row["adjusted_low"],
+                adjusted_close=row["adjusted_close"],
+                adjusted_volume=row["adjusted_volume"],
+                dividend_cash=row["dividend_cash"],
+                split_factor=row["split_factor"],
+                source_name=row["source_name"],
+                source_symbol=row["source_symbol"],
+                has_break_detected=bool(row["has_break_detected"]),
+                has_pre2018_delisted=bool(row["has_pre2018_delisted"]),
+                has_missing_corp_acts=bool(row["has_missing_corp_acts"]),
+                has_mapping_review_needed=bool(row["has_mapping_review_needed"]),
+                quality_flags_json=json.loads(row["quality_flags_json"] or "{}"),
+            )
+            for row in rows
+        ]
 
     def upsert_central_bank_comm(self, communication: CentralBankCommunicationRecord) -> None:
         with self._connection(commit=True) as connection:

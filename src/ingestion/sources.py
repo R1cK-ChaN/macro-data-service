@@ -174,6 +174,10 @@ from ingestion.clients._ilo_unsd import ILOIngestionClient, UNSDIngestionClient
 from ingestion.clients._worldbank_client import WorldBankIngestionClient, _WorldBankRateLimiter
 from ingestion.clients._fed import FedIngestionClient
 from ingestion.clients._market import MarketPriceClient
+from ingestion.market.clients._tiingo import TiingoMarketDataProvider
+from ingestion.market.clients._eodhd import EODHDMarketDataProvider
+from ingestion.market.clients._macro_market import MacroMarketProvider
+from ingestion.market.clients._identity_repair import IdentityRepairService
 from ingestion.clients._trends import (
     RawNewsEntry,
     PreparedNewsRecord,
@@ -198,6 +202,10 @@ class IngestionOrchestrator:
         tradingeconomics: TradingEconomicsCalendarClient | None = None,
         fed: FedIngestionClient | None = None,
         market: MarketPriceClient | None = None,
+        tiingo: TiingoMarketDataProvider | None = None,
+        eodhd: EODHDMarketDataProvider | None = None,
+        macro_market: MacroMarketProvider | None = None,
+        identity_repair: IdentityRepairService | None = None,
         news: NewsIngestionClient | None = None,
         reddit_trends: RedditTrendIngestionClient | None = None,
         weibo_trends: WeiboTrendIngestionClient | None = None,
@@ -222,6 +230,10 @@ class IngestionOrchestrator:
         self.tradingeconomics = tradingeconomics or TradingEconomicsCalendarClient()
         self.fed = fed or FedIngestionClient()
         self.market = market or MarketPriceClient()
+        self.tiingo = tiingo or TiingoMarketDataProvider()
+        self.eodhd = eodhd or EODHDMarketDataProvider()
+        self.macro_market = macro_market or MacroMarketProvider()
+        self.identity_repair = identity_repair or IdentityRepairService()
         self.news = news or NewsIngestionClient()
         self.reddit_trends = reddit_trends or RedditTrendIngestionClient()
         self.weibo_trends = weibo_trends or WeiboTrendIngestionClient()
@@ -296,6 +308,8 @@ class IngestionOrchestrator:
             self._build_calendar_source(),
             self._build_fed_source(),
             self._build_market_source(),
+            self._build_tiingo_market_source(),
+            self._build_eodhd_market_source(),
             self._build_fred_daily_source(),
             self._build_fred_nondaily_source(),
             self._build_fred_full_source(),
@@ -317,6 +331,10 @@ class IngestionOrchestrator:
             self._build_worldbank_source(),
             self._build_worldbank_catalog_source(),
             self._build_bls_source(),
+            # Macro projection + identity repair run last so all upstream
+            # sources (FRED/EIA/ECB) have populated `indicators` first.
+            self._build_macro_market_source(),
+            self._build_identity_repair_source(),
         ]
         for definition in definitions:
             self.register_source(definition)
@@ -324,6 +342,8 @@ class IngestionOrchestrator:
             "calendar",
             "fed",
             "market",
+            "tiingo_market",
+            "eodhd_market",
             "fred_daily",
             "news",
             "reddit_trends",
@@ -343,6 +363,10 @@ class IngestionOrchestrator:
             "worldbank_catalog",
             "bls",
             "fred_nondaily",
+            # Macro projection + identity repair run last so every upstream
+            # source has populated the indicators table first.
+            "macro_market",
+            "identity_repair",
         ]
 
     @staticmethod
@@ -582,6 +606,43 @@ class IngestionOrchestrator:
 
     def _deduplicate_market_prices(self, prices: list[MarketPriceRecord]) -> list[MarketPriceRecord]:
         return self._deduplicate_by_key(prices, lambda price: price.symbol)
+
+    def _build_tiingo_market_source(self, *, lookback_days: int = 365) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="tiingo_market",
+            interval_seconds=86_400,
+            execute=lambda: self.tiingo.refresh_universe(
+                self.store,
+                lookback_days=lookback_days,
+            ).count,
+        )
+
+    def _build_eodhd_market_source(self, *, lookback_days: int = 365) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="eodhd_market",
+            interval_seconds=86_400,
+            execute=lambda: self.eodhd.refresh_universe(
+                self.store,
+                lookback_days=lookback_days,
+            ).count,
+        )
+
+    def _build_macro_market_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="macro_market",
+            interval_seconds=86_400,
+            execute=lambda: self.macro_market.refresh_universe(self.store).count,
+        )
+
+    def _build_identity_repair_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="identity_repair",
+            interval_seconds=86_400,
+            execute=lambda: sum(
+                r.segments_written
+                for r in self.identity_repair.repair_all_breaks(self.store)
+            ),
+        )
 
     def _build_news_source(self, *, category: str | None = None) -> IngestionSourceDefinition:
         return IngestionSourceDefinition(
