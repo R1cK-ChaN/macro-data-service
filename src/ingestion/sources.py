@@ -175,6 +175,7 @@ from ingestion.clients._worldbank_client import WorldBankIngestionClient, _World
 from ingestion.clients._fed import FedIngestionClient
 from ingestion.clients._market import MarketPriceClient
 from ingestion.market.clients._tiingo import TiingoMarketDataProvider
+from ingestion.market.clients._eodhd import EODHDMarketDataProvider
 from ingestion.clients._trends import (
     RawNewsEntry,
     PreparedNewsRecord,
@@ -200,6 +201,7 @@ class IngestionOrchestrator:
         fed: FedIngestionClient | None = None,
         market: MarketPriceClient | None = None,
         tiingo: TiingoMarketDataProvider | None = None,
+        eodhd: EODHDMarketDataProvider | None = None,
         news: NewsIngestionClient | None = None,
         reddit_trends: RedditTrendIngestionClient | None = None,
         weibo_trends: WeiboTrendIngestionClient | None = None,
@@ -225,6 +227,7 @@ class IngestionOrchestrator:
         self.fed = fed or FedIngestionClient()
         self.market = market or MarketPriceClient()
         self.tiingo = tiingo or TiingoMarketDataProvider()
+        self.eodhd = eodhd or EODHDMarketDataProvider()
         self.news = news or NewsIngestionClient()
         self.reddit_trends = reddit_trends or RedditTrendIngestionClient()
         self.weibo_trends = weibo_trends or WeiboTrendIngestionClient()
@@ -300,6 +303,7 @@ class IngestionOrchestrator:
             self._build_fed_source(),
             self._build_market_source(),
             self._build_tiingo_market_source(),
+            self._build_eodhd_market_source(),
             self._build_fred_daily_source(),
             self._build_fred_nondaily_source(),
             self._build_fred_full_source(),
@@ -329,6 +333,7 @@ class IngestionOrchestrator:
             "fed",
             "market",
             "tiingo_market",
+            "eodhd_market",
             "fred_daily",
             "news",
             "reddit_trends",
@@ -593,6 +598,16 @@ class IngestionOrchestrator:
             name="tiingo_market",
             interval_seconds=86_400,
             execute=lambda: self.tiingo.refresh_universe(
+                self.store,
+                lookback_days=lookback_days,
+            ).count,
+        )
+
+    def _build_eodhd_market_source(self, *, lookback_days: int = 365) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="eodhd_market",
+            interval_seconds=86_400,
+            execute=lambda: self.eodhd.refresh_universe(
                 self.store,
                 lookback_days=lookback_days,
             ).count,
