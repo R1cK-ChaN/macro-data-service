@@ -26,6 +26,11 @@ from __future__ import annotations
 
 from .canonicalize import canonicalize_indicator
 from .event_id import synthesize_event_id
+from .projector import (
+    project_events,
+    project_schedule_events,
+    store_raw,
+)
 from .release_time import (
     TIMEZONE_ALIASES,
     ScheduledReleaseTime,
@@ -37,5 +42,8 @@ __all__ = [
     "TIMEZONE_ALIASES",
     "canonicalize_indicator",
     "parse_scheduled_release_time",
+    "project_events",
+    "project_schedule_events",
+    "store_raw",
     "synthesize_event_id",
 ]
