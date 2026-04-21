@@ -90,6 +90,16 @@ from ingestion.calendar.fed_api import (  # noqa: E402
     release_entry_to_records,
 )
 
+from ingestion.calendar.nbs_api import (  # noqa: E402
+    INDICATOR_REGISTRY as NBS_INDICATOR_REGISTRY,
+    NBSReleaseEntry,
+    discover_nbs_calendar_url,
+    fetch_nbs_calendar_index_html,
+    fetch_nbs_yearly_calendar_html,
+    parse_nbs_calendar_html,
+    release_entry_to_records as nbs_release_entry_to_records,
+)
+
 
 # Fields the TE parser actively reads (grep parser.py — these are the
 # only row.get() keys that flow into CalendarEventRecord). Anything
@@ -707,7 +717,7 @@ def render_report(
     today = datetime.now(timezone.utc).date().isoformat()
     provider_label = {
         "te": "TE", "eodhd": "EODHD", "bls": "BLS", "bea": "BEA",
-        "ecb": "ECB", "fed": "Fed",
+        "ecb": "ECB", "fed": "Fed", "nbs": "NBS",
     }.get(provider, provider.upper())
     budget_line = {
         "te":    "- TE basic-plan monthly cap: 1000",
@@ -716,6 +726,7 @@ def render_report(
         "bea":   "- BEA REST API free-tier daily cap: 1000",
         "ecb":   "- ECB Data Portal: no auth, unspecified rate limit (polite)",
         "fed":   "- federalreserve.gov: no auth, HTML scrape (browser-UA required)",
+        "nbs":   "- stats.gov.cn: no auth, HTTP-only, flaky from non-CN IPs",
     }.get(provider, f"- {provider_label} plan: unknown cap")
     lines: list[str] = [
         f"# {provider_label} Calendar Acquisition Validation — {today}",
@@ -1768,12 +1779,188 @@ def run_fed_probe(
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# NBS probe plan + runner
+# ──────────────────────────────────────────────────────────────────────────
+
+# Single-page HTML scrape per run — the NBS yearly calendar is one
+# article listing every registered indicator's 12-month (or
+# quarterly) release schedule. Probe coverage is therefore breadth
+# (how many indicators matched) rather than depth (per-indicator
+# surfaces). NBS is documented as the highest-risk upstream on this
+# issue: HTTP-only, HTML-fragile, frequent timeouts from non-CN IPs.
+# The probe runner catches any exception cleanly — a single-probe
+# timeout surfaces as a loud ``http_error`` card rather than crashing
+# the whole run; on the current single-indicator registry that's
+# also the only probe in flight, but the tolerance shape is in place
+# for when P5c-live expands the whitelist.
+
+
+@dataclass
+class NBSProbe:
+    """One NBS yearly-calendar live-validation probe."""
+
+    name: str
+    year: int
+    description: str
+
+
+def plan_nbs_probes() -> list[NBSProbe]:
+    """One probe per run — the yearly calendar article for the current
+    UTC year. The article lists every registered indicator together,
+    so a single fetch validates the breadth of
+    :data:`INDICATOR_REGISTRY` coverage.
+    """
+    year = datetime.now(timezone.utc).year
+    return [
+        NBSProbe(
+            name=f"nbs_yearly_calendar_{year}",
+            year=year,
+            description=(
+                f"NBS yearly release calendar article for {year} — covers "
+                f"every registered indicator in one fetch"
+            ),
+        )
+    ]
+
+
+def _try_project_nbs_entry(entry: NBSReleaseEntry) -> tuple[bool, str]:
+    """Dry-run the NBS calendar projection on one entry."""
+    try:
+        raw, event = nbs_release_entry_to_records(
+            entry,
+            snapshot_epoch_ms=1_700_000_000_000,
+            calendar_url="https://example.test/nbs_fixture",
+        )
+        return True, (
+            f"ok indicator={entry.indicator} "
+            f"date={entry.year}-{entry.month:02d}-{entry.day:02d} "
+            f"event_id={raw.provider_event_id[:10]}…"
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def run_nbs_probe(
+    probe: NBSProbe,
+    *,
+    index_fetcher=fetch_nbs_calendar_index_html,
+    html_fetcher=fetch_nbs_yearly_calendar_html,
+) -> ProbeResult:
+    """Execute one NBS probe and return a populated :class:`ProbeResult`.
+
+    Auto-discovers the calendar URL via the index page, fetches the
+    article, parses entries, and dry-projects each through
+    ``release_entry_to_records``. ``index_fetcher`` + ``html_fetcher``
+    seams let tests feed fixture HTML without touching
+    ``stats.gov.cn``.
+
+    NBS upstream is notorious for intermittent timeouts from outside
+    CN; the single ``except Exception`` branch carries every failure
+    mode (index timeout, article timeout, parse raise) into a
+    ``http_error`` card rather than letting the exception propagate
+    and kill a multi-probe run (forward-compatible for P5c-live's
+    whitelist expansion).
+    """
+    generic = Probe(
+        name=probe.name,
+        path=(
+            f"GET http://www.stats.gov.cn/english/PressRelease/"
+            f"ReleaseCalendar/ → {probe.year} article"
+        ),
+        description=probe.description,
+        expected_shape="list[NBSReleaseEntry] after HTML parse",
+        expected_fields=frozenset(),  # HTML surface — diff not meaningful
+    )
+    result = ProbeResult(probe=generic, status="skipped")
+
+    import time as _time
+    t0 = _time.monotonic()
+    try:
+        calendar_url = discover_nbs_calendar_url(
+            probe.year, index_fetcher=index_fetcher,
+        )
+        result.request_path = f"GET {calendar_url}"
+        html = html_fetcher(calendar_url)
+        entries = parse_nbs_calendar_html(html, year_override=probe.year)
+    except Exception as exc:
+        result.status = "http_error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        result.notes.append(
+            "NBS upstream is the highest-risk source on this issue "
+            "(HTTP-only, HTML-fragile, frequent non-CN timeouts). "
+            "Transient failures here are expected — retry the probe "
+            "before treating it as a genuine drift signal."
+        )
+        return result
+    result.http_elapsed_ms = (_time.monotonic() - t0) * 1000
+
+    result.row_count = len(entries)
+    if not entries:
+        # The production fetcher raises ``NBSCalendarParseError`` on
+        # this exact path; mirror the loud-fail shape per the Codex
+        # review lesson from P4b — a green card on zero entries would
+        # let an interstitial slip through.
+        result.status = "http_error"
+        result.notes.append(
+            "zero NBS entries parsed — DOM drift or interstitial "
+            "(production fetcher raises on this path)"
+        )
+        return result
+    result.status = "ok"
+
+    # Newest-first by (year, month, day).
+    ordered = sorted(
+        entries,
+        key=lambda e: (e.year, e.month, e.day),
+        reverse=True,
+    )
+    sample = ordered[0]
+    result.sample_row = {
+        "year":               sample.year,
+        "month":              sample.month,
+        "day":                sample.day,
+        "indicator":          sample.indicator,
+        "release_time_local": sample.release_time_local,
+        "date_cell":          sample.date_cell,
+    }
+
+    # Per-indicator tally. The yearly calendar is the one place every
+    # registered indicator converges, so the count-per-indicator is
+    # the best drift signal: if PPI / GDP / etc. (P5c-live additions)
+    # land with zero matches, their label_fragment drifted off the
+    # page's actual headers.
+    by_indicator: Counter = Counter()
+    for e in entries:
+        by_indicator[e.indicator] += 1
+    result.enum_counters = {"indicator": by_indicator}
+    result.notes.append(
+        "entries by indicator: "
+        + ", ".join(f"{k}={v}" for k, v in by_indicator.most_common())
+    )
+
+    # Dry-project up to 10 newest entries — the set whose projection
+    # failure would matter most for an imminent release.
+    sample_n = min(10, len(ordered))
+    result.parse_attempts = sample_n
+    for entry in ordered[:sample_n]:
+        ok, msg = _try_project_nbs_entry(entry)
+        if ok:
+            result.parse_successes += 1
+        else:
+            if len(result.parse_error_samples) < 3:
+                result.parse_error_samples.append(msg)
+    return result
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # CLI
 # ──────────────────────────────────────────────────────────────────────────
 
 
 _OFFICIAL_PROVIDERS: frozenset[str] = frozenset({"bls", "bea", "fed", "ecb", "nbs"})
-_OFFICIAL_PROVIDERS_WITH_PROBES: frozenset[str] = frozenset({"bls", "bea", "ecb", "fed"})
+_OFFICIAL_PROVIDERS_WITH_PROBES: frozenset[str] = frozenset(
+    {"bls", "bea", "ecb", "fed", "nbs"}
+)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -1784,8 +1971,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="te",
         help=(
             "which acquisition lane to validate. "
-            "bls (P1b) + bea (P2b) + ecb (P3b) + fed (P4b) have live probes; "
-            "nbs is scaffold-only — probe body lands in P5c."
+            "bls / bea / ecb / fed / nbs all have live probes (P1b / P2b "
+            "/ P3b / P4b / P5c)."
         ),
     )
     ap.add_argument(
@@ -1817,8 +2004,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     # Official-source connectors with no probe body yet land on the
-    # scaffold-only stub. BLS + BEA + ECB + Fed now have live probes;
-    # NBS still reports back as scaffold-registered.
+    # scaffold-only stub. After P5c, every official provider has a
+    # live probe; ``unwired`` is empty on the current tree but the
+    # branch is kept as a safety net for any future provider seeded
+    # into ``_OFFICIAL_PROVIDERS`` before its probe ships.
     unwired = _OFFICIAL_PROVIDERS - _OFFICIAL_PROVIDERS_WITH_PROBES
     if args.provider in unwired:
         print(
@@ -1843,6 +2032,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.provider == "fed":
         fed_probes = plan_fed_probes()
         return _run_fed(args, fed_probes)
+
+    if args.provider == "nbs":
+        nbs_probes = plan_nbs_probes()
+        return _run_nbs(args, nbs_probes)
 
     probes = plan_te_probes() if args.provider == "te" else plan_eodhd_probes()
 
@@ -2107,6 +2300,70 @@ def _run_fed(args: argparse.Namespace, probes: list[FedProbe]) -> int:
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / (
         f"calendar_acquisition_fed_"
+        f"{datetime.now(timezone.utc).date().isoformat()}.md"
+    )
+    report_path.write_text(report, encoding="utf-8")
+    print()
+    print(f"Report written: {report_path}")
+    return 0
+
+
+def _run_nbs(args: argparse.Namespace, probes: list[NBSProbe]) -> int:
+    """Dispatch the NBS probe flow — same shape as :func:`_run_fed`.
+
+    NBS is the highest-risk upstream (HTTP-only, HTML-fragile, non-CN
+    timeouts). One probe covers every registered indicator in a single
+    article fetch; the runner's ``except Exception`` branch absorbs
+    transient network failures cleanly rather than crashing the run.
+    """
+    if not args.execute:
+        print("DRY RUN (nbs) — pass --execute to actually hit upstream.")
+        print()
+        for i, p in enumerate(probes, 1):
+            print(f"{i}. {p.name}")
+            print(f"   year: {p.year}")
+            print(f"   purpose: {p.description}")
+        print()
+        print(f"Total planned requests: {len(probes)} (+ 1 index-page fetch)")
+        return 0
+
+    if not args.yes:
+        print(f"Planned NBS probes ({len(probes)}):")
+        for i, p in enumerate(probes, 1):
+            print(f"  {i}. {p.name} — yearly calendar for {p.year}")
+        print(f"Estimated upstream requests: {len(probes)} (+ 1 index-page fetch)")
+        resp = input("Proceed with live run? [y/N] ").strip().lower()
+        if resp not in {"y", "yes"}:
+            print("Aborted.")
+            return 1
+
+    results: list[ProbeResult] = []
+    for probe in probes:
+        result = run_nbs_probe(probe)
+        results.append(result)
+        _print_probe_summary(result)
+
+    # Each NBS probe expends two upstream requests on the happy path —
+    # the index-page discovery plus the yearly article fetch. The
+    # dry-run summary advertises this ("+ 1 index-page fetch"); the
+    # Budget section should match. When discovery fails the article
+    # fetch never runs, so the probe's ``request_path`` (set only
+    # after ``discover_nbs_calendar_url`` returns) acts as the
+    # proxy for whether 1 or 2 requests were spent.
+    def _nbs_requests_spent(r: ProbeResult) -> int:
+        if r.status == "skipped":
+            return 0
+        return 2 if r.request_path else 1
+
+    report = render_report(
+        results,
+        requests_spent=sum(_nbs_requests_spent(r) for r in results),
+        provider="nbs",
+    )
+    report_dir = Path(args.report_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / (
+        f"calendar_acquisition_nbs_"
         f"{datetime.now(timezone.utc).date().isoformat()}.md"
     )
     report_path.write_text(report, encoding="utf-8")

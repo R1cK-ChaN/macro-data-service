@@ -268,12 +268,14 @@ def test_fed_no_longer_unwired(validator) -> None:
     )
 
 
-def test_only_nbs_remains_unwired(validator) -> None:
+def test_no_providers_remain_unwired(validator) -> None:
+    """P5c closed out the last stub — every official provider now has
+    a live probe scaffold."""
     unwired = (
         validator._OFFICIAL_PROVIDERS
         - validator._OFFICIAL_PROVIDERS_WITH_PROBES
     )
-    assert unwired == frozenset({"nbs"})
+    assert unwired == frozenset()
 
 
 def test_fed_dry_run_prints_plan(
