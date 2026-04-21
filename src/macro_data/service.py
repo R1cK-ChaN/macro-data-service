@@ -594,6 +594,76 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    # ── Economic calendar — BLS release schedule (issue #9 P1a) ────────
+
+    def _op_calendar_econ_schedule_bls(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape BLS release-schedule pages into ``cal_econ_event``.
+
+        Arguments:
+          series_ids     — optional list of BLS series ids. Omit for
+                           the full whitelist (CPI, NFP).
+          dry_run        — default True. No HTTP, no DB writes.
+
+        Schedule rows land with ``actual=NULL`` and
+        ``event_time_precision='datetime'``. The API-side
+        ``calendar_econ_fetch_bls`` op later merges value-bearing
+        rows onto the same ``provider_event_id`` without clobbering
+        the scheduled datetime (see ``project_events`` cross-source
+        merge rule).
+        """
+        from ingestion.calendar.bls_api import (
+            SCHEDULE_URL_SLUG,
+            schedule_bls_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list) and raw_series:
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            from ingestion.calendar.bls_api.fetcher import (
+                _resolve_schedule_series,
+            )
+            planned, unknown = _resolve_schedule_series(series_ids)
+            return {
+                "dry_run":        True,
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = schedule_bls_calendar(
+                connection, series_ids=series_ids, dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_unknown":     summary.series_unknown,
+            "series_failed":      summary.series_failed,
+            "entries_parsed":     summary.entries_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Unified document queries (issue #2 / #3) ────────────────────────
 
     def _op_list_items(self, arguments: dict[str, Any]) -> dict[str, Any]:

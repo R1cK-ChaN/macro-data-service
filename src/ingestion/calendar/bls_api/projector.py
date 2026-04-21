@@ -60,7 +60,115 @@ def project_events(
     connection: sqlite3.Connection,
     records: Iterable[BLSCalendarEventRecord],
 ) -> int:
-    """Upsert ``cal_econ_event`` rows; returns inserts + updates count."""
+    """API-side upsert to ``cal_econ_event``; returns inserts + updates count.
+
+    Cross-source merge rule: if the existing row already carries a
+    ``datetime``-precision ``event_time_utc`` (written by the P1a
+    schedule scraper), the API-side write **does not** clobber it with
+    its ``approximate`` placeholder. The schedule is the authoritative
+    source for the scheduled release timestamp; API is the
+    authoritative source for the value. Two sides, separate fields.
+
+    Within-API revision ordering (observed_at_epoch_ms monotonicity)
+    still applies to the actual/value columns — a late-arriving older
+    snapshot cannot overwrite a newer one.
+    """
+    now = _now_iso()
+    changed = 0
+    for r in records:
+        params = (
+            r.provider,
+            r.provider_event_id,
+            r.event_time_utc,
+            r.event_time_precision,
+            r.reference_date,
+            r.reference_label,
+            r.country_code,
+            r.indicator_id,
+            r.category,
+            r.title,
+            r.importance,
+            r.currency,
+            r.unit,
+            r.actual,
+            r.previous,
+            r.revised,
+            r.forecast,
+            r.consensus_forecast,
+            r.ticker,
+            r.source,
+            r.source_url,
+            r.content_hash,
+            r.last_update_epoch_ms,
+            r.observed_at_epoch_ms,
+            now,
+            now,
+        )
+        cursor = connection.execute(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                reference_date, reference_label, country_code, indicator_id,
+                category, title, importance, currency, unit,
+                actual, previous, revised, forecast, consensus_forecast,
+                ticker, source, source_url, content_hash,
+                last_update_epoch_ms, observed_at_epoch_ms,
+                created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT (provider, provider_event_id) DO UPDATE SET
+                event_time_utc       = CASE WHEN cal_econ_event.event_time_precision = 'datetime'
+                                             THEN cal_econ_event.event_time_utc
+                                             ELSE excluded.event_time_utc END,
+                event_time_precision = CASE WHEN cal_econ_event.event_time_precision = 'datetime'
+                                             THEN cal_econ_event.event_time_precision
+                                             ELSE excluded.event_time_precision END,
+                reference_date       = excluded.reference_date,
+                reference_label      = excluded.reference_label,
+                country_code         = excluded.country_code,
+                indicator_id         = COALESCE(excluded.indicator_id, cal_econ_event.indicator_id),
+                category             = excluded.category,
+                title                = excluded.title,
+                importance           = excluded.importance,
+                currency             = excluded.currency,
+                unit                 = excluded.unit,
+                actual               = excluded.actual,
+                previous             = excluded.previous,
+                revised              = excluded.revised,
+                forecast             = excluded.forecast,
+                consensus_forecast   = excluded.consensus_forecast,
+                ticker               = excluded.ticker,
+                source               = excluded.source,
+                source_url           = excluded.source_url,
+                content_hash         = excluded.content_hash,
+                last_update_epoch_ms = excluded.last_update_epoch_ms,
+                observed_at_epoch_ms = excluded.observed_at_epoch_ms,
+                updated_at           = excluded.updated_at
+            WHERE excluded.observed_at_epoch_ms >= cal_econ_event.observed_at_epoch_ms
+            """,
+            params,
+        )
+        if cursor.rowcount > 0:
+            changed += 1
+    return changed
+
+
+def project_schedule_events(
+    connection: sqlite3.Connection,
+    records: Iterable[BLSCalendarEventRecord],
+) -> int:
+    """Schedule-side upsert to ``cal_econ_event``.
+
+    Writes event-time + metadata fields (``event_time_utc``,
+    ``event_time_precision``, ``title``, ``category``, ``importance``,
+    ``source_url``) and **never** touches API-owned value columns
+    (``actual`` / ``previous`` / ``revised`` / ``forecast`` /
+    ``consensus_forecast`` / ``content_hash``). When the API-side
+    later lands, its values are preserved.
+
+    Use when the caller is ingesting schedule rows that carry
+    ``actual=None`` by construction (pre-release scraping). For the
+    value-bearing payload after publication, call :func:`project_events`.
+    """
     now = _now_iso()
     changed = 0
     for r in records:
@@ -106,28 +214,26 @@ def project_events(
             ON CONFLICT (provider, provider_event_id) DO UPDATE SET
                 event_time_utc       = excluded.event_time_utc,
                 event_time_precision = excluded.event_time_precision,
-                reference_date       = excluded.reference_date,
-                reference_label      = excluded.reference_label,
+                reference_date       = COALESCE(cal_econ_event.reference_date, excluded.reference_date),
+                reference_label      = CASE WHEN cal_econ_event.reference_label = ''
+                                             THEN excluded.reference_label
+                                             ELSE cal_econ_event.reference_label END,
                 country_code         = excluded.country_code,
-                indicator_id         = COALESCE(excluded.indicator_id, cal_econ_event.indicator_id),
                 category             = excluded.category,
                 title                = excluded.title,
                 importance           = excluded.importance,
-                currency             = excluded.currency,
                 unit                 = excluded.unit,
-                actual               = excluded.actual,
-                previous             = excluded.previous,
-                revised              = excluded.revised,
-                forecast             = excluded.forecast,
-                consensus_forecast   = excluded.consensus_forecast,
-                ticker               = excluded.ticker,
                 source               = excluded.source,
                 source_url           = excluded.source_url,
-                content_hash         = excluded.content_hash,
-                last_update_epoch_ms = excluded.last_update_epoch_ms,
-                observed_at_epoch_ms = excluded.observed_at_epoch_ms,
                 updated_at           = excluded.updated_at
-            WHERE excluded.observed_at_epoch_ms >= cal_econ_event.observed_at_epoch_ms
+                -- observed_at_epoch_ms deliberately not updated on
+                -- conflict: it's the API-side freshness guard used by
+                -- project_events' WHERE clause. If a schedule scrape
+                -- were to bump it, later out-of-order API revisions
+                -- could be skipped (or stale API values could
+                -- overwrite newer ones on replay). observed_at lives
+                -- with whichever side inserted the row; schedule
+                -- touches it only on first insert (no-conflict path).
             """,
             params,
         )

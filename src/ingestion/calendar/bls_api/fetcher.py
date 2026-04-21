@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Iterable
 
+import requests
+
 from ingestion.timeseries.scrapers.bls import BLSClient
 
 from .indicators import INDICATOR_REGISTRY
@@ -28,7 +30,17 @@ from .parser import (
     BLSCalendarRawRecord,
     parse_observation,
 )
-from .projector import project_events, store_raw
+from .projector import (
+    project_events,
+    project_schedule_events,
+    store_raw,
+)
+from .schedule import (
+    SCHEDULE_URL_SLUG,
+    fetch_schedule_html,
+    parse_schedule_html,
+    schedule_entry_to_records,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,5 +156,106 @@ def fetch_bls_calendar(
     summary.observations_seen = len(event_records)
     summary.rows_raw_inserted = store_raw(connection, raw_records)
     summary.events_upserted = project_events(connection, event_records)
+    summary.wall_seconds = time.monotonic() - started
+    return summary
+
+
+@dataclass
+class ScheduleRunSummary:
+    """Outcome of a single :func:`schedule_bls_calendar` invocation."""
+
+    series_planned: list[str] = field(default_factory=list)
+    series_unknown: list[str] = field(default_factory=list)
+    series_ok: list[str] = field(default_factory=list)
+    series_failed: list[tuple[str, str]] = field(default_factory=list)
+    dry_run: bool = True
+    entries_parsed: int = 0
+    rows_raw_inserted: int = 0
+    events_upserted: int = 0
+    wall_seconds: float = 0.0
+
+
+def _resolve_schedule_series(
+    series_ids: Iterable[str] | None,
+) -> tuple[list[str], list[str]]:
+    """Split into series that have a schedule URL registered + unknown."""
+    if series_ids is None:
+        return list(SCHEDULE_URL_SLUG.keys()), []
+    known: list[str] = []
+    unknown: list[str] = []
+    for sid in series_ids:
+        if sid in SCHEDULE_URL_SLUG:
+            known.append(sid)
+        else:
+            unknown.append(sid)
+    return known, unknown
+
+
+def schedule_bls_calendar(
+    connection: sqlite3.Connection,
+    *,
+    series_ids: Iterable[str] | None = None,
+    dry_run: bool = True,
+    session: "requests.Session | None" = None,
+    snapshot_epoch_ms: int | None = None,
+    html_fetcher=fetch_schedule_html,
+) -> ScheduleRunSummary:
+    """Scrape BLS release schedules and project to ``cal_econ_event``.
+
+    Schedule rows land with ``actual=NULL`` and
+    ``event_time_precision='datetime'``. When the matching API-side
+    values arrive (via :func:`fetch_bls_calendar`), the shared
+    ``provider_event_id`` makes the projector merge the two sides on
+    the same row: the schedule side keeps owning the scheduled
+    datetime; the API side owns ``actual``.
+
+    ``html_fetcher`` is the seam tests inject to feed fixture HTML.
+    """
+    started = time.monotonic()
+    known, unknown = _resolve_schedule_series(series_ids)
+    summary = ScheduleRunSummary(
+        series_planned=list(known),
+        series_unknown=list(unknown),
+        dry_run=dry_run,
+    )
+    if unknown:
+        logger.warning(
+            "BLS schedule fetch: %d unknown series skipped: %s",
+            len(unknown), unknown,
+        )
+    if dry_run or not known:
+        summary.wall_seconds = time.monotonic() - started
+        return summary
+
+    snapshot = snapshot_epoch_ms or int(
+        datetime.now(timezone.utc).timestamp() * 1000
+    )
+
+    raw_records: list[BLSCalendarRawRecord] = []
+    event_records: list[BLSCalendarEventRecord] = []
+    for sid in known:
+        try:
+            html = html_fetcher(sid, session=session)
+            entries = parse_schedule_html(html, series_id=sid)
+        except Exception as exc:
+            logger.warning("BLS schedule fetch failed for %s: %s", sid, exc)
+            summary.series_failed.append((sid, str(exc)))
+            continue
+        if not entries:
+            summary.series_failed.append((sid, "no entries parsed"))
+            continue
+        summary.series_ok.append(sid)
+        for entry in entries:
+            raw_rec, event_rec = schedule_entry_to_records(
+                entry, snapshot_epoch_ms=snapshot,
+            )
+            raw_records.append(raw_rec)
+            event_records.append(event_rec)
+
+    summary.entries_parsed = len(event_records)
+    summary.rows_raw_inserted = store_raw(connection, raw_records)
+    summary.events_upserted = project_schedule_events(
+        connection, event_records,
+    )
     summary.wall_seconds = time.monotonic() - started
     return summary
