@@ -897,6 +897,79 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    def _op_calendar_econ_fetch_nbs(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape an NBS yearly-calendar article into the calendar schema.
+
+        Arguments:
+          calendar_url   — required in execute mode. Full URL of the
+                           NBS yearly-calendar article
+                           (``.../ReleaseCalendar/YYYYMM/tYYYYMMDD_N.html``).
+          year           — optional integer year override; the parser
+                           defaults to reading it from the article title.
+          dry_run        — default True. No HTTP, no DB writes.
+
+        Dry-run returns the indicator plan. Execute mode fetches the
+        named NBS calendar article once, parses the schedule table,
+        projects each scheduled release as a ``cal_econ_event`` row
+        with ``actual=NULL`` / ``event_time_precision='datetime'``.
+        """
+        from ingestion.calendar.nbs_api import (
+            INDICATOR_REGISTRY,
+            fetch_nbs_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        calendar_url = arguments.get("calendar_url") or ""
+        year_raw = arguments.get("year")
+        try:
+            year = int(year_raw) if year_raw is not None else None
+        except (TypeError, ValueError):
+            year = None
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": list(INDICATOR_REGISTRY.keys()),
+                "calendar_url":       calendar_url,
+                "year":               year,
+                "stopped_reason":     "dry_run",
+            }
+
+        if not calendar_url:
+            return {"error": "calendar_url is required in execute mode"}
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_nbs_calendar(
+                connection,
+                calendar_url=calendar_url,
+                year=year,
+                dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "calendar_url":       summary.calendar_url,
+            "year":               summary.year,
+            "entries_parsed":     summary.entries_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Unified document queries (issue #2 / #3) ────────────────────────
 
     def _op_list_items(self, arguments: dict[str, Any]) -> dict[str, Any]:
