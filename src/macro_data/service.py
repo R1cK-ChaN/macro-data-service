@@ -756,6 +756,95 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    # ── Economic calendar — ECB connector (issue #9 P3) ─────────────────
+
+    def _op_calendar_econ_fetch_ecb(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch ECB Data Portal SDMX observations into the calendar.
+
+        Arguments:
+          start_period   — optional ISO date (``"YYYY-MM-DD"``) lower
+                           bound. Omit to fetch the full available history.
+          end_period     — optional ISO date upper bound.
+          series_ids     — optional list of ECB SDMX series ids. Omit
+                           for the full P3 whitelist (MRO / DFR / MLF).
+          dry_run        — default True. No HTTP, no DB writes.
+          limit          — optional ``lastNObservations`` cap. ``0``
+                           means uncapped (default).
+
+        Dry-run returns the plan only. Execute mode returns counts for
+        observations seen, raw rows inserted, events upserted, plus
+        per-series success / empty / unknown lists.
+        """
+        from ingestion.calendar.ecb_api import fetch_ecb_calendar
+        from ingestion.timeseries.sdmx.providers.ecb import ECBClient
+
+        dry_run = bool(arguments.get("dry_run", True))
+        start_period = arguments.get("start_period")
+        end_period = arguments.get("end_period")
+        start_period = str(start_period) if start_period else None
+        end_period = str(end_period) if end_period else None
+
+        try:
+            limit = int(arguments.get("limit") or 0)
+        except (TypeError, ValueError):
+            limit = 0
+        if limit < 0:
+            limit = 0
+
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list) and raw_series:
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            # Dry-run mirrors execute-path resolution so unknown ids
+            # surface here rather than after HTTP is triggered.
+            from ingestion.calendar.ecb_api.fetcher import _resolve_series
+            planned, unknown = _resolve_series(series_ids)
+            return {
+                "dry_run":        True,
+                "start_period":   start_period or "",
+                "end_period":     end_period or "",
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        client = ECBClient()
+        connection = get_conn()
+        try:
+            summary = fetch_ecb_calendar(
+                connection, client,
+                start_period=start_period, end_period=end_period,
+                series_ids=series_ids, dry_run=False, limit=limit,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "start_period":       summary.start_period,
+            "end_period":         summary.end_period,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "series_unknown":     summary.series_unknown,
+            "observations_seen":  summary.observations_seen,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Unified document queries (issue #2 / #3) ────────────────────────
 
     def _op_list_items(self, arguments: dict[str, Any]) -> dict[str, Any]:
