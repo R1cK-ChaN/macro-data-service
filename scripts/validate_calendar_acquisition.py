@@ -808,11 +808,20 @@ def _fmt_field_list(fields: list[str]) -> str:
 # ──────────────────────────────────────────────────────────────────────────
 
 
+_OFFICIAL_PROVIDERS: frozenset[str] = frozenset({"bls", "bea", "fed", "ecb", "nbs"})
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
-        "--provider", choices=["te", "eodhd"], default="te",
-        help="which acquisition lane to validate",
+        "--provider",
+        choices=["te", "eodhd", "bls", "bea", "fed", "ecb", "nbs"],
+        default="te",
+        help=(
+            "which acquisition lane to validate. "
+            "bls/bea/fed/ecb/nbs are scaffold-only in issue #9 P0 — "
+            "probe bodies land in subsequent phases."
+        ),
     )
     ap.add_argument(
         "--execute", action="store_true",
@@ -841,6 +850,17 @@ def confirm_budget(probes: list[Probe]) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+
+    # Official-source connectors are scaffold-only in P0. Flags are wired
+    # up now so later phases land as probe-body additions, not CLI edits.
+    if args.provider in _OFFICIAL_PROVIDERS:
+        print(
+            f"--provider {args.provider}: scaffold registered (issue #9 P0). "
+            f"Probe bodies land in the phase that ships the {args.provider} "
+            f"connector. No HTTP, no report written."
+        )
+        return 0
+
     probes = plan_te_probes() if args.provider == "te" else plan_eodhd_probes()
 
     if not args.execute:

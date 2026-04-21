@@ -478,7 +478,24 @@ contract shape.
 PK is `(provider_id, domain)` so one provider can serve both lanes (e.g.
 EODHD could later expose economic-events alongside corporate).
 
-Seeded on `init_schema`: `tradingeconomics/economic`, `eodhd/corporate`.
+Seeded on `init_schema` (issue #8 + issue #9 P0):
+
+| provider_id       | provider_type     | domain    | precedence |
+|-------------------|-------------------|-----------|------------|
+| `tradingeconomics`| `data_aggregator` | economic  | 10         |
+| `eodhd`           | `data_aggregator` | corporate | 10         |
+| `bls`             | `government_agency` | economic | 100       |
+| `bea`             | `government_agency` | economic | 100       |
+| `federal-reserve` | `central_bank`    | economic  | 100        |
+| `ecb`             | `central_bank`    | economic  | 100        |
+| `nbs`             | `government_agency` | economic | 100       |
+
+Precedence is a ranking signal, not a view-level filter. The current
+`v_calendar_item` VIEW is a plain `UNION ALL` across both lanes and
+surfaces every provider row. Conflict resolution on
+`(country_code, event_time_utc, canonical_indicator)` is issue #9 P6's
+parity-harness responsibility — that's the first caller that actually
+reads the `precedence` column.
 
 ### Economic lane
 

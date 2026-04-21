@@ -2559,7 +2559,11 @@ class SQLiteEngineStore:
             )
 
             # Seed provider dim. INSERT OR IGNORE = idempotent on repeated
-            # init_schema calls.
+            # init_schema calls. Official-tier providers (precedence=100)
+            # rank above the TE aggregator (precedence=10); the current
+            # v_calendar_item VIEW is a plain UNION ALL and does not yet
+            # apply precedence — the parity harness (issue #9 P6) is the
+            # first caller that resolves conflicts on this column.
             _now_iso = datetime.now(timezone.utc).isoformat()
             connection.executemany(
                 """
@@ -2569,8 +2573,13 @@ class SQLiteEngineStore:
                 ) VALUES (?, ?, ?, ?, 1, ?, ?)
                 """,
                 [
-                    ("tradingeconomics", "data_aggregator", "economic", 10, _now_iso, _now_iso),
-                    ("eodhd",            "data_aggregator", "corporate", 10, _now_iso, _now_iso),
+                    ("tradingeconomics", "data_aggregator",   "economic",  10,  _now_iso, _now_iso),
+                    ("eodhd",            "data_aggregator",   "corporate", 10,  _now_iso, _now_iso),
+                    ("bls",              "government_agency", "economic",  100, _now_iso, _now_iso),
+                    ("bea",              "government_agency", "economic",  100, _now_iso, _now_iso),
+                    ("federal-reserve",  "central_bank",      "economic",  100, _now_iso, _now_iso),
+                    ("ecb",              "central_bank",      "economic",  100, _now_iso, _now_iso),
+                    ("nbs",              "government_agency", "economic",  100, _now_iso, _now_iso),
                 ],
             )
 
