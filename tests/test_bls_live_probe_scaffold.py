@@ -267,13 +267,13 @@ def test_runner_records_call_with_year_window(validator) -> None:
 def test_still_unwired_provider_returns_stub(
     validator, capsys: pytest.CaptureFixture,
 ) -> None:
-    """BEA / Fed / ECB / NBS still print the stub message;
-    BLS must *not* be on that list any more."""
+    """Fed / ECB / NBS still print the stub message; BLS (P1b) and BEA
+    (P2b) must *not* be on that list any more."""
     assert "bls" not in (
         validator._OFFICIAL_PROVIDERS
         - validator._OFFICIAL_PROVIDERS_WITH_PROBES
     )
-    rc = validator.main(["--provider", "bea"])
+    rc = validator.main(["--provider", "fed"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "scaffold registered" in out
