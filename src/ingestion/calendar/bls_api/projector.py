@@ -7,9 +7,14 @@ updates rows when the incoming ``snapshot_epoch_ms`` is newer than the
 stored ``observed_at_epoch_ms``.
 
 The SQL shape deliberately mirrors
-:mod:`ingestion.calendar.te_api.projector`. Keeping the two in sync by
-copy means the BLS connector has no cross-provider import; when a
-third caller (BEA in P2) lands we promote both into ``_official_shared``.
+:mod:`ingestion.calendar.bea_api.projector` (both carry the
+cross-source merge that preserves ``datetime``-precision writes) and
+is a near-twin of :mod:`ingestion.calendar.te_api.projector` (which
+has no merge rule since TE is a single-source flow). BLS + BEA are
+the two concrete callers of the merge-rule variant today — promotion
+into ``_official_shared`` waits for a third caller (likely the ECB /
+Fed / NBS slices in P3–P5) so we don't over-fit the abstraction to
+two tightly coupled implementations.
 """
 
 from __future__ import annotations

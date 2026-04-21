@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import requests
 
@@ -36,6 +36,13 @@ class BEAObservation:
     table_name: str
     line_number: str
     line_description: str
+    raw: dict = field(default_factory=dict)
+    """Original upstream row dict (``TimePeriod`` / ``DataValue`` /
+    ``LineNumber`` / ``LineDescription`` / ``NoteRef`` / …). Calendar-lane
+    callers hash on this so note-only revisions land as new raw audit
+    rows. Populated by :meth:`BEAClient.get_data`; empty-dict default
+    keeps fixtures and external callers that construct
+    ``BEAObservation`` manually unaffected."""
 
 
 @dataclass(frozen=True)
@@ -183,6 +190,7 @@ class BEAClient:
                 table_name=table_name or row.get("TableName", ""),
                 line_number=str(row.get("LineNumber", "")),
                 line_description=row.get("LineDescription", row.get("SeriesDescription", "")),
+                raw=dict(row),
             ))
         return observations
 
