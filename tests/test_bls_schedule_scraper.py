@@ -551,3 +551,99 @@ def test_schedule_run_writes_distinct_rows_per_empsit_indicator(
     }
     counts = set(titles.values())
     assert len(counts) == 1  # identical row counts across the four
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Schedule-only audit-freshness (BLS P1c Productivity follow-up)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_schedule_rescrape_refreshes_productivity_observed_at(
+    store: SQLiteEngineStore,
+) -> None:
+    """Productivity is ``api_fetch=False`` — there's no API side to
+    protect, so schedule re-scrapes must refresh the audit field
+    (``observed_at_epoch_ms``) the same way ``project_events`` does.
+
+    The pre-fix path routed every schedule row through
+    ``project_schedule_events``, which deliberately does *not* touch
+    ``observed_at_epoch_ms`` on conflict — a value-side freshness
+    guard designed for API-merged indicators. Schedule-only
+    Productivity rows therefore froze their audit field on the first
+    scrape and every subsequent re-scrape was invisible in the audit
+    trail. The partition-by-``api_fetch`` fix (matching BEA P2a)
+    routes schedule-only rows through ``project_events`` instead so
+    the audit reflects the latest scrape time.
+    """
+    fake_fetcher = _p1c_fake_fetcher()
+
+    first_snapshot = 1_700_000_000_000
+    second_snapshot = 1_700_000_100_000
+
+    with store._connection(commit=True) as conn:
+        schedule_bls_calendar(
+            conn,
+            series_ids=["PRS85006092"],
+            dry_run=False,
+            html_fetcher=fake_fetcher,
+            snapshot_epoch_ms=first_snapshot,
+        )
+    with store._connection(commit=True) as conn:
+        schedule_bls_calendar(
+            conn,
+            series_ids=["PRS85006092"],
+            dry_run=False,
+            html_fetcher=fake_fetcher,
+            snapshot_epoch_ms=second_snapshot,
+        )
+
+    with store._connection(commit=False) as conn:
+        observed_values = {
+            row[0] for row in conn.execute(
+                "SELECT DISTINCT observed_at_epoch_ms "
+                "FROM cal_econ_event "
+                "WHERE provider='bls' AND title LIKE 'Nonfarm Business%'"
+            ).fetchall()
+        }
+    assert observed_values == {second_snapshot}
+
+
+def test_schedule_rescrape_preserves_cpi_observed_at(
+    store: SQLiteEngineStore,
+) -> None:
+    """Conjugate to the Productivity test: CPI is ``api_fetch=True``,
+    so its rows still flow through ``project_schedule_events`` and
+    the audit field stays at the first-write value — otherwise a
+    later schedule re-scrape could let a stale API value overwrite a
+    fresher one by bumping the freshness gate."""
+    fake_fetcher = _p1c_fake_fetcher()
+
+    first_snapshot = 1_700_000_000_000
+    second_snapshot = 1_700_000_100_000
+
+    with store._connection(commit=True) as conn:
+        schedule_bls_calendar(
+            conn,
+            series_ids=["CUUR0000SA0"],
+            dry_run=False,
+            html_fetcher=fake_fetcher,
+            snapshot_epoch_ms=first_snapshot,
+        )
+    with store._connection(commit=True) as conn:
+        schedule_bls_calendar(
+            conn,
+            series_ids=["CUUR0000SA0"],
+            dry_run=False,
+            html_fetcher=fake_fetcher,
+            snapshot_epoch_ms=second_snapshot,
+        )
+
+    with store._connection(commit=False) as conn:
+        observed_values = {
+            row[0] for row in conn.execute(
+                "SELECT DISTINCT observed_at_epoch_ms "
+                "FROM cal_econ_event "
+                "WHERE provider='bls' AND title LIKE 'Consumer Price Index%'"
+            ).fetchall()
+        }
+    assert observed_values == {first_snapshot}

@@ -244,7 +244,18 @@ def schedule_bls_calendar(
     )
 
     raw_records: list[BLSCalendarRawRecord] = []
-    event_records: list[BLSCalendarEventRecord] = []
+    # Partition by ``spec.api_fetch`` — same shape as BEA P2a's
+    # scheduler. Rationale: ``project_schedule_events`` preserves
+    # ``content_hash`` and ``observed_at_epoch_ms`` on conflict so an
+    # API-merged row isn't clobbered by a later schedule re-scrape.
+    # That's correct for API-merged indicators (CPI / NFP / etc.),
+    # but wrong for schedule-only indicators (Productivity,
+    # ``api_fetch=False``) — there's no API side to protect, so
+    # schedule re-scrapes must refresh the audit fields. Routing
+    # schedule-only rows through ``project_events`` (full writer)
+    # fixes the audit-freshness gap carried over from P1c.
+    schedule_merge_records: list[BLSCalendarEventRecord] = []
+    schedule_only_records: list[BLSCalendarEventRecord] = []
     # Per-run slug → HTML cache. Four CES/CPS series share empsit.htm
     # under P1c; without the cache each run re-downloads the same page
     # four times. Politeness to bls.gov and a small bandwidth win.
@@ -265,17 +276,24 @@ def schedule_bls_calendar(
             summary.series_failed.append((sid, "no entries parsed"))
             continue
         summary.series_ok.append(sid)
+        spec = INDICATOR_REGISTRY[sid]
         for entry in entries:
             raw_rec, event_rec = schedule_entry_to_records(
-                entry, snapshot_epoch_ms=snapshot,
+                entry, snapshot_epoch_ms=snapshot, spec=spec,
             )
             raw_records.append(raw_rec)
-            event_records.append(event_rec)
+            if spec.api_fetch:
+                schedule_merge_records.append(event_rec)
+            else:
+                schedule_only_records.append(event_rec)
 
-    summary.entries_parsed = len(event_records)
+    summary.entries_parsed = (
+        len(schedule_merge_records) + len(schedule_only_records)
+    )
     summary.rows_raw_inserted = store_raw(connection, raw_records)
-    summary.events_upserted = project_schedule_events(
-        connection, event_records,
+    summary.events_upserted = (
+        project_schedule_events(connection, schedule_merge_records)
+        + project_events(connection, schedule_only_records)
     )
     summary.wall_seconds = time.monotonic() - started
     return summary
