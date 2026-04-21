@@ -756,6 +756,59 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    def _op_calendar_econ_schedule_bea(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape BEA's release calendar into ``cal_econ_event``.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+
+        Schedule rows land with ``actual=NULL`` and
+        ``event_time_precision='datetime'``. Personal Income rows
+        merge with the API-side ``calendar_econ_fetch_bea`` output
+        on the shared ``provider_event_id``. GDP rows stay
+        schedule-only — their ``release_stage`` folds into the id so
+        the three staged releases of a quarter surface as distinct
+        calendar events, which the bare-date API observation does
+        not merge into (see ``api_fetch=False`` on the GDP spec).
+        """
+        from ingestion.calendar.bea_api import schedule_bea_calendar
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":        True,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = schedule_bea_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "entries_parsed":     summary.entries_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "row_issues":         summary.row_issues,
+            "fetch_error":        summary.fetch_error,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Economic calendar — ECB connector (issue #9 P3) ─────────────────
 
     def _op_calendar_econ_fetch_ecb(

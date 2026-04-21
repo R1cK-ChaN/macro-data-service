@@ -43,12 +43,23 @@ class BEAIndicatorSpec:
     unit: str
     importance: str          # low / medium / high
     category: str            # free-text, mirrors TE's Category
+    # ``False`` for indicators whose schedule page publishes multiple
+    # release stages per reference period (GDP: advance / second /
+    # third). Mirrors the BLS-side opt-out (P1c Productivity): until
+    # staged schedule/API merge semantics is designed, the API fetch
+    # is schedule-only, still callable with explicit ``series_ids=``.
+    api_fetch: bool = True
 
 
 INDICATOR_REGISTRY: dict[str, BEAIndicatorSpec] = {
     # Real GDP — Percent Change From Preceding Period (SAAR). Line 1 of
     # NIPA Table 1.1.1 is the headline real-GDP growth figure the
     # advance / second / third estimate releases all publish.
+    # ``api_fetch=False`` mirrors Productivity in P1c: GDP has three
+    # staged releases per quarter, which the schedule scraper now
+    # tracks stage-qualified — but the single API observation has no
+    # clean bare-date anchor alignment with the staged schedule ids.
+    # Schedule lane shipped; API lane deferred to a follow-up slice.
     "BEA_NIPA_T10101_1": BEAIndicatorSpec(
         series_id="BEA_NIPA_T10101_1",
         dataset="NIPA",
@@ -61,6 +72,7 @@ INDICATOR_REGISTRY: dict[str, BEAIndicatorSpec] = {
         unit="percent",
         importance="high",
         category="Growth",
+        api_fetch=False,
     ),
     # Personal Income — NIPA Table 2.6 (Personal Income and Its
     # Disposition, Monthly) line 1 is the headline aggregate. This is

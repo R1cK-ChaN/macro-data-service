@@ -356,10 +356,34 @@ def test_fetch_dry_run_returns_plan_without_calling_client(
             dry_run=True,
         )
     assert summary.dry_run is True
-    assert set(summary.series_planned) == set(INDICATOR_REGISTRY.keys())
+    expected = {
+        sid for sid, spec in INDICATOR_REGISTRY.items() if spec.api_fetch
+    }
+    assert set(summary.series_planned) == expected
     assert summary.rows_raw_inserted == 0
     assert summary.events_upserted == 0
     assert client.calls == []  # no HTTP call attempted
+
+
+def test_fetch_default_plan_excludes_api_fetch_false_series(
+    store: SQLiteEngineStore,
+) -> None:
+    """Codex P2a — GDP has ``api_fetch=False`` because its staged
+    schedule has no clean anchor alignment with the bare-date API
+    observation. Default iteration must exclude it; callers who
+    know what they're doing can still opt in via ``series_ids=``."""
+    client = _FakeBEAClient({})
+    with store._connection(commit=False) as conn:
+        summary = fetch_bea_calendar(
+            conn, client,
+            start_year=2024, end_year=2024,
+            dry_run=True,
+        )
+    opted_out = {
+        sid for sid, spec in INDICATOR_REGISTRY.items() if not spec.api_fetch
+    }
+    assert opted_out, "expected at least one api_fetch=False spec"
+    assert not (set(summary.series_planned) & opted_out)
 
 
 def test_fetch_writes_rows_and_reports_counts(
@@ -376,6 +400,7 @@ def test_fetch_writes_rows_and_reports_counts(
         summary = fetch_bea_calendar(
             conn, client,
             start_year=2024, end_year=2024,
+            series_ids=["BEA_NIPA_T10101_1", "BEA_NIPA_T20600_1"],
             dry_run=False,
         )
     assert summary.observations_seen == 3
@@ -471,6 +496,7 @@ def test_fetch_reports_empty_series_separately(
         summary = fetch_bea_calendar(
             conn, client,
             start_year=2024, end_year=2024,
+            series_ids=["BEA_NIPA_T10101_1", "BEA_NIPA_T20600_1"],
             dry_run=False,
         )
     assert "BEA_NIPA_T20600_1" in summary.series_empty
@@ -489,7 +515,10 @@ def test_service_op_dry_run_returns_plan(store: SQLiteEngineStore) -> None:
     result = svc.invoke("calendar_econ_fetch_bea", {"dry_run": True})
     assert result["dry_run"] is True
     assert result["stopped_reason"] == "dry_run"
-    assert set(result["series_planned"]) == set(INDICATOR_REGISTRY.keys())
+    expected = {
+        sid for sid, spec in INDICATOR_REGISTRY.items() if spec.api_fetch
+    }
+    assert set(result["series_planned"]) == expected
 
 
 def test_service_op_honors_explicit_series_ids(
