@@ -9,11 +9,7 @@
 language: "en-US"
 early_access: false
 
-tone_instructions: |
-  Expert-level review. Flag correctness bugs and architectural risks first;
-  stylistic nits last, if at all. Skip filler ("Let me explain", "It's
-  important to note"). No emojis. When proposing a change, show the exact
-  diff, not a paragraph of prose. Match the codebase's direct tone.
+tone_instructions: "Expert-level review. Flag correctness and architecture first; style nits last. Skip filler. No emojis. Show exact diffs, not prose. Match the codebase's direct tone."
 
 reviews:
   profile: "assertive"
