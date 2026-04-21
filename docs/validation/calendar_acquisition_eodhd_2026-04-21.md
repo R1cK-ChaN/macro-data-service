@@ -5,9 +5,9 @@ Storage and downstream API are under our control and may be adjusted once upstre
 
 ## Budget
 
-- Requests spent this run: **8**
+- Requests spent this run: **9**
 - EODHD All-in-One plan: per-call consumption (no tight cap)
-- Probes planned: 8 / executed: 8
+- Probes planned: 9 / executed: 9
 
 ## Probes
 
@@ -17,7 +17,7 @@ Storage and downstream API are under our control and may be adjusted once upstre
 - Expected shape: `{earnings: [row, row, ...]}`
 - Request path: `/api/calendar/earnings?from=2026-04-21&to=2026-04-28`
 - Status: **ok**
-- HTTP elapsed: 3150 ms
+- HTTP elapsed: 3044 ms
 - Row count: 7546
 
 #### Field diff (first row)
@@ -30,7 +30,7 @@ Storage and downstream API are under our control and may be adjusted once upstre
 
 #### Enum observations (all rows)
 
-- `before_after_market`: 'BeforeMarket'=3546, 'AfterMarket'=3525, None=475
+- `before_after_market`: 'BeforeMarket'=3545, 'AfterMarket'=3526, None=475
 - `currency`: None=6950, 'USD'=541, 'EUR'=17, 'CNY'=5, 'SEK'=5, 'CAD'=4, 'MXN'=4, 'CHF'=3 (+11 more values)
 
 #### Parser dry-parse: 10/10 rows parsed
@@ -59,7 +59,7 @@ Storage and downstream API are under our control and may be adjusted once upstre
 - Expected shape: `{earnings: [row, row, ...]}`
 - Request path: `/api/calendar/earnings?symbols=AAPL.US,MSFT.US`
 - Status: **ok**
-- HTTP elapsed: 3157 ms
+- HTTP elapsed: 1426 ms
 - Row count: 0
 
 ### Probe 3 — `ipos_date_window`
@@ -68,7 +68,7 @@ Storage and downstream API are under our control and may be adjusted once upstre
 - Expected shape: `{ipos: [row, row, ...]}`
 - Request path: `/api/calendar/ipos?from=2026-04-21&to=2026-05-21`
 - Status: **ok**
-- HTTP elapsed: 1673 ms
+- HTTP elapsed: 1323 ms
 - Row count: 9
 
 #### Field diff (first row)
@@ -114,7 +114,7 @@ Storage and downstream API are under our control and may be adjusted once upstre
 - Expected shape: `{splits: [row, row, ...]}`
 - Request path: `/api/calendar/splits?from=2026-04-21&to=2026-05-21`
 - Status: **ok**
-- HTTP elapsed: 2044 ms
+- HTTP elapsed: 1355 ms
 - Row count: 225
 
 #### Field diff (first row)
@@ -151,7 +151,7 @@ Storage and downstream API are under our control and may be adjusted once upstre
 - Expected shape: `{meta, data: [row, row, ...], links}`
 - Request path: `/api/calendar/dividends?filter[symbol]=AAPL.US`
 - Status: **ok**
-- HTTP elapsed: 1466 ms
+- HTTP elapsed: 1454 ms
 - Row count: 90
 
 #### Field diff (first row)
@@ -181,8 +181,8 @@ Storage and downstream API are under our control and may be adjusted once upstre
 - Expected shape: `{meta, data: [row, row, ...], links}`
 - Request path: `/api/calendar/dividends?filter[date_eq]=2026-04-20`
 - Status: **ok**
-- HTTP elapsed: 2051 ms
-- Row count: 374
+- HTTP elapsed: 1536 ms
+- Row count: 426
 
 #### Field diff (first row)
 
@@ -211,7 +211,7 @@ Storage and downstream API are under our control and may be adjusted once upstre
 - Expected shape: `{trends: [[row, ...]]} (or flat [row, ...] if single-symbol)`
 - Request path: `/api/calendar/trends?symbols=AAPL.US`
 - Status: **ok**
-- HTTP elapsed: 1427 ms
+- HTTP elapsed: 847 ms
 - Row count: 92
 - Note: trends payload wrapped [[…]] (1 outer groups → 92 rows)
 
@@ -268,7 +268,7 @@ Storage and downstream API are under our control and may be adjusted once upstre
 - Expected shape: `{trends: [[row, ...], [row, ...]]}`
 - Request path: `/api/calendar/trends?symbols=AAPL.US,MSFT.US`
 - Status: **ok**
-- HTTP elapsed: 1781 ms
+- HTTP elapsed: 1626 ms
 - Row count: 184
 - Note: trends payload wrapped [[…]] (2 outer groups → 184 rows)
 
@@ -314,6 +314,47 @@ Storage and downstream API are under our control and may be adjusted once upstre
   "revenueEstimateLow": "473881148700.00",
   "revenueEstimateNumberOfAnalysts": "41.00",
   "revenueEstimateYearAgoEps": null
+}
+```
+
+</details>
+
+### Probe 9 — `dividend_details_aapl`
+
+- Purpose: per-ticker dividend extended fields — amount / currency / D/R/P dates
+- Expected shape: `list[row] (top-level array, not enveloped)`
+- Request path: `/api/div/AAPL.US?from=2025-10-23&to=2026-04-21`
+- Status: **ok**
+- HTTP elapsed: 1567 ms
+- Row count: 2
+
+#### Field diff (first row)
+
+- Observed: `currency`, `date`, `declarationDate`, `paymentDate`, `period`, `recordDate`, `unadjustedValue`, `value`
+- Read by parser: `currency`, `date`, `declarationDate`, `paymentDate`, `period`, `recordDate`, `unadjustedValue`, `value`
+- Ignored by parser (known-but-unread): (none)
+- UNKNOWN_OBSERVED: ✓ none
+- MISSING_EXPECTED: ✓ none
+
+#### Enum observations (all rows)
+
+- `period`: 'Quarterly'=2
+- `currency`: 'USD'=2
+
+#### Parser dry-parse: 2/2 rows parsed
+
+<details><summary>Sample row JSON</summary>
+
+```json
+{
+  "currency": "USD",
+  "date": "2025-11-10",
+  "declarationDate": "2025-10-30",
+  "paymentDate": "2025-11-13",
+  "period": "Quarterly",
+  "recordDate": "2025-11-10",
+  "unadjustedValue": 0.26,
+  "value": 0.26
 }
 ```
 
