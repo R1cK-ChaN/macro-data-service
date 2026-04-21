@@ -1,20 +1,25 @@
 # Calendar Ingestion
 
-This package owns economic event calendar ingestion.
+This package owns two physically separate calendar lanes:
+
+- **Economic lane** (`cal_econ_*`) — macro releases. TradingEconomics is the
+  historical bootstrap source; official institutions (BLS, BEA, ECB, Fed,
+  NBS, etc.) are the forward collection path.
+- **Corporate lane** (`cal_corp_*`) — earnings, IPOs, splits, dividends, and
+  earnings trends. EODHD is the current corporate-actions source.
+
+Downstream consumers read `v_calendar_item` for a unified `CalendarItem`
+shape across both lanes.
 
 ## Direction
 
 Use Trading Economics for historical economic-calendar backfill. Use official
-government and institution sources for forward-looking release data.
-
-The goal is a durable calendar pipeline with TE as a bootstrap data source and
-official publishers as the primary source for future data. Examples include
-BLS, BEA, Census, Treasury, EIA, central banks, Eurostat, OECD, IMF, and other
-institution-owned release pages or APIs.
+government and institution sources for forward-looking release data. Use
+EODHD for corporate actions.
 
 ## Lanes
 
-### Historical Backfill
+### Economic — Historical Backfill
 
 `te_api/` contains the Trading Economics Calendar API path:
 
@@ -35,6 +40,27 @@ Service operations:
 - `calendar_econ_sync_updates` runs TE update-pointer reconciliation.
 
 Both operations default to dry-run behavior at the service boundary.
+
+### Corporate — EODHD
+
+`eodhd_api/` routes the five EODHD calendar endpoints into `cal_corp_*`:
+
+- `client.py` handles auth (`EODHD_API_KEY`), 429 retry, and `fmt=json` injection.
+- `parser.py` maps rows per subtype (`earnings`, `earnings_trend`, `ipo`,
+  `split`, `dividend`). `provider_event_id` is synthesized as
+  `sha256(provider|subtype|code|primary_date|subtype_key)`.
+- `projector.py` writes revisions to `cal_corp_raw` and upserts the latest
+  projection into `cal_corp_event` under an `observed_at` gate.
+- `fetcher.py` dispatches a single subtype per call and slices the
+  requested date range into bounded windows.
+
+Service operation:
+
+- `calendar_corp_fetch` plans or runs one subtype (`subtype=earnings|ipo|
+  split|dividend|earnings_trend`).
+
+Defaults to dry-run. `earnings_trend` requires `symbols` because EODHD's
+`/calendar/trends` endpoint is symbol-scoped only.
 
 ### Forward Calendar Data
 

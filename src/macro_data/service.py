@@ -235,6 +235,111 @@ class LocalMacroDataService:
         })
         return base_payload
 
+    # ── Corporate calendar API fetch (issue #8 slice 3) ─────────────────
+
+    def _op_calendar_corp_fetch(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Fetch one EODHD corporate calendar subtype into ``cal_corp_*``.
+
+        Arguments:
+          subtype         — one of ``earnings``, ``ipo``, ``split``,
+                            ``dividend``, ``earnings_trend``.
+          from            — ISO date ``YYYY-MM-DD``. Default today (UTC).
+          to              — ISO date. Default today + 7 days.
+          symbols         — optional list / comma string of EODHD tickers
+                            (e.g. ``["AAPL.US", "MSFT.US"]``). Required
+                            for ``earnings_trend`` which has no date
+                            scoping upstream.
+          dry_run         — default True. Returns the window plan without
+                            issuing any HTTP request.
+          max_requests    — default 20. Caps windows fetched per call.
+          window_days     — default 7. Window slice width in days.
+
+        Execute mode returns request / row / insert counts and the stop
+        reason.
+        """
+        from datetime import date as _date, datetime as _dt, timezone as _tz
+
+        from ingestion.calendar.eodhd_api import CorpCalendarFetcher, EODHDAPIClient
+
+        subtype = (arguments.get("subtype") or "").strip()
+        if not subtype:
+            return {"error": "subtype is required"}
+
+        dry_run = bool(arguments.get("dry_run", True))
+        try:
+            max_requests = max(1, int(arguments.get("max_requests") or 20))
+        except (TypeError, ValueError):
+            max_requests = 20
+        try:
+            window_days = max(1, int(arguments.get("window_days") or 7))
+        except (TypeError, ValueError):
+            window_days = 7
+
+        today = _dt.now(_tz.utc).date()
+        default_end = today + timedelta(days=7)
+        try:
+            start = _date.fromisoformat(str(arguments.get("from") or today.isoformat()))
+        except ValueError:
+            start = today
+        try:
+            end = _date.fromisoformat(str(arguments.get("to") or default_end.isoformat()))
+        except ValueError:
+            end = default_end
+
+        raw_symbols = arguments.get("symbols")
+        symbols: list[str]
+        if isinstance(raw_symbols, list):
+            symbols = [str(s).strip() for s in raw_symbols if str(s).strip()]
+        elif isinstance(raw_symbols, str) and raw_symbols.strip():
+            symbols = [s.strip() for s in raw_symbols.split(",") if s.strip()]
+        else:
+            symbols = []
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        with EODHDAPIClient() as client:
+            connection = get_conn()
+            try:
+                fetcher = CorpCalendarFetcher(
+                    connection=connection,
+                    client=client,
+                    max_requests=max_requests,
+                    window_days=window_days,
+                )
+                summary = fetcher.fetch(
+                    subtype=subtype,
+                    start=start,
+                    end=end,
+                    symbols=symbols or None,
+                    dry_run=dry_run,
+                )
+                connection.commit()
+            except ValueError as exc:
+                connection.rollback()
+                return {"error": str(exc)}
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+        return {
+            "subtype":           summary.subtype,
+            "dry_run":           summary.dry_run,
+            "from":              start.isoformat(),
+            "to":                end.isoformat(),
+            "windows_planned":   summary.windows_planned,
+            "windows":           summary.windows,
+            "requests_spent":    summary.requests_spent,
+            "rows_parsed":       summary.rows_parsed,
+            "rows_raw_inserted": summary.rows_raw_inserted,
+            "events_upserted":   summary.events_upserted,
+            "parse_errors":      summary.parse_errors,
+            "stopped_reason":    summary.stopped_reason,
+        }
+
     def _op_calendar_econ_sync_updates(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Run the ``/calendar/updates`` → ``/calendarid`` reconciliation loop.
 

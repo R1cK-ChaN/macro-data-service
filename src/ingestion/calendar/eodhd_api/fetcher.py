@@ -1,0 +1,275 @@
+"""Window fetcher for EODHD corporate calendar endpoints.
+
+Drives :mod:`client` for one subtype at a time and persists via
+:mod:`projector`. Default ``dry_run=True`` — nothing touches HTTP until
+callers opt in. A bounded ``max_requests`` cap keeps a single invocation
+from walking the entire API consumption budget.
+
+EODHD imposes no server-side date ceiling on the calendar endpoints
+(beyond the ``2015-01`` historical floor on ipos/splits), but we still
+chunk callers into ``window_days``-wide slices so a wide sweep degrades
+gracefully under rate limits and lets the runner advance window-by-window
+rather than all-or-nothing.
+"""
+
+from __future__ import annotations
+
+import logging
+import sqlite3
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Callable, Iterable
+
+from .client import EODHDAPIClient, EODHDCallResult, EODHDThrottled
+from .parser import (
+    CalendarCorpEventRecord,
+    CalendarCorpRawRecord,
+    parse_dividend_row,
+    parse_earnings_row,
+    parse_ipo_row,
+    parse_split_row,
+    parse_trend_row,
+)
+from .projector import project_corp_events, store_corp_raw
+
+logger = logging.getLogger(__name__)
+
+PROVIDER = "eodhd"
+
+
+@dataclass(frozen=True)
+class _SubtypeSpec:
+    """Static per-subtype routing.
+
+    ``date_scoped`` is False for trends because ``/calendar/trends``
+    only accepts ``symbols``; there's no ``from/to`` parameter pair.
+    """
+
+    path: str
+    rows_key: str
+    parser: Callable[..., tuple[CalendarCorpRawRecord, CalendarCorpEventRecord]]
+    date_scoped: bool
+    accepts_symbols: bool
+    date_params: tuple[str, str] | None = None  # (from_param, to_param)
+
+
+_EARNINGS = _SubtypeSpec(
+    path="/api/calendar/earnings",
+    rows_key="earnings",
+    parser=parse_earnings_row,
+    date_scoped=True,
+    accepts_symbols=True,
+    date_params=("from", "to"),
+)
+_IPO = _SubtypeSpec(
+    path="/api/calendar/ipos",
+    rows_key="ipos",
+    parser=parse_ipo_row,
+    date_scoped=True,
+    accepts_symbols=False,
+    date_params=("from", "to"),
+)
+_SPLIT = _SubtypeSpec(
+    path="/api/calendar/splits",
+    rows_key="splits",
+    parser=parse_split_row,
+    date_scoped=True,
+    accepts_symbols=True,
+    date_params=("from", "to"),
+)
+_DIVIDEND = _SubtypeSpec(
+    path="/api/calendar/dividends",
+    rows_key="data",
+    parser=parse_dividend_row,
+    date_scoped=True,
+    accepts_symbols=True,
+    date_params=("filter[date_from]", "filter[date_to]"),
+)
+_TREND = _SubtypeSpec(
+    path="/api/calendar/trends",
+    rows_key="trends",
+    parser=parse_trend_row,
+    date_scoped=False,
+    accepts_symbols=True,
+)
+
+_SUBTYPE_SPECS: dict[str, _SubtypeSpec] = {
+    "earnings": _EARNINGS,
+    "ipo": _IPO,
+    "split": _SPLIT,
+    "dividend": _DIVIDEND,
+    "earnings_trend": _TREND,
+}
+
+
+@dataclass
+class CorpRunSummary:
+    subtype: str
+    dry_run: bool
+    windows_planned: int = 0
+    requests_spent: int = 0
+    rows_parsed: int = 0
+    rows_raw_inserted: int = 0
+    events_upserted: int = 0
+    parse_errors: int = 0
+    stopped_reason: str = ""
+    windows: list[dict[str, str]] = field(default_factory=list)
+
+
+class CorpCalendarFetcher:
+    """Dispatches to the five EODHD calendar endpoints by subtype.
+
+    Single-use: construct one per invocation. ``fetch`` plans the
+    windows, then executes only when ``dry_run=False``.
+    """
+
+    def __init__(
+        self,
+        *,
+        connection: sqlite3.Connection,
+        client: EODHDAPIClient,
+        max_requests: int = 20,
+        window_days: int = 7,
+        now_utc: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._conn = connection
+        self._client = client
+        self._max_requests = max(1, max_requests)
+        self._window_days = max(1, window_days)
+        self._now_utc = now_utc or (lambda: datetime.now(timezone.utc))
+
+    def fetch(
+        self,
+        *,
+        subtype: str,
+        start: date | None = None,
+        end: date | None = None,
+        symbols: Iterable[str] | None = None,
+        dry_run: bool = True,
+    ) -> CorpRunSummary:
+        if subtype not in _SUBTYPE_SPECS:
+            raise ValueError(
+                f"unknown corp subtype: {subtype!r}. "
+                f"expected one of {sorted(_SUBTYPE_SPECS)}"
+            )
+        spec = _SUBTYPE_SPECS[subtype]
+        summary = CorpRunSummary(subtype=subtype, dry_run=dry_run)
+
+        symbols_list = [s for s in (symbols or []) if s]
+
+        # Planning -----------------------------------------------------------
+        if spec.date_scoped:
+            if start is None or end is None:
+                today = self._now_utc().date()
+                start = start or today
+                end = end or today + timedelta(days=7)
+            windows = _split_windows(start, end, self._window_days)
+            summary.windows_planned = len(windows)
+            summary.windows = [
+                {"start": w[0].isoformat(), "end": w[1].isoformat()} for w in windows
+            ]
+        else:
+            # Trends is not date-scoped — a single request per symbols batch.
+            windows = [(None, None)]
+            summary.windows_planned = 1
+
+        if dry_run:
+            summary.stopped_reason = "dry_run"
+            return summary
+
+        # Execution ----------------------------------------------------------
+        snapshot_ms = int(self._now_utc().timestamp() * 1000)
+        for window_start, window_end in windows:
+            if summary.requests_spent >= self._max_requests:
+                summary.stopped_reason = "max_requests_reached"
+                break
+
+            params: dict[str, Any] = {}
+            if spec.date_scoped and window_start is not None and window_end is not None:
+                assert spec.date_params is not None
+                from_param, to_param = spec.date_params
+                params[from_param] = window_start.isoformat()
+                params[to_param] = window_end.isoformat()
+            if spec.accepts_symbols and symbols_list:
+                params["symbols"] = ",".join(symbols_list)
+            if subtype == "earnings_trend" and not symbols_list:
+                # Trends is symbol-mandatory upstream; a missing symbols
+                # list would error from EODHD. Fail fast with a clear
+                # reason so callers see the misconfiguration.
+                summary.stopped_reason = "symbols_required_for_earnings_trend"
+                break
+
+            try:
+                result = self._client.get_rows(spec.path, params=params, rows_key=spec.rows_key)
+            except EODHDThrottled as exc:
+                summary.stopped_reason = f"throttled:{exc}"
+                break
+            summary.requests_spent += 1
+
+            self._persist(spec, result, snapshot_ms=snapshot_ms, summary=summary)
+
+        if not summary.stopped_reason:
+            summary.stopped_reason = "completed"
+        return summary
+
+    def _persist(
+        self,
+        spec: _SubtypeSpec,
+        result: EODHDCallResult,
+        *,
+        snapshot_ms: int,
+        summary: CorpRunSummary,
+    ) -> None:
+        raw_records: list[CalendarCorpRawRecord] = []
+        event_records: list[CalendarCorpEventRecord] = []
+
+        for row in result.rows:
+            # Trends rows may arrive wrapped: each outer list element is
+            # itself a list of per-period dicts. Flatten one level below.
+            if isinstance(row, list):
+                for inner in row:
+                    if isinstance(inner, dict):
+                        self._parse_one(spec, inner, snapshot_ms, raw_records, event_records, summary)
+            else:
+                self._parse_one(spec, row, snapshot_ms, raw_records, event_records, summary)
+
+        inserted = store_corp_raw(self._conn, raw_records)
+        upserted = project_corp_events(self._conn, event_records)
+        summary.rows_raw_inserted += inserted
+        summary.events_upserted += upserted
+
+    def _parse_one(
+        self,
+        spec: _SubtypeSpec,
+        row: dict[str, Any],
+        snapshot_ms: int,
+        raw_records: list[CalendarCorpRawRecord],
+        event_records: list[CalendarCorpEventRecord],
+        summary: CorpRunSummary,
+    ) -> None:
+        try:
+            raw, event = spec.parser(row, snapshot_epoch_ms=snapshot_ms)
+        except ValueError:
+            summary.parse_errors += 1
+            return
+        raw_records.append(raw)
+        event_records.append(event)
+        summary.rows_parsed += 1
+
+
+def _split_windows(start: date, end: date, window_days: int) -> list[tuple[date, date]]:
+    """Chunk ``[start, end]`` (inclusive) into slices of ``window_days`` days.
+
+    Returns ``[]`` on inverted ranges; returns a single one-day slice
+    when ``start == end``.
+    """
+    if start > end:
+        return []
+    out: list[tuple[date, date]] = []
+    cursor = start
+    step = timedelta(days=window_days - 1)
+    while cursor <= end:
+        slice_end = min(cursor + step, end)
+        out.append((cursor, slice_end))
+        cursor = slice_end + timedelta(days=1)
+    return out

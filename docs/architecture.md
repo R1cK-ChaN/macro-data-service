@@ -10,7 +10,7 @@ from ~25 free/licensed upstreams instead of BBG's paid feed.
 resolves macro + market + calendar + document data from ~25 upstreams into a
 single SQLite store that downstream services (analyst UI, RAG, agents) read
 through one service interface.
-**Last updated:** 2026-04-20 (branch `feat/issue-8-calendar-two-lane-schema`)
+**Last updated:** 2026-04-21 (branch `feat/issue-8-calendar-two-lane-schema`)
 
 ### Bloomberg-capability coverage (current → 1.0)
 
@@ -103,8 +103,9 @@ Two physical lanes behind one downstream contract (see `src/storage/STORAGE.md` 
 Slice progress:
 
 - **P0 (shipped):** six new tables + `v_calendar_item` VIEW + extended `CalendarItem` DTO + 9 smoke tests.
-- **P1 (shipped — scaffold):** TE API scaffold under `src/ingestion/calendar/te_api/` — `client.py` (auth / 1 r/s / 409 backoff / URL guard), `parser.py` (22-field → raw + event records, content-hash over 6 mutable fields), `projector.py` (idempotent raw inserts + snapshot-aware event upsert + drop audit), `backfill.py` (era-bracketed adaptive window planner + cursor-persisting runner), `updates.py` (`/calendar/updates` → `/calendarid` reconciler). Service ops `calendar_econ_backfill` + `calendar_econ_sync_updates` exposed over HTTP with `dry_run=True` default. Nothing auto-runs. 21 new tests, fully mocked via `respx` — no real TE calls in CI.
-- **P2–P5 (pending):** full 2013→today backfill execution, EODHD corporate fetcher, BLS/ECB/Fed official-source replacement, retirement of legacy HTML-scraped `calendar_events`.
+- **P1 (shipped — scaffold):** TE API scaffold under `src/ingestion/calendar/te_api/` — `client.py` (auth / 1 r/s / 409 backoff / URL guard), `parser.py` (22-field → raw + event records, content-hash over 6 mutable fields), `projector.py` (idempotent raw inserts + snapshot-aware event upsert + drop audit), `backfill.py` (era-bracketed adaptive window planner + cursor-persisting runner), `updates.py` (`/calendar/updates` → `/calendarid` reconciler). Service ops `calendar_econ_backfill` + `calendar_econ_sync_updates` exposed over HTTP with `dry_run=True` default. Nothing auto-runs. 22 mocked `respx` tests — no real TE calls in CI.
+- **P2 (shipped — scaffold):** EODHD corporate scaffold under `src/ingestion/calendar/eodhd_api/` — `client.py` (auth / 429 backoff / `fmt=json` injection), `parser.py` (five subtype parsers: `earnings` / `earnings_trend` / `ipo` / `split` / `dividend`; `provider_event_id = sha256(provider|subtype|code|primary_date|subtype_key)`; IPO id anchors on lifecycle-stable `filing_date`; per-subtype `content_hash` over mutable fields), `projector.py` (idempotent `cal_corp_raw` inserts + `observed_at`-gated `cal_corp_event` upsert), `fetcher.py` (subtype-dispatched window fetcher, trend-payload flattening for `[[…]]` shape). Service op `calendar_corp_fetch(subtype, from, to, symbols, dry_run)` — `dry_run=True` default. 29 mocked `respx` tests — no real EODHD calls in CI.
+- **P3–P5 (pending):** full 2013→today TE backfill execution, BLS/ECB/Fed official-source replacement, retirement of legacy HTML-scraped `calendar_events`.
 
 ### 6. Release scheduling + availability
 
@@ -188,7 +189,7 @@ src/
 
 | Issue | Branch | Slice |
 |---|---|---|
-| #8 | `feat/issue-8-calendar-two-lane-schema` | P0 shipped (two-lane schema + DTO + view). P1 shipped (TE API scaffold + dry-run HTTP ops). Slices P2–P5 pending (backfill execution, EODHD fetcher, official sources, legacy retirement). |
+| #8 | `feat/issue-8-calendar-two-lane-schema` | P0 shipped (two-lane schema + DTO + view). P1 shipped (TE API scaffold + dry-run HTTP ops). P2 shipped (EODHD corporate scaffold + `calendar_corp_fetch` op, dry-run default). Slices P3–P5 pending (TE backfill execution, official sources, legacy retirement). |
 
 Closed recently (context only — the code is the source of truth):
 
