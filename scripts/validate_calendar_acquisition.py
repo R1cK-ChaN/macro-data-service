@@ -76,6 +76,20 @@ from ingestion.calendar.ecb_api.fetcher import (  # noqa: E402
 from ingestion.timeseries.sdmx._types import SDMXObservation  # noqa: E402
 from ingestion.timeseries.sdmx.providers.ecb import ECBClient  # noqa: E402
 
+from ingestion.calendar.fed_api import (  # noqa: E402
+    FED_RELEASEDATES_URL,
+    FOMC_CALENDAR_URL,
+    FomcMeetingEntry,
+    FedReleaseEntry,
+    INDICATOR_REGISTRY as FED_INDICATOR_REGISTRY,
+    fetch_fomc_calendar_html,
+    fetch_releasedates_html,
+    meeting_entry_to_records,
+    parse_fomc_calendar_html,
+    parse_releasedates_html,
+    release_entry_to_records,
+)
+
 
 # Fields the TE parser actively reads (grep parser.py — these are the
 # only row.get() keys that flow into CalendarEventRecord). Anything
@@ -692,7 +706,8 @@ def render_report(
 ) -> str:
     today = datetime.now(timezone.utc).date().isoformat()
     provider_label = {
-        "te": "TE", "eodhd": "EODHD", "bls": "BLS", "bea": "BEA", "ecb": "ECB",
+        "te": "TE", "eodhd": "EODHD", "bls": "BLS", "bea": "BEA",
+        "ecb": "ECB", "fed": "Fed",
     }.get(provider, provider.upper())
     budget_line = {
         "te":    "- TE basic-plan monthly cap: 1000",
@@ -700,6 +715,7 @@ def render_report(
         "bls":   "- BLS Public Data API v2 free-tier daily cap: 500",
         "bea":   "- BEA REST API free-tier daily cap: 1000",
         "ecb":   "- ECB Data Portal: no auth, unspecified rate limit (polite)",
+        "fed":   "- federalreserve.gov: no auth, HTML scrape (browser-UA required)",
     }.get(provider, f"- {provider_label} plan: unknown cap")
     lines: list[str] = [
         f"# {provider_label} Calendar Acquisition Validation — {today}",
@@ -1503,12 +1519,261 @@ def run_ecb_probe(client: ECBClient, probe: ECBProbe) -> ProbeResult:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Fed probe plan + runner
+# ──────────────────────────────────────────────────────────────────────────
+
+# Fed publishes no calendar API; both ``fomccalendars.htm`` (the FOMC
+# meeting schedule) and ``releasedates.htm`` (Beige Book / H.4.1 / H.8)
+# are HTML scrapes. Probe runner doesn't do a per-field observation
+# diff — the parser consumes the DOM at the boundary. Upstream drift
+# surfaces as zero parsed entries (scraper raises) or non-empty
+# ``row_issues`` (partial row-level failures after a title match).
+
+
+@dataclass
+class FedProbe:
+    """One Fed live-validation probe — a single HTML surface.
+
+    Fed has two scrape surfaces, each driven by its own fetcher +
+    parser. ``source`` selects the dispatch branch inside
+    :func:`run_fed_probe`; ``url`` is informational (printed in the
+    dry-run plan + the report's request-path line).
+    """
+
+    name: str
+    source: str          # "fomc_calendar" | "releasedates"
+    url: str
+    description: str
+
+
+def plan_fed_probes() -> list[FedProbe]:
+    """Two probes — one per Fed HTML surface.
+
+    The FOMC calendar carries ~48 meetings across a 6-year rolling
+    window (3 years past + current + 2 years forward) in a stable
+    panel-per-year layout; ``releasedates.htm`` carries a rolling
+    ~60-day schedule of weekly H.4.1 / H.8 releases and Beige Book
+    entries. Each probe issues exactly one HTTP request per run — no
+    fan-out.
+    """
+    return [
+        FedProbe(
+            name="fomc_calendar",
+            source="fomc_calendar",
+            url=FOMC_CALENDAR_URL,
+            description=(
+                "FOMC meeting calendar — 6-year rolling panel of meeting "
+                "dates + SEP markers"
+            ),
+        ),
+        FedProbe(
+            name="fed_releasedates",
+            source="releasedates",
+            url=FED_RELEASEDATES_URL,
+            description=(
+                "Fed release calendar — rolling ~60-day Beige Book / "
+                "H.4.1 / H.8 schedule"
+            ),
+        ),
+    ]
+
+
+def _try_project_fomc_entry(entry: FomcMeetingEntry) -> tuple[bool, str]:
+    """Dry-run the FOMC meeting → calendar-record projection."""
+    try:
+        raw, event = meeting_entry_to_records(
+            entry, snapshot_epoch_ms=1_700_000_000_000,
+        )
+        return True, (
+            f"ok indicator=FOMC_RATE closing={entry.closing_date.isoformat()} "
+            f"event_id={raw.provider_event_id[:10]}…"
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _try_project_release_entry(entry: FedReleaseEntry) -> tuple[bool, str]:
+    """Dry-run the release-entry → calendar-record projection."""
+    try:
+        raw, event = release_entry_to_records(
+            entry, snapshot_epoch_ms=1_700_000_000_000,
+        )
+        return True, (
+            f"ok indicator={entry.series_id} date={entry.release_date} "
+            f"event_id={raw.provider_event_id[:10]}…"
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _run_fomc_probe(result: ProbeResult, fomc_fetcher) -> ProbeResult:
+    import time as _time
+    t0 = _time.monotonic()
+    try:
+        html = fomc_fetcher()
+        entries = parse_fomc_calendar_html(html)
+    except Exception as exc:
+        result.status = "http_error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        return result
+    result.http_elapsed_ms = (_time.monotonic() - t0) * 1000
+
+    result.row_count = len(entries)
+    if not entries:
+        # ``fetch_fed_calendar`` raises ``FomcCalendarParseError`` on
+        # this exact condition — a 200 interstitial or DOM drift that
+        # leaves ``parse_fomc_calendar_html`` with no matched rows.
+        # The probe must mirror that loud-fail semantics, otherwise a
+        # drifted upstream produces a green ``ok`` card and the report
+        # summary can claim the acquisition layer matches expectations
+        # while production would refuse to fetch.
+        result.status = "http_error"
+        result.notes.append(
+            "zero FOMC meetings parsed — DOM drift or access-denied "
+            "interstitial (production fetcher raises on this path)"
+        )
+        return result
+    result.status = "ok"
+
+    # Newest-first: closing_date is a date; sort desc.
+    ordered = sorted(entries, key=lambda e: e.closing_date, reverse=True)
+    sample = ordered[0]
+    result.sample_row = {
+        "year":         sample.year,
+        "month_name":   sample.month_name,
+        "date_cell":    sample.date_cell,
+        "closing_date": sample.closing_date.isoformat(),
+        "has_sep":      sample.has_sep,
+    }
+
+    # Year-span + SEP tally — report the coverage surface so an
+    # operator eyeballing the card can see at a glance whether the
+    # panel still spans the expected ~6-year window and how many SEP
+    # (dot-plot) meetings sit inside it.
+    years = sorted({e.year for e in entries})
+    sep_count = sum(1 for e in entries if e.has_sep)
+    result.notes.append(
+        f"year span: {years[0]} → {years[-1]} "
+        f"({len(years)} distinct years) | SEP meetings: {sep_count}"
+    )
+
+    year_counter: Counter = Counter()
+    for e in entries:
+        year_counter[repr(e.year)] += 1
+    result.enum_counters = {"year": year_counter}
+
+    sample_n = min(10, len(ordered))
+    result.parse_attempts = sample_n
+    for entry in ordered[:sample_n]:
+        ok, msg = _try_project_fomc_entry(entry)
+        if ok:
+            result.parse_successes += 1
+        else:
+            if len(result.parse_error_samples) < 3:
+                result.parse_error_samples.append(msg)
+    return result
+
+
+def _run_releasedates_probe(result: ProbeResult, releasedates_fetcher) -> ProbeResult:
+    import time as _time
+    t0 = _time.monotonic()
+    row_issues: list[str] = []
+    try:
+        html = releasedates_fetcher()
+        entries = parse_releasedates_html(html, row_issues=row_issues)
+    except Exception as exc:
+        result.status = "http_error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        return result
+    result.http_elapsed_ms = (_time.monotonic() - t0) * 1000
+
+    # ``parse_releasedates_html`` already raises on both empty-match
+    # and all-matches-failed paths (see the module for the exact
+    # guards), so ``entries`` is guaranteed non-empty once we reach
+    # here — the general exception branch above carries the loud-
+    # fail signal into ``status=http_error`` for both failure shapes.
+    result.status = "ok"
+    result.row_count = len(entries)
+    if row_issues:
+        # Surface partial-row failures exactly as the fetcher's summary
+        # does — the probe report is the debugging surface for whoever
+        # investigates a drift signal, so it shouldn't hide this.
+        for issue in row_issues[:5]:
+            result.notes.append(f"row_issue: {issue}")
+        if len(row_issues) > 5:
+            result.notes.append(
+                f"... {len(row_issues) - 5} more row_issues suppressed"
+            )
+
+    ordered = sorted(entries, key=lambda e: e.release_date, reverse=True)
+    sample = ordered[0]
+    result.sample_row = {
+        "series_id":          sample.series_id,
+        "release_title":      sample.release_title,
+        "release_date":       sample.release_date,
+        "release_time_local": sample.release_time_local,
+        "event_time_utc":     sample.event_time_utc,
+    }
+
+    by_indicator: Counter = Counter()
+    for e in entries:
+        by_indicator[e.series_id] += 1
+    result.enum_counters = {"series_id": by_indicator}
+    result.notes.append(
+        "entries by indicator: "
+        + ", ".join(f"{k}={v}" for k, v in by_indicator.most_common())
+    )
+
+    sample_n = min(10, len(ordered))
+    result.parse_attempts = sample_n
+    for entry in ordered[:sample_n]:
+        ok, msg = _try_project_release_entry(entry)
+        if ok:
+            result.parse_successes += 1
+        else:
+            if len(result.parse_error_samples) < 3:
+                result.parse_error_samples.append(msg)
+    return result
+
+
+def run_fed_probe(
+    probe: FedProbe,
+    *,
+    fomc_fetcher=fetch_fomc_calendar_html,
+    releasedates_fetcher=fetch_releasedates_html,
+) -> ProbeResult:
+    """Execute one Fed probe and return a populated :class:`ProbeResult`.
+
+    Unlike the API-based probes, Fed reads HTML and parses it locally.
+    The runner drives the production fetcher + parser; ``fomc_fetcher``
+    and ``releasedates_fetcher`` are seams tests inject to feed
+    fixture HTML without hitting ``federalreserve.gov``. ``auth_missing``
+    is not reachable — the Fed pages are public.
+    """
+    generic = Probe(
+        name=probe.name,
+        path=f"GET {probe.url}",
+        description=probe.description,
+        expected_shape="list[FomcMeetingEntry] / list[FedReleaseEntry]",
+        expected_fields=frozenset(),  # HTML surface — diff not meaningful
+    )
+    result = ProbeResult(probe=generic, status="skipped")
+    result.request_path = generic.path
+
+    if probe.source == "fomc_calendar":
+        return _run_fomc_probe(result, fomc_fetcher)
+    if probe.source == "releasedates":
+        return _run_releasedates_probe(result, releasedates_fetcher)
+    raise ValueError(f"unknown Fed probe source: {probe.source!r}")
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # CLI
 # ──────────────────────────────────────────────────────────────────────────
 
 
 _OFFICIAL_PROVIDERS: frozenset[str] = frozenset({"bls", "bea", "fed", "ecb", "nbs"})
-_OFFICIAL_PROVIDERS_WITH_PROBES: frozenset[str] = frozenset({"bls", "bea", "ecb"})
+_OFFICIAL_PROVIDERS_WITH_PROBES: frozenset[str] = frozenset({"bls", "bea", "ecb", "fed"})
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -1519,8 +1784,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="te",
         help=(
             "which acquisition lane to validate. "
-            "bls (P1b) + bea (P2b) + ecb (P3b) have live probes; fed/nbs are "
-            "scaffold-only — probe bodies land in P4b/P5c."
+            "bls (P1b) + bea (P2b) + ecb (P3b) + fed (P4b) have live probes; "
+            "nbs is scaffold-only — probe body lands in P5c."
         ),
     )
     ap.add_argument(
@@ -1552,8 +1817,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     # Official-source connectors with no probe body yet land on the
-    # scaffold-only stub. BLS + BEA + ECB now have live probes; Fed /
-    # NBS still report back as scaffold-registered.
+    # scaffold-only stub. BLS + BEA + ECB + Fed now have live probes;
+    # NBS still reports back as scaffold-registered.
     unwired = _OFFICIAL_PROVIDERS - _OFFICIAL_PROVIDERS_WITH_PROBES
     if args.provider in unwired:
         print(
@@ -1574,6 +1839,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.provider == "ecb":
         ecb_probes = plan_ecb_probes()
         return _run_ecb(args, ecb_probes)
+
+    if args.provider == "fed":
+        fed_probes = plan_fed_probes()
+        return _run_fed(args, fed_probes)
 
     probes = plan_te_probes() if args.provider == "te" else plan_eodhd_probes()
 
@@ -1786,6 +2055,58 @@ def _run_ecb(args: argparse.Namespace, probes: list[ECBProbe]) -> int:
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / (
         f"calendar_acquisition_ecb_"
+        f"{datetime.now(timezone.utc).date().isoformat()}.md"
+    )
+    report_path.write_text(report, encoding="utf-8")
+    print()
+    print(f"Report written: {report_path}")
+    return 0
+
+
+def _run_fed(args: argparse.Namespace, probes: list[FedProbe]) -> int:
+    """Dispatch the Fed probe flow — same shape as :func:`_run_ecb`.
+
+    Fed pages are public + require no auth, so the ``api_key`` bail-
+    out branch is not applicable. Two probes (FOMC calendar + release
+    dates) — a cheap, lightweight live run.
+    """
+    if not args.execute:
+        print("DRY RUN (fed) — pass --execute to actually hit upstream.")
+        print()
+        for i, p in enumerate(probes, 1):
+            print(f"{i}. {p.name}")
+            print(f"   source: {p.source}")
+            print(f"   url: {p.url}")
+            print(f"   purpose: {p.description}")
+        print()
+        print(f"Total planned requests: {len(probes)}")
+        return 0
+
+    if not args.yes:
+        print(f"Planned Fed probes ({len(probes)}):")
+        for i, p in enumerate(probes, 1):
+            print(f"  {i}. {p.name} — {p.url}")
+        print(f"Estimated upstream requests: {len(probes)}")
+        resp = input("Proceed with live run? [y/N] ").strip().lower()
+        if resp not in {"y", "yes"}:
+            print("Aborted.")
+            return 1
+
+    results: list[ProbeResult] = []
+    for probe in probes:
+        result = run_fed_probe(probe)
+        results.append(result)
+        _print_probe_summary(result)
+
+    report = render_report(
+        results,
+        requests_spent=sum(1 for r in results if r.status == "ok"),
+        provider="fed",
+    )
+    report_dir = Path(args.report_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / (
+        f"calendar_acquisition_fed_"
         f"{datetime.now(timezone.utc).date().isoformat()}.md"
     )
     report_path.write_text(report, encoding="utf-8")

@@ -307,12 +307,13 @@ def test_ecb_no_longer_unwired(validator) -> None:
     )
 
 
-def test_fed_and_nbs_still_unwired(validator) -> None:
+def test_only_nbs_remains_unwired(validator) -> None:
     unwired = (
         validator._OFFICIAL_PROVIDERS
         - validator._OFFICIAL_PROVIDERS_WITH_PROBES
     )
-    assert unwired == frozenset({"fed", "nbs"})
+    # Fed got wired in P4b; only NBS remains on the stub path.
+    assert unwired == frozenset({"nbs"})
 
 
 def test_ecb_dry_run_prints_plan(
