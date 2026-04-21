@@ -65,9 +65,21 @@ class FetchRunSummary:
 def _resolve_series(
     series_ids: Iterable[str] | None,
 ) -> tuple[list[str], list[str]]:
-    """Split caller-supplied ids into known + unknown against the registry."""
+    """Split caller-supplied ids into known + unknown against the registry.
+
+    When ``series_ids is None`` (default-full-registry path), entries
+    flagged ``api_fetch=False`` are excluded — currently Productivity,
+    whose staged schedule (preliminary + revised) has no clean anchor
+    alignment with the bare-date API observation. Still callable with
+    explicit ``series_ids=["PRS85006092"]``."""
     if series_ids is None:
-        return list(INDICATOR_REGISTRY.keys()), []
+        return (
+            [
+                sid for sid, spec in INDICATOR_REGISTRY.items()
+                if spec.api_fetch
+            ],
+            [],
+        )
     known: list[str] = []
     unknown: list[str] = []
     for sid in series_ids:
@@ -233,9 +245,17 @@ def schedule_bls_calendar(
 
     raw_records: list[BLSCalendarRawRecord] = []
     event_records: list[BLSCalendarEventRecord] = []
+    # Per-run slug → HTML cache. Four CES/CPS series share empsit.htm
+    # under P1c; without the cache each run re-downloads the same page
+    # four times. Politeness to bls.gov and a small bandwidth win.
+    slug_html_cache: dict[str, str] = {}
     for sid in known:
+        slug = SCHEDULE_URL_SLUG[sid]
         try:
-            html = html_fetcher(sid, session=session)
+            html = slug_html_cache.get(slug)
+            if html is None:
+                html = html_fetcher(sid, session=session)
+                slug_html_cache[slug] = html
             entries = parse_schedule_html(html, series_id=sid)
         except Exception as exc:
             logger.warning("BLS schedule fetch failed for %s: %s", sid, exc)

@@ -107,26 +107,37 @@ def _cpi_obs(date: str = "2026-03-01", value: float = 301.2) -> BLSObservation:
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def test_planner_ships_two_probes(validator) -> None:
+def test_planner_ships_one_probe_per_registry_entry(validator) -> None:
+    """P1c: probe plan mirrors ``INDICATOR_REGISTRY`` one-to-one."""
+    from ingestion.calendar.bls_api import INDICATOR_REGISTRY
+
     probes = validator.plan_bls_probes()
-    assert len(probes) == 2
-    names = {p.name for p in probes}
-    assert names == {"cpi_two_year_window", "nfp_two_year_window"}
+    assert {p.series_id for p in probes} == set(INDICATOR_REGISTRY.keys())
+    assert len(probes) == len(INDICATOR_REGISTRY)
 
 
-def test_planner_covers_cpi_and_nfp_series(validator) -> None:
+def test_planner_covers_cpi_and_nfp_anchors(validator) -> None:
+    """The original P1 anchors must stay in the plan after P1c grows it."""
     probes = validator.plan_bls_probes()
     by_id = {p.series_id: p for p in probes}
     assert "CUUR0000SA0" in by_id
     assert "CES0000000001" in by_id
-    assert by_id["CUUR0000SA0"].indicator == "CPI"
-    assert by_id["CES0000000001"].indicator == "NFP"
+    assert by_id["CUUR0000SA0"].name == "cpi_two_year_window"
+    assert by_id["CES0000000001"].name == "nfp_two_year_window"
 
 
 def test_planner_window_spans_two_years(validator) -> None:
     probes = validator.plan_bls_probes()
     for probe in probes:
         assert probe.end_year - probe.start_year == 1
+
+
+def test_planner_names_are_unique(validator) -> None:
+    """Probe names become file-system paths for per-probe sections in the
+    validation report; duplicates would clobber each other."""
+    probes = validator.plan_bls_probes()
+    names = [p.name for p in probes]
+    assert len(names) == len(set(names))
 
 
 # ──────────────────────────────────────────────────────────────────────────

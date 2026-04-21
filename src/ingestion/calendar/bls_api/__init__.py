@@ -1,18 +1,21 @@
-"""BLS calendar connector (issue #9 P1 scaffold).
+"""BLS calendar connector (issue #9 P1 / P1a / P1b / P1c).
 
 Projects BLS Public Data API observations into the
 ``cal_econ_raw`` / ``cal_econ_event`` two-lane calendar schema.
 
-Scope for P1:
+P1c whitelist — 11 indicators covering the BLS headline release set:
 
-- ``CPI`` — ``CUUR0000SA0`` (Consumer Price Index for All Urban
-  Consumers, All Items, Not Seasonally Adjusted).
-- ``NFP`` — ``CES0000000001`` (Total nonfarm employment, Seasonally
-  Adjusted, thousands).
+- Inflation: ``CPI`` / ``Core CPI`` / ``PPI`` / ``Core PPI``.
+- Employment: ``NFP`` / ``Unemployment Rate`` / ``Average Hourly
+  Earnings`` / ``Average Weekly Hours`` / ``JOLTS`` / ``Employment
+  Cost Index``.
+- Productivity: ``Productivity`` (Nonfarm Business sector) —
+  schedule-side only; ``api_fetch=False`` until staged
+  preliminary/revised alignment lands in a follow-up slice.
 
-Both indicators are monthly. Additional BLS series (Core CPI, PPI /
-Core PPI, Unemployment Rate, JOLTS, ECI, Productivity, Jobless Claims)
-land as P1a slices behind codex-review.
+ECI and Productivity are quarterly; the rest are monthly. Weekly
+Jobless Claims is intentionally excluded — published by DOL/ETA, not
+BLS; see the issue #9 Non-goals section.
 
 Public surface:
 

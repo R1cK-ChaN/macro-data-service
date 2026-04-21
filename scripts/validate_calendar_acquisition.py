@@ -852,38 +852,38 @@ class BLSProbe:
 
 
 def plan_bls_probes() -> list[BLSProbe]:
-    """Two probes covering the P1 anchor indicators — CPI + NFP.
+    """One probe per entry in the BLS calendar INDICATOR_REGISTRY.
 
-    Window is the current year plus the prior year, which guarantees
-    at least 12 months of observations for any call after January
-    while staying well under the BLS 500-requests-per-day budget
-    (the two probes consume 2 requests total).
+    P1c expanded the whitelist from 2 anchors (CPI + NFP) to 11
+    indicators covering the full BLS headline set. Each probe hits
+    one series with a two-year window — the current year plus the
+    prior year — which guarantees coverage across the monthly /
+    quarterly release cadences the whitelist mixes. Total BLS API
+    usage per live run is one request per series (~11), well under
+    the 500-requests-per-day budget.
     """
     now_year = datetime.now(timezone.utc).year
-    return [
-        BLSProbe(
-            name="cpi_two_year_window",
-            series_id="CUUR0000SA0",
-            indicator="CPI",
-            description=(
-                "CPI-U, All Items, NSA — headline US inflation print "
-                "(highest trader-impact BLS release)"
-            ),
-            start_year=now_year - 1,
-            end_year=now_year,
-        ),
-        BLSProbe(
-            name="nfp_two_year_window",
-            series_id="CES0000000001",
-            indicator="NFP",
-            description=(
-                "Total nonfarm employment, SA (thousands) — the BLS "
-                "Employment Situation headline"
-            ),
-            start_year=now_year - 1,
-            end_year=now_year,
-        ),
-    ]
+    probes: list[BLSProbe] = []
+    for series_id, spec in BLS_INDICATOR_REGISTRY.items():
+        token = _bls_probe_token(spec.indicator)
+        probes.append(
+            BLSProbe(
+                name=f"{token}_two_year_window",
+                series_id=series_id,
+                indicator=token.upper(),
+                description=spec.title,
+                start_year=now_year - 1,
+                end_year=now_year,
+            )
+        )
+    return probes
+
+
+def _bls_probe_token(indicator_label: str) -> str:
+    """Slugify an indicator label into a stable probe-name token."""
+    token = indicator_label.strip().lower()
+    token = re.sub(r"[^a-z0-9]+", "_", token).strip("_")
+    return token or "indicator"
 
 
 def _diff_bls_observation(raw_row: dict[str, Any]) -> RowDiff:

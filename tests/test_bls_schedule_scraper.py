@@ -328,29 +328,226 @@ def test_service_op_dry_run(store: SQLiteEngineStore) -> None:
     assert result["series_unknown"] == []
 
 
-def test_schedule_fetcher_uses_injected_html(store: SQLiteEngineStore) -> None:
-    """Tests use the ``html_fetcher`` seam to feed fixture HTML
-    without hitting bls.gov."""
+def _p1c_fake_fetcher():
+    """Fake fetcher mapping every :data:`SCHEDULE_URL_SLUG` series id to
+    the appropriate fixture HTML. Tests feed this into
+    :func:`schedule_bls_calendar` to drive the full P1c whitelist
+    without touching bls.gov."""
     cpi_html = _fixture_html("cpi.html")
     empsit_html = _fixture_html("empsit.html")
+    jolts_html = _fixture_html("jolts.html")
+    eci_html = _fixture_html("eci.html")
+    prod_html = _fixture_html("prod2.html")
+    slug_to_html = {
+        "cpi.htm":     cpi_html,
+        "empsit.htm":  empsit_html,
+        "jolts.htm":   jolts_html,
+        "eci.htm":     eci_html,
+        "prod2.htm":   prod_html,
+    }
 
     def fake_fetcher(series_id, *, session=None):
-        return {
-            "CUUR0000SA0":   cpi_html,
-            "CES0000000001": empsit_html,
-        }[series_id]
+        return slug_to_html[SCHEDULE_URL_SLUG[series_id]]
+
+    return fake_fetcher
+
+
+def test_schedule_fetcher_uses_injected_html(store: SQLiteEngineStore) -> None:
+    """Fake ``html_fetcher`` drives the full P1c whitelist — every
+    series id in :data:`SCHEDULE_URL_SLUG` resolves to fixture HTML."""
+    fake_fetcher = _p1c_fake_fetcher()
 
     with store._connection(commit=True) as conn:
         summary = schedule_bls_calendar(
             conn, dry_run=False, html_fetcher=fake_fetcher,
         )
-    assert set(summary.series_ok) == {"CUUR0000SA0", "CES0000000001"}
-    assert summary.entries_parsed >= 20  # ≥10 from each fixture
+    assert set(summary.series_ok) == set(SCHEDULE_URL_SLUG.keys())
     assert summary.events_upserted == summary.entries_parsed
-    # All schedule rows carry datetime precision.
+    # Every schedule row carries datetime precision — the schedule
+    # scraper always resolves a wall-clock release time.
     with store._connection(commit=False) as conn:
         rows = conn.execute(
             "SELECT DISTINCT event_time_precision "
             "FROM cal_econ_event WHERE provider='bls'"
         ).fetchall()
     assert [tuple(r) for r in rows] == [("datetime",)]
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# P1c fixtures — new schedule pages + quarterly reference parsing
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_parse_jolts_schedule_extracts_ten_am_release_time() -> None:
+    """JOLTS releases at 10:00 AM ET, not the BLS-default 8:30 AM.
+    The DST-aware converter still delivers correct UTC."""
+    entries = parse_schedule_html(
+        _fixture_html("jolts.html"), series_id="JTS000000000000000JOL",
+    )
+    assert len(entries) >= 10
+    # Winter sample: Jan. 07, 2026 = 10:00 AM EST = 15:00 UTC.
+    winter = next(e for e in entries if e.release_date == "2026-01-07")
+    assert "T15:00" in winter.event_time_utc
+    # Summer sample: Jul. 07, 2026 = 10:00 AM EDT = 14:00 UTC.
+    summer = next(e for e in entries if e.release_date == "2026-07-07")
+    assert "T14:00" in summer.event_time_utc
+
+
+def test_parse_eci_schedule_uses_end_of_quarter_reference_date() -> None:
+    """ECI is quarterly; reference_date must land on end-of-quarter
+    so the schedule-side event id matches the API-side obs.date
+    (BLSClient normalises ``Q03 → YYYY-09-30``)."""
+    entries = parse_schedule_html(
+        _fixture_html("eci.html"), series_id="CIU1010000000000A",
+    )
+    assert len(entries) >= 4
+    by_release = {e.release_date: e for e in entries}
+    # 3rd Quarter 2025 → reference_date 2025-09-30.
+    q3 = by_release["2025-10-31"]
+    assert q3.reference_date == "2025-09-30"
+    assert q3.reference_label == "3rd Quarter 2025"
+    # 4th Quarter 2025 → reference_date 2025-12-31.
+    q4 = by_release["2026-01-30"]
+    assert q4.reference_date == "2025-12-31"
+    assert q4.reference_label == "4th Quarter 2025"
+
+
+def test_parse_productivity_schedule_preserves_stage_preliminary_vs_revised() -> None:
+    """Productivity and Costs publishes preliminary then revised
+    versions of the same quarter. Both rows share ``reference_date``
+    but land under *distinct* provider_event_ids because the
+    ``release_stage`` rides into the synthesised id — the two
+    scheduled calendar events are semantically distinct, so the
+    later scrape must not overwrite the earlier one."""
+    entries = parse_schedule_html(
+        _fixture_html("prod2.html"), series_id="PRS85006092",
+    )
+    by_label = {e.reference_label: e for e in entries}
+    preliminary = by_label["4th Quarter 2025 (Preliminary)"]
+    revised = by_label["4th Quarter 2025 (Revised)"]
+    # Same reference_date (end-of-Q4).
+    assert preliminary.reference_date == revised.reference_date == "2025-12-31"
+    # Distinct stage, distinct release date.
+    assert preliminary.release_stage == "preliminary"
+    assert revised.release_stage == "revised"
+    assert preliminary.release_date != revised.release_date
+    # Distinct provider_event_ids via stage-qualified synthesis.
+    _, prelim_event = schedule_entry_to_records(
+        preliminary, snapshot_epoch_ms=1_700_000_000_000,
+    )
+    _, revised_event = schedule_entry_to_records(
+        revised, snapshot_epoch_ms=1_700_000_000_000,
+    )
+    assert prelim_event.provider_event_id != revised_event.provider_event_id
+
+
+def test_schedule_run_keeps_both_prod_releases_per_quarter(
+    store: SQLiteEngineStore,
+) -> None:
+    """End-to-end: a full prod2 scrape lands one cal_econ_event row
+    per (quarter, stage) pair, not one per quarter."""
+    fake_fetcher = _p1c_fake_fetcher()
+
+    with store._connection(commit=True) as conn:
+        schedule_bls_calendar(
+            conn,
+            series_ids=["PRS85006092"],
+            dry_run=False,
+            html_fetcher=fake_fetcher,
+        )
+    with store._connection(commit=False) as conn:
+        (count,) = conn.execute(
+            "SELECT COUNT(*) FROM cal_econ_event "
+            "WHERE provider='bls' AND title LIKE 'Nonfarm Business%'"
+        ).fetchone()
+    # prod2 fixture holds 8 entries (4 quarters × 2 stages).
+    assert count == 8
+
+
+def test_parse_reference_period_supports_q_short_form() -> None:
+    """``"Q3 2025"`` should parse to end-of-quarter identically to
+    ``"3rd Quarter 2025"`` (occasional BLS format variant)."""
+    html = (
+        "<table class='release-list'><tbody>"
+        "<tr><td>Q3 2025</td><td>Oct. 31, 2025</td><td>08:30 AM</td></tr>"
+        "</tbody></table>"
+    )
+    entries = parse_schedule_html(html, series_id="CIU1010000000000A")
+    assert len(entries) == 1
+    assert entries[0].reference_date == "2025-09-30"
+
+
+def test_schedule_entry_ids_differentiate_indicators_sharing_empsit() -> None:
+    """Codex P1c — Unemployment Rate / AHE / AWH all piggyback on
+    ``empsit.htm``. Their schedule rows must resolve to *distinct*
+    provider_event_ids so they don't clobber the NFP row (and each
+    other) in cal_econ_event."""
+    empsit = _fixture_html("empsit.html")
+    per_series = {}
+    for sid in ("CES0000000001", "LNS14000000", "CES0500000003", "CES0500000002"):
+        entries = parse_schedule_html(empsit, series_id=sid)
+        _, event = schedule_entry_to_records(
+            entries[0], snapshot_epoch_ms=1_700_000_000_000,
+        )
+        per_series[sid] = event.provider_event_id
+    assert len(set(per_series.values())) == 4
+
+
+def test_schedule_run_fetches_each_slug_only_once(
+    store: SQLiteEngineStore,
+) -> None:
+    """Codex P1c — the four empsit.htm piggybackers (NFP / UR / AHE / AWH)
+    must not trigger four separate HTTP fetches of the same page. The
+    scraper dedupes by slug so bls.gov sees one request per unique
+    page per run."""
+    fake_fetcher = _p1c_fake_fetcher()
+    fetch_calls: list[str] = []
+
+    def counting_fetcher(series_id, *, session=None):
+        fetch_calls.append(series_id)
+        return fake_fetcher(series_id, session=session)
+
+    with store._connection(commit=True) as conn:
+        schedule_bls_calendar(
+            conn, dry_run=False, html_fetcher=counting_fetcher,
+        )
+
+    # One fetch per unique slug in SCHEDULE_URL_SLUG.
+    unique_slugs = set(SCHEDULE_URL_SLUG.values())
+    assert len(fetch_calls) == len(unique_slugs)
+
+
+def test_schedule_run_writes_distinct_rows_per_empsit_indicator(
+    store: SQLiteEngineStore,
+) -> None:
+    """End-to-end: one ``empsit.htm`` scrape yields one row per CES/CPS
+    indicator mapped to it, none of them clobbering each other."""
+    fake_fetcher = _p1c_fake_fetcher()
+
+    with store._connection(commit=True) as conn:
+        schedule_bls_calendar(
+            conn,
+            series_ids=[
+                "CES0000000001", "LNS14000000",
+                "CES0500000003", "CES0500000002",
+            ],
+            dry_run=False,
+            html_fetcher=fake_fetcher,
+        )
+
+    with store._connection(commit=False) as conn:
+        rows = conn.execute(
+            "SELECT title, COUNT(*) FROM cal_econ_event "
+            "WHERE provider='bls' GROUP BY title"
+        ).fetchall()
+    titles = {r[0]: r[1] for r in rows}
+    # All four bundled indicators present with identical row counts
+    # (one per release on empsit.htm).
+    assert set(titles.keys()) == {
+        "Nonfarm Payrolls",
+        "Unemployment Rate",
+        "Average Hourly Earnings — Total Private",
+        "Average Weekly Hours — Total Private",
+    }
+    counts = set(titles.values())
+    assert len(counts) == 1  # identical row counts across the four

@@ -1,4 +1,4 @@
-"""BLS release-schedule scraper (issue #9 P1a).
+"""BLS release-schedule scraper (issue #9 P1a, expanded in P1c).
 
 Scrape ``https://www.bls.gov/schedule/news_release/<series>.htm`` and
 land the upcoming-release rows into ``cal_econ_event`` with
@@ -9,12 +9,15 @@ rows that arrive later upsert their values onto the same
 schedule-side row has set it.
 
 The BLS schedule pages ship one table per indicator with a stable
-DOM: ``<table class="release-list">`` with three columns — *Reference
-Month* (``"November 2025"``), *Release Date* (``"Dec. 18, 2025"``),
-*Release Time* (``"08:30 AM"``). No timezone marker on the page;
-BLS publishes all major economic indicators at **8:30 AM Eastern
-Time** — that's the industry-wide convention, encoded here as a
-constant.
+DOM: ``<table class="release-list">`` with three columns — a Reference
+Period cell (``"November 2025"`` for monthly, ``"3rd Quarter 2025"``
+for quarterly ECI / Productivity, occasionally suffixed with
+``"(Preliminary)"`` / ``"(Revised)"`` on releases that publish two
+versions per quarter), a Release Date cell (``"Dec. 18, 2025"``), and
+a Release Time cell (``"08:30 AM"`` for most BLS headline releases;
+``"10:00 AM"`` for JOLTS). No timezone marker on the page; release
+times are always Eastern — the zone is encoded here as a constant
+and DST-correctly converted via :func:`parse_scheduled_release_time`.
 
 Fetch + parse are separable functions. Tests feed HTML directly to
 :func:`parse_schedule_html`; live callers use :func:`fetch_schedule_html`
@@ -24,6 +27,7 @@ bundle (bls.gov 403s on the default ``python-requests`` UA).
 
 from __future__ import annotations
 
+import calendar as _calendar
 import hashlib
 import json
 import logging
@@ -55,9 +59,29 @@ BLS_RELEASE_TZ = "America/New_York"
 
 # series_id → schedule URL slug. Adding a series is a one-liner once
 # the upstream page is confirmed to exist in the same shape.
+#
+# Multiple series map to the same slug when BLS bundles them into a
+# single news release:
+#   * ``empsit.htm`` (Employment Situation) publishes NFP, Unemployment
+#     Rate, Average Hourly Earnings, Average Weekly Hours together.
+#   * ``cpi.htm`` publishes the All-Items CPI alongside the Core CPI
+#     (Less Food and Energy) subaggregate.
+# Each series fetches the shared page independently; the resulting
+# rows land under distinct ``provider_event_id`` because the hash
+# includes the canonicalised indicator token. PPI / Core PPI have
+# their own release page (``ppi.htm``) but the P1c issue scope lists
+# only CPI / ECI / JOLTS / Productivity as release pages to wire up,
+# so PPI's schedule lane is deferred to a follow-up slice.
 SCHEDULE_URL_SLUG: dict[str, str] = {
-    "CUUR0000SA0":     "cpi.htm",
-    "CES0000000001":   "empsit.htm",
+    "CUUR0000SA0":             "cpi.htm",
+    "CUUR0000SA0L1E":          "cpi.htm",
+    "CES0000000001":           "empsit.htm",
+    "LNS14000000":             "empsit.htm",
+    "CES0500000003":           "empsit.htm",
+    "CES0500000002":           "empsit.htm",
+    "JTS000000000000000JOL":   "jolts.htm",
+    "CIU1010000000000A":       "eci.htm",
+    "PRS85006092":             "prod2.htm",
 }
 
 # "Dec. 18, 2025" → (date). BLS normalises to 3-letter month + period.
@@ -78,6 +102,29 @@ _REFERENCE_MONTH_RE = re.compile(
     r"^\s*([A-Za-z]+)\s+(\d{4})\s*$"
 )
 
+# Quarterly reference cells (ECI + Productivity and Costs). BLS
+# renders these as ``"3rd Quarter 2025"`` or occasionally ``"Q3 2025"``,
+# sometimes with a trailing ``"(Preliminary)"`` / ``"(Revised)"``
+# qualifier on releases that publish two versions per quarter
+# (Productivity and Costs in particular).
+_QUARTER_ORDINAL_RE = re.compile(
+    r"^\s*(1st|2nd|3rd|4th|first|second|third|fourth)\s+quarter[,\s]+(\d{4})\s*$",
+    re.IGNORECASE,
+)
+_QUARTER_SHORT_RE = re.compile(
+    r"^\s*Q([1-4])[,\s]+(\d{4})\s*$",
+    re.IGNORECASE,
+)
+_QUARTER_QUALIFIER_RE = re.compile(
+    r"\s*\((?:preliminary|prelim|revised|final|advance)\)\s*$",
+    re.IGNORECASE,
+)
+_ORDINAL_TO_Q = {
+    "1st": 1, "2nd": 2, "3rd": 3, "4th": 4,
+    "first": 1, "second": 2, "third": 3, "fourth": 4,
+}
+_QUARTER_END_MONTH = {1: 3, 2: 6, 3: 9, 4: 12}
+
 
 class BLSScheduleParseError(ValueError):
     """Raised when the release-list table deviates from the known
@@ -90,11 +137,20 @@ class BLSScheduleEntry:
     """One row from a BLS schedule page, pre-projection."""
 
     series_id: str
-    reference_date: str       # ISO YYYY-MM-DD (first of reference month)
-    reference_label: str      # "November 2025" (verbatim)
+    # Monthly: first of reference month. Quarterly: last day of
+    # reference quarter. Matches BLSClient._normalize_period so the
+    # schedule-side event id aligns with API-side obs.date.
+    reference_date: str       # ISO YYYY-MM-DD
+    reference_label: str      # "November 2025" / "3rd Quarter 2025" (verbatim)
     release_date: str         # ISO YYYY-MM-DD
     release_time_local: str   # verbatim "08:30 AM"
     event_time_utc: str       # ISO datetime with UTC offset
+    # Release stage for indicators that publish multiple versions of
+    # the same quarter (Productivity: preliminary then revised). "" for
+    # everything else. When non-empty, the stage participates in the
+    # provider_event_id so distinct releases of the same reference
+    # period don't collide in cal_econ_event.
+    release_stage: str = ""
 
 
 def _parse_short_date(text: str) -> date:
@@ -108,25 +164,83 @@ def _parse_short_date(text: str) -> date:
     return date(year=int(year_raw), month=month, day=int(day_raw))
 
 
-def _parse_reference_month(text: str) -> date:
-    match = _REFERENCE_MONTH_RE.match(text)
+def _extract_release_stage(text: str) -> tuple[str, str]:
+    """Split a trailing ``"(Preliminary)"`` / ``"(Revised)"`` qualifier
+    off ``text``. Returns ``(stripped_text, stage_lowercase)`` — stage
+    is ``""`` when no qualifier is present."""
+    match = _QUARTER_QUALIFIER_RE.search(text)
+    if not match:
+        return text.strip(), ""
+    stage = match.group(0).strip().strip("()").lower()
+    stripped = _QUARTER_QUALIFIER_RE.sub("", text).strip()
+    return stripped, stage
+
+
+def _parse_quarterly_reference(text: str) -> date | None:
+    """Parse a quarterly reference cell, or return ``None``.
+
+    Accepts ``"3rd Quarter 2025"`` / ``"Third Quarter 2025"`` / ``"Q3 2025"``.
+    Callers should strip any trailing ``"(Preliminary)"`` / ``"(Revised)"``
+    qualifier via :func:`_extract_release_stage` before calling — that
+    qualifier rides on :attr:`BLSScheduleEntry.release_stage` rather
+    than being folded into the date.
+
+    Returns the last day of the quarter-end month — matching the BLS
+    quarterly observation convention used in
+    :meth:`BLSClient._normalize_period` (``Q03 → YYYY-09-30``).
+    """
+    m = _QUARTER_ORDINAL_RE.match(text)
+    if m:
+        q = _ORDINAL_TO_Q[m.group(1).lower()]
+        year = int(m.group(2))
+    else:
+        m = _QUARTER_SHORT_RE.match(text)
+        if not m:
+            return None
+        q = int(m.group(1))
+        year = int(m.group(2))
+    month = _QUARTER_END_MONTH[q]
+    last_day = _calendar.monthrange(year, month)[1]
+    return date(year=year, month=month, day=last_day)
+
+
+def _parse_reference_period(text: str) -> tuple[date, str]:
+    """Parse a Reference Month / Reference Quarter cell.
+
+    Returns ``(reference_date, release_stage)``. The stage is empty for
+    monthly and for quarterly releases that don't carry a qualifier;
+    it's ``"preliminary"`` / ``"revised"`` / ``"advance"`` / ``"final"``
+    when the cell has a trailing parenthesised tag (Productivity and
+    Costs in particular). The stage is returned separately so
+    :func:`schedule_entry_to_records` can fold it into the synthesised
+    id, keeping distinct releases of the same quarter from colliding
+    on a single ``provider_event_id``.
+    """
+    stripped, stage = _extract_release_stage(text)
+    quarterly = _parse_quarterly_reference(stripped)
+    if quarterly is not None:
+        return quarterly, stage
+    match = _REFERENCE_MONTH_RE.match(stripped)
     if not match:
         raise BLSScheduleParseError(
-            f"unparseable reference-month cell: {text!r}"
+            f"unparseable reference cell: {text!r}"
         )
     month_raw, year_raw = match.groups()
     month = _MONTH_NAMES.get(month_raw.lower())
     if month is None:
         raise BLSScheduleParseError(f"unknown month name: {month_raw!r}")
-    return date(year=int(year_raw), month=month, day=1)
+    return date(year=int(year_raw), month=month, day=1), stage
 
 
 def parse_schedule_html(html: str, *, series_id: str) -> list[BLSScheduleEntry]:
     """Extract :class:`BLSScheduleEntry` rows from a schedule page.
 
     The function targets the single ``<table class="release-list">``
-    and expects three ``<td>`` cells per row: Reference Month, Release
-    Date, Release Time. Any deviation raises
+    and expects three ``<td>`` cells per row: Reference Period, Release
+    Date, Release Time. The reference cell is either monthly
+    (``"November 2025"``) for monthly releases or quarterly
+    (``"3rd Quarter 2025"``, optionally suffixed ``"(Preliminary)"`` /
+    ``"(Revised)"``) for ECI / Productivity. Any deviation raises
     :class:`BLSScheduleParseError` so the caller surfaces the DOM
     drift rather than silently truncating the schedule.
     """
@@ -151,7 +265,7 @@ def parse_schedule_html(html: str, *, series_id: str) -> list[BLSScheduleEntry]:
         if not ref_cell or not date_cell or not time_cell:
             continue
 
-        reference = _parse_reference_month(ref_cell)
+        reference, release_stage = _parse_reference_period(ref_cell)
         release = _parse_short_date(date_cell)
         scheduled = parse_scheduled_release_time(
             release, time_cell, default_tz=BLS_RELEASE_TZ,
@@ -164,6 +278,7 @@ def parse_schedule_html(html: str, *, series_id: str) -> list[BLSScheduleEntry]:
                 release_date=release.isoformat(),
                 release_time_local=time_cell,
                 event_time_utc=scheduled.utc.isoformat(),
+                release_stage=release_stage,
             )
         )
     return entries
@@ -178,11 +293,17 @@ def schedule_entry_to_records(
 ) -> tuple[BLSCalendarRawRecord, BLSCalendarEventRecord]:
     """Project a :class:`BLSScheduleEntry` to (raw, event) records.
 
-    ``provider_event_id`` anchors on ``entry.reference_date`` — the
-    same anchor the API-side parser uses in
-    :mod:`ingestion.calendar.bls_api.parser`, so schedule row + API
-    row land on the same ``(provider, provider_event_id)`` key and
-    merge in the event table."""
+    ``provider_event_id`` anchors on ``entry.reference_date``, plus the
+    release stage for Productivity-style releases that publish
+    preliminary then revised on the same quarter. Without stage
+    qualification the two distinct calendar events would collide on
+    one ``(provider, provider_event_id)`` key and the later scrape
+    would overwrite the earlier one in ``cal_econ_event``.
+
+    For single-release indicators the anchor is identical to the
+    API-side parser's anchor, so schedule row + API row still merge
+    in the event table.
+    """
     resolved_spec = spec or INDICATOR_REGISTRY.get(entry.series_id)
     if resolved_spec is None:
         raise KeyError(
@@ -190,11 +311,16 @@ def schedule_entry_to_records(
         )
 
     indicator_canonical = canonicalize_indicator(resolved_spec.indicator)
+    anchor = (
+        f"{entry.reference_date}|{entry.release_stage}"
+        if entry.release_stage
+        else entry.reference_date
+    )
     provider_event_id = synthesize_event_id(
         PROVIDER,
         resolved_spec.country_code,
         indicator_canonical,
-        entry.reference_date,
+        anchor,
     )
 
     # Schedule-side content hash: any of (event_time, release_date,
@@ -209,6 +335,7 @@ def schedule_entry_to_records(
         "release_date":       entry.release_date,
         "release_time_local": entry.release_time_local,
         "event_time_utc":     entry.event_time_utc,
+        "release_stage":      entry.release_stage,
     }
     content_hash = hashlib.sha256(
         json.dumps(schedule_payload, sort_keys=True).encode("utf-8")
