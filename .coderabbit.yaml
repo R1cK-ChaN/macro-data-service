@@ -1,0 +1,192 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit configuration — expert-level PR review for macro-data-service.
+# Encodes the project's discipline (CLAUDE.md) as path-scoped review rules so
+# CodeRabbit filters findings the same way Codex and human reviewers do.
+# Profile is `assertive` and the request-changes workflow is enabled — reviews
+# block merge until findings are addressed or explicitly dismissed.
+
+language: "en-US"
+early_access: false
+
+tone_instructions: |
+  Expert-level review. Flag correctness bugs and architectural risks first;
+  stylistic nits last, if at all. Skip filler ("Let me explain", "It's
+  important to note"). No emojis. When proposing a change, show the exact
+  diff, not a paragraph of prose. Match the codebase's direct tone.
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: true
+
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  sequence_diagrams: true
+  changed_files_summary: true
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  suggested_labels: true
+  suggested_reviewers: true
+  review_status: true
+  commit_status: true
+  fail_commit_status: true
+  poem: false
+  collapse_walkthrough: false
+
+  path_filters:
+    - "!**/__pycache__/**"
+    - "!**/*.pyc"
+    - "!**/.venv/**"
+    - "!**/dist/**"
+    - "!**/build/**"
+    - "!**/*.min.js"
+    - "!**/*.min.css"
+    - "!**/node_modules/**"
+    - "!**/.pytest_cache/**"
+    - "!**/.mypy_cache/**"
+
+  path_instructions:
+    - path: "src/**/*.py"
+      instructions: |
+        Apply the implementation discipline from CLAUDE.md.
+        - Reject abstractions (helpers, registries, config layers) unless
+          three concrete callers exist. Two identical lines are fine.
+        - Reject defensive code for cases that cannot happen: null checks
+          past a validated boundary, handlers for unreachable branches,
+          retries on idempotent-by-construction operations. Only validate
+          at system boundaries (user input, external APIs).
+        - Reject scope creep: adjacent refactors, unrequested renames,
+          "tidy up" patches.
+        - Accept real P1 bugs: correctness breaks, hallucinated APIs,
+          broken invariants.
+        - Accept concrete P2 issues: architectural inconsistencies, edge
+          cases, encoding/locale/exchange mismatches.
+        Comments: only when the WHY is non-obvious. Never restate what the
+        code does (identifiers do that). No multi-paragraph docstrings.
+        Never reference the current task, PR, or callers ("used by X",
+        "added for the Y flow") — those belong in the PR description.
+
+    - path: "src/ingestion/**/*.py"
+      instructions: |
+        Ingestion-layer conventions.
+        - Service ops must default to `dry_run=True`. Flag any op that
+          defaults to execute.
+        - Raw-then-projected lane: `*_raw` is append-only with PK
+          `(provider, provider_event_id, content_hash)`; projected events
+          upsert on `(provider, provider_event_id)` and must apply an
+          `observed_at_epoch_ms` monotonicity guard on update so a
+          late-arriving older snapshot cannot overwrite a newer one.
+        - `provider_event_id` must anchor on a lifecycle-stable identity
+          string (reference-period date, meeting date). NOT on a
+          placeholder like `event_time_utc` that a later schedule-side
+          write will overwrite — that creates duplicate rows on promotion.
+        - Content-hash must cover every mutable upstream field. Flag any
+          missing field that could change between snapshots.
+        - No hard-coded credentials. Env access via `get_env_value` only.
+
+    - path: "src/storage/**/*.py"
+      instructions: |
+        Storage is the durable contract. Flag:
+        - Non-additive schema changes without a migration path.
+        - Indexes that don't match the read patterns documented in
+          `src/storage/STORAGE.md`.
+        - Helpers that call `commit` or `rollback` internally — the
+          caller owns the transaction lifecycle.
+        - Writers that bypass the unified `list_items` / `v_*` view
+          surface downstream consumers read through.
+
+    - path: "src/contracts.py"
+      instructions: |
+        Downstream HTTP-API contract. Any change is a compatibility
+        concern. Flag:
+        - Renamed fields (breaks consumers).
+        - Required <-> optional transitions on existing fields.
+        - Values removed from Literal unions without a migration path.
+        - New fields that aren't marked optional with a default.
+
+    - path: "tests/**/*.py"
+      instructions: |
+        CI tests must not make real network calls. Flag:
+        - `requests.Session()` / `httpx.Client()` / `urllib.request.urlopen`
+          without an associated mock, respx route, or fake fixture.
+        - Test files that lack a fake-client fixture for ingestion code
+          paths.
+        - Dependence on DNS or external hosts.
+        Exception: files with `pytestmark = pytest.mark.integration` at
+        module top — these run only on explicit invocation.
+        Isolation: each test gets a fresh
+        `SQLiteEngineStore(db_path=tmp_path / ...)`.
+        Never mock what the test is supposed to verify — e.g. do not mock
+        the DB for storage-layer tests.
+
+    - path: "scripts/**/*.py"
+      instructions: |
+        Live-HTTP scripts default to dry-run and budget-cap request counts.
+        Flag any script that:
+        - Defaults to execute mode.
+        - Lacks a `--execute` flag or equivalent opt-in.
+        - Does not cap request count (silent budget exhaustion).
+
+    - path: "docs/architecture.md"
+      instructions: |
+        Describes current state, not history. Flag:
+        - "We will / plan to / future work" in current-state sections —
+          belongs on the issue tracker, not the architecture doc.
+        - Text that contradicts the code (trust the code; update the doc).
+        - Slice-progress lines that don't cite the commit SHA.
+
+    - path: ".github/**/*.{yaml,yml}"
+      instructions: |
+        CI / GitHub automation. Flag:
+        - Hard-coded credentials, tokens, or secrets.
+        - `actions/*` references at `@main` / `@master` (pin to SHA or
+          semver tag).
+        - `run:` steps that `curl | bash` external scripts without
+          checksum verification.
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: true
+    base_branches:
+      - "master"
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+
+  tools:
+    ruff:
+      enabled: true
+    shellcheck:
+      enabled: true
+    markdownlint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    actionlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    github-checks:
+      enabled: true
+      timeout_ms: 180000
+    languagetool:
+      enabled: false
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  web_search:
+    enabled: true
+  learnings:
+    scope: "auto"
+  issues:
+    scope: "auto"
+  pull_requests:
+    scope: "auto"
