@@ -10,7 +10,7 @@ from ~25 free/licensed upstreams instead of BBG's paid feed.
 resolves macro + market + calendar + document data from ~25 upstreams into a
 single SQLite store that downstream services (analyst UI, RAG, agents) read
 through one service interface.
-**Last updated:** 2026-04-21 (branch `feat/issue-8-calendar-two-lane-schema`)
+**Last updated:** 2026-04-21 (branch `feat/issue-8-calendar-two-lane-schema`, P6 TE backfill executed)
 
 ### Bloomberg-capability coverage (current → 1.0)
 
@@ -109,7 +109,8 @@ Slice progress:
 - **P4 (shipped):** EODHD live-validation harness extension (`--provider eodhd`, 8 probes) + acquisition fixes — `/calendar/dividends` redefined as discovery-only `(symbol, ex_date)` (the extended dividend format does not arrive on the calendar feed); `_SubtypeSpec` grew `symbols_param` + `one_symbol_per_request` so dividends route through `filter[symbol]=X` (one request per symbol) rather than the generic `symbols=A,B` that the server silently drops.
 - **P5 (shipped — scaffold):** per-ticker dividend enrichment via EODHD's `/api/div/{TICKER}.{EXCHANGE}`. New `parse_dividend_detail_row` shares `provider_event_id` with the discovery parser so the rich snapshot (amount / currency / declaration / record / payment dates) upserts the same `cal_corp_event` row. New `fetch_dividend_details` free function — one request per symbol, top-level-array payload (no envelope). Service op `calendar_corp_fetch_dividend_details(symbols, from, to, dry_run, max_requests)` — `dry_run=True` default. Validator gained a 9th probe (`dividend_details_aapl`) covering the enrichment feed.
 - **P5a (shipped):** `/calendar/dividends` JSON:API pagination — `_SubtypeSpec` gained `paginated: bool`; `CorpCalendarFetcher._execute_request` loops `page[offset]` += `page[limit]` (1000) while `links.next` is truthy, trusting the link as the authoritative terminator rather than row-count heuristics. `max_requests` budget halts mid-cursor and surfaces `stopped_reason=max_requests_reached` so callers can retry. Closes the silent 1000-row truncation class of bug (same shape as the TE `/calendar/updates` issue surfaced in P3).
-- **Remaining:** full 2013→today TE backfill execution; official-source economic connectors (BLS/ECB/Fed/NBS); legacy HTML-scraped `calendar_events` parity + retirement; downstream `GET /calendar` HTTP surface over `v_calendar_item`.
+- **P6 (shipped — TE P1 backfill + country_code coverage):** First real TE backfill executed end-to-end (121 windows, 77,771 events, 2023-01-01 → 2026-04-21, zero truncation, zero drops, ~2:39 wall-clock, 121/1000 monthly quota). Live fidelity spot-check rehydrated 5 sampled `CalendarId`s via `/calendar/calendarid/` and matched 30/30 mutable-field comparisons. Surfaced a downstream-query gap: `TE_COUNTRY_MAP` covered 49 of 172 upstream `Country` values, leaving 16,837 rows (21%) with empty `country_code`. Map extended to 115 sovereign entries — aggregates (`IMF`/`OPEC`/`World`/`G20`/`G7`) still return empty by design. Post-projection coverage: 77,551/77,771 rows (99.7%) mapped to ISO-3166 alpha-2; remaining 220 are all legitimate supra-national tags.
+- **Remaining:** TE P2 (2016-2022) and P3 (2013-2015) backfill execution; official-source economic connectors (BLS/ECB/Fed/NBS); legacy HTML-scraped `calendar_events` parity + retirement; downstream `GET /calendar` HTTP surface over `v_calendar_item`.
 
 ### 6. Release scheduling + availability
 

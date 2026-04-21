@@ -140,12 +140,37 @@ def test_country_code_falls_through_to_empty_for_cross_institution_tags() -> Non
     the Country field. The prior `.upper()[:2]` fallback mis-cast
     "IMF" → "IM" (Isle of Man). Empty string is recoverable; a wrong
     ISO code silently corrupts country filtering downstream."""
-    row = _te_row(Country="IMF")
-    _, event = parse_calendar_row(row, snapshot_epoch_ms=1)
-    assert event.country_code == ""
-    row = _te_row(Country="OECD")
-    _, event = parse_calendar_row(row, snapshot_epoch_ms=1)
-    assert event.country_code == ""
+    for tag in ("IMF", "OECD", "OPEC", "World", "G20", "G7"):
+        row = _te_row(Country=tag)
+        _, event = parse_calendar_row(row, snapshot_epoch_ms=1)
+        assert event.country_code == "", f"aggregate {tag!r} must stay empty"
+
+
+def test_country_code_maps_full_sovereign_coverage() -> None:
+    """Live P1 backfill (2023→2026) returned 172 distinct Country values.
+    All 167 sovereigns must ISO-map; only the 5 supra-national aggregates
+    above stay empty. This locks the full mapping table so downstream
+    `country_code` filters reach every country the upstream provides."""
+    sovereign_cases = {
+        # Sampled from every region; regression guard against accidental map shrink.
+        "Slovenia": "SI", "Iceland": "IS", "Luxembourg": "LU", "Cyprus": "CY",
+        "Estonia": "EE", "Latvia": "LV", "Lithuania": "LT", "Malta": "MT",
+        "Albania": "AL", "Bosnia and Herzegovina": "BA", "Kosovo": "XK",
+        "United Arab Emirates": "AE", "Qatar": "QA", "Saudi Arabia": "SA",
+        "Pakistan": "PK", "Bangladesh": "BD", "Kazakhstan": "KZ",
+        "Cambodia": "KH", "Laos": "LA", "Sri Lanka": "LK",
+        "Ivory Coast": "CI", "Morocco": "MA", "Kenya": "KE",
+        "Congo": "CG", "Republic of the Congo": "CG",
+        "Sao Tome and Principe": "ST", "East Timor": "TL",
+        "Venezuela": "VE", "Peru": "PE", "Costa Rica": "CR",
+        "Trinidad and Tobago": "TT", "Dominican Republic": "DO",
+    }
+    for country, expected in sovereign_cases.items():
+        row = _te_row(Country=country)
+        _, event = parse_calendar_row(row, snapshot_epoch_ms=1)
+        assert event.country_code == expected, (
+            f"{country!r} should map to {expected!r}, got {event.country_code!r}"
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────
