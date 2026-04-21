@@ -397,6 +397,7 @@ class LocalMacroDataService:
             "events_upserted":     summary.events_upserted,
             "drops_recorded":      summary.drops_recorded,
             "requests_spent":      summary.requests_spent,
+            "updates_truncated":   summary.updates_truncated,
             "batch_preview":       summary.batch_preview,
             "stopped_reason":      summary.stopped_reason,
         }

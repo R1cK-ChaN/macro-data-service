@@ -43,6 +43,11 @@ class UpdatesRunSummary:
     events_upserted: int = 0
     drops_recorded: int = 0
     requests_spent: int = 0
+    # True when ``/calendar/updates`` returned its 1000-row cap — the
+    # tail (older revisions) is silently dropped upstream. Operationally
+    # this means: run sync more often, or trigger a narrow date-range
+    # backfill to catch anything older than the last pointer we saw.
+    updates_truncated: bool = False
     stopped_reason: str = ""
     batch_preview: list[list[str]] = field(default_factory=list)
 
@@ -128,6 +133,12 @@ class UpdatesReconciler:
         summary.requests_spent += 1
         summary.updates_fetched = result.row_count
         summary.pointers_seen = result.row_count
+        summary.updates_truncated = result.truncated
+        if result.truncated:
+            logger.warning(
+                "TE /calendar/updates hit 1000-row cap — older revisions may be dropped; "
+                "consider running a narrow date-range backfill to compensate"
+            )
 
         # Step 2: determine which ids need rehydration.
         to_rehydrate: list[str] = []

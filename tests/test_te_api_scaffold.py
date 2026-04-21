@@ -135,6 +135,19 @@ def test_parser_rejects_missing_calendar_id() -> None:
         parse_calendar_row({}, snapshot_epoch_ms=0)
 
 
+def test_country_code_falls_through_to_empty_for_cross_institution_tags() -> None:
+    """TE returns cross-institution tags like "IMF" / "OECD" / "OPEC" in
+    the Country field. The prior `.upper()[:2]` fallback mis-cast
+    "IMF" → "IM" (Isle of Man). Empty string is recoverable; a wrong
+    ISO code silently corrupts country filtering downstream."""
+    row = _te_row(Country="IMF")
+    _, event = parse_calendar_row(row, snapshot_epoch_ms=1)
+    assert event.country_code == ""
+    row = _te_row(Country="OECD")
+    _, event = parse_calendar_row(row, snapshot_epoch_ms=1)
+    assert event.country_code == ""
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Projector
 # ──────────────────────────────────────────────────────────────────────────
@@ -430,9 +443,43 @@ def test_updates_reconciler_detects_drops_and_inserts_new(
     assert summary.rows_raw_inserted == 2
     assert summary.events_upserted == 2
     assert summary.drops_recorded == 1
+    # Only 3 rows returned, well under the 1000-row cap.
+    assert summary.updates_truncated is False
 
     with store._connection(commit=False) as c:
         (drop_id,) = c.execute(
             "SELECT provider_event_id FROM cal_econ_drops"
         ).fetchone()
     assert drop_id == "300"
+
+
+@respx.mock
+def test_updates_reconciler_surfaces_truncation(
+    store: SQLiteEngineStore, monkeypatch
+) -> None:
+    """When /calendar/updates returns 1000 rows the summary must flag
+    truncation so the operator knows the tail may be silently dropped."""
+    monkeypatch.setenv("TE_API_KEY", "unit:test")
+    pointers = [
+        {"CalendarId": str(i), "Country": "US", "Event": f"Event {i}",
+         "LastUpdate": "2026-05-01T00:00:00"}
+        for i in range(1000)
+    ]
+    respx.get(url__startswith="https://api.tradingeconomics.com/calendar/updates").mock(
+        return_value=httpx.Response(200, json=pointers)
+    )
+    respx.get(url__regex=r"^https://api\.tradingeconomics\.com/calendar/calendarid/.*").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    connection = store.get_connection()
+    try:
+        client = TEAPIClient(rate_limit_seconds=0, sleeper=lambda _s: None)
+        reconciler = UpdatesReconciler(
+            connection=connection, client=client, batch_id_count=50,
+        )
+        summary = reconciler.sync(dry_run=False)
+        connection.commit()
+    finally:
+        connection.close()
+    assert summary.updates_fetched == 1000
+    assert summary.updates_truncated is True

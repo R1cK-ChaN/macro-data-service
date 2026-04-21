@@ -141,10 +141,13 @@ def _country_code(raw_country: str) -> str:
     code = TE_COUNTRY_MAP.get(key)
     if code:
         return code
-    # Fallback: uppercase 2-letter slice for unknown countries. Lets
-    # unmapped TE countries still reach the DB (we add to TE_COUNTRY_MAP
-    # when observed).
-    return (raw_country or "").strip().upper()[:2] or ""
+    # Unknown country — return empty string rather than slicing the
+    # first two characters. TE mixes cross-institution tags like "IMF",
+    # "OECD", "OPEC" into Country, and the old `.upper()[:2]` fallback
+    # clobbered them onto real ISO codes ("IMF" → "IM" = Isle of Man).
+    # An empty country_code is recoverable (add to TE_COUNTRY_MAP later);
+    # a wrong country_code silently corrupts downstream filtering.
+    return ""
 
 
 def _stringify_optional(value: Any) -> str | None:
