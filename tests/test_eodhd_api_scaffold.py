@@ -605,6 +605,149 @@ def test_fetcher_trend_flattens_nested_payload(
 
 
 @respx.mock
+def test_fetcher_dividends_paginates_until_links_next_null(
+    store: SQLiteEngineStore, monkeypatch,
+) -> None:
+    """EODHD's /calendar/dividends caps each response at 1000 rows and
+    paginates via JSON:API ``links.next``. The fetcher must drain the
+    cursor end-to-end instead of taking the first page and silently
+    dropping the tail — same failure mode as the TE /calendar/updates
+    truncation surfaced in P3."""
+    monkeypatch.setenv("EODHD_API_KEY", "unit")
+
+    captured_offsets: list[str] = []
+
+    def _respond(request):
+        offset = dict(request.url.params).get("page[offset]", "0")
+        captured_offsets.append(offset)
+        if offset == "0":
+            body = {
+                "meta": {"total": 2100, "offset": 0, "limit": 1000},
+                "data": [_dividend_row(symbol=f"A{i}.US") for i in range(1000)],
+                "links": {"next": "https://eodhd.com/api/calendar/dividends?page[offset]=1000"},
+            }
+        elif offset == "1000":
+            body = {
+                "meta": {"total": 2100, "offset": 1000, "limit": 1000},
+                "data": [_dividend_row(symbol=f"B{i}.US") for i in range(1000)],
+                "links": {"next": "https://eodhd.com/api/calendar/dividends?page[offset]=2000"},
+            }
+        else:  # offset == "2000"
+            body = {
+                "meta": {"total": 2100, "offset": 2000, "limit": 1000},
+                "data": [_dividend_row(symbol=f"C{i}.US") for i in range(100)],
+                "links": {"next": None},
+            }
+        return httpx.Response(200, json=body)
+
+    respx.get(url__startswith="https://eodhd.com/api/calendar/dividends").mock(
+        side_effect=_respond
+    )
+    connection = store.get_connection()
+    try:
+        client = EODHDAPIClient(sleeper=lambda _s: None)
+        fetcher = CorpCalendarFetcher(
+            connection=connection, client=client, window_days=7, max_requests=10,
+        )
+        summary = fetcher.fetch(
+            subtype="dividend",
+            start=date(2026, 5, 1),
+            end=date(2026, 5, 3),
+            dry_run=False,
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    assert summary.requests_spent == 3
+    assert summary.rows_parsed == 2100
+    assert summary.stopped_reason == "completed"
+    assert captured_offsets == ["0", "1000", "2000"]
+
+
+@respx.mock
+def test_fetcher_dividends_pagination_respects_max_requests(
+    store: SQLiteEngineStore, monkeypatch,
+) -> None:
+    """When ``max_requests`` runs out mid-cursor, the fetcher must halt
+    with ``stopped_reason=max_requests_reached`` so the caller can retry
+    with more budget — not silently declare completion on a partial
+    drain."""
+    monkeypatch.setenv("EODHD_API_KEY", "unit")
+
+    def _respond(request):
+        # Always claim more pages — budget is what should stop us.
+        return httpx.Response(
+            200,
+            json={
+                "meta": {"total": 10_000, "offset": 0, "limit": 1000},
+                "data": [_dividend_row(symbol=f"X{i}.US") for i in range(1000)],
+                "links": {"next": "https://eodhd.com/api/calendar/dividends?page[offset]=next"},
+            },
+        )
+
+    respx.get(url__startswith="https://eodhd.com/api/calendar/dividends").mock(
+        side_effect=_respond
+    )
+    connection = store.get_connection()
+    try:
+        client = EODHDAPIClient(sleeper=lambda _s: None)
+        fetcher = CorpCalendarFetcher(
+            connection=connection, client=client, window_days=7, max_requests=2,
+        )
+        summary = fetcher.fetch(
+            subtype="dividend",
+            start=date(2026, 5, 1),
+            end=date(2026, 5, 3),
+            dry_run=False,
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    assert summary.requests_spent == 2
+    assert summary.stopped_reason == "max_requests_reached"
+
+
+@respx.mock
+def test_fetcher_dividends_stops_on_null_next_even_if_page_is_full(
+    store: SQLiteEngineStore, monkeypatch,
+) -> None:
+    """``links.next`` is the authoritative terminator. A page that
+    happens to land exactly on the 1000-row boundary with
+    ``links.next=null`` is the last page, not a mid-cursor stop — the
+    fetcher must not request another page just because the row count
+    equals the limit."""
+    monkeypatch.setenv("EODHD_API_KEY", "unit")
+    respx.get(url__startswith="https://eodhd.com/api/calendar/dividends").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "meta": {"total": 1000, "offset": 0, "limit": 1000},
+                "data": [_dividend_row(symbol=f"E{i}.US") for i in range(1000)],
+                "links": {"next": None},
+            },
+        )
+    )
+    connection = store.get_connection()
+    try:
+        client = EODHDAPIClient(sleeper=lambda _s: None)
+        fetcher = CorpCalendarFetcher(
+            connection=connection, client=client, window_days=7,
+        )
+        summary = fetcher.fetch(
+            subtype="dividend",
+            start=date(2026, 5, 1),
+            end=date(2026, 5, 3),
+            dry_run=False,
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    assert summary.requests_spent == 1
+    assert summary.rows_parsed == 1000
+    assert summary.stopped_reason == "completed"
+
+
+@respx.mock
 def test_fetcher_dividend_symbols_route_through_filter_param(
     store: SQLiteEngineStore, monkeypatch
 ) -> None:

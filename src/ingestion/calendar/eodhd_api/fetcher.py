@@ -37,6 +37,13 @@ logger = logging.getLogger(__name__)
 
 PROVIDER = "eodhd"
 
+# /calendar/dividends is the only endpoint using JSON:API pagination.
+# The server caps each page at 1000 rows and exposes ``links.next`` to
+# signal more pages exist. Without active pagination a broad symbol or
+# date-range query silently truncates at 1000 — same failure mode as
+# the TE /calendar/updates 1000-row truncation surfaced in P3.
+_DIVIDEND_PAGE_LIMIT = 1000
+
 
 @dataclass(frozen=True)
 class _SubtypeSpec:
@@ -57,6 +64,10 @@ class _SubtypeSpec:
     # forces one request per symbol.
     symbols_param: str = "symbols"
     one_symbol_per_request: bool = False
+    # JSON:API pagination driven by ``links.next``. Only /calendar/dividends
+    # needs this today; every other calendar endpoint returns the whole
+    # set in one response.
+    paginated: bool = False
 
 
 _EARNINGS = _SubtypeSpec(
@@ -92,6 +103,7 @@ _DIVIDEND = _SubtypeSpec(
     date_params=("filter[date_from]", "filter[date_to]"),
     symbols_param="filter[symbol]",
     one_symbol_per_request=True,
+    paginated=True,
 )
 _TREND = _SubtypeSpec(
     path="/api/calendar/trends",
@@ -205,14 +217,9 @@ class CorpCalendarFetcher:
         # Execution ----------------------------------------------------------
         snapshot_ms = int(self._now_utc().timestamp() * 1000)
         for window_start, window_end in windows:
-            if summary.requests_spent >= self._max_requests:
-                summary.stopped_reason = "max_requests_reached"
+            if summary.stopped_reason:
                 break
             for symbols_subset in symbol_groups:
-                if summary.requests_spent >= self._max_requests:
-                    summary.stopped_reason = "max_requests_reached"
-                    break
-
                 params: dict[str, Any] = {}
                 if spec.date_scoped and window_start is not None and window_end is not None:
                     assert spec.date_params is not None
@@ -222,20 +229,66 @@ class CorpCalendarFetcher:
                 if symbols_subset:
                     params[spec.symbols_param] = ",".join(symbols_subset)
 
-                try:
-                    result = self._client.get_rows(spec.path, params=params, rows_key=spec.rows_key)
-                except EODHDThrottled as exc:
-                    summary.stopped_reason = f"throttled:{exc}"
+                if not self._execute_request(
+                    spec, params, snapshot_ms=snapshot_ms, summary=summary,
+                ):
                     break
-                summary.requests_spent += 1
-
-                self._persist(spec, result, snapshot_ms=snapshot_ms, summary=summary)
             if summary.stopped_reason:
                 break
 
         if not summary.stopped_reason:
             summary.stopped_reason = "completed"
         return summary
+
+    def _execute_request(
+        self,
+        spec: _SubtypeSpec,
+        params: dict[str, Any],
+        *,
+        snapshot_ms: int,
+        summary: CorpRunSummary,
+    ) -> bool:
+        """Fetch and persist one (window, symbol_group) slot.
+
+        For ``spec.paginated`` subtypes this loops JSON:API pages driven
+        by ``links.next`` in the response envelope, incrementing
+        ``page[offset]`` by ``page[limit]`` each round. Returns ``False``
+        when the outer loop should stop (budget exhausted or throttled);
+        ``True`` otherwise.
+        """
+        if spec.paginated:
+            params = dict(params)
+            params.setdefault("page[limit]", _DIVIDEND_PAGE_LIMIT)
+            params.setdefault("page[offset]", 0)
+
+        while True:
+            if summary.requests_spent >= self._max_requests:
+                summary.stopped_reason = "max_requests_reached"
+                return False
+            try:
+                result = self._client.get_rows(
+                    spec.path, params=params, rows_key=spec.rows_key,
+                )
+            except EODHDThrottled as exc:
+                summary.stopped_reason = f"throttled:{exc}"
+                return False
+            summary.requests_spent += 1
+            self._persist(spec, result, snapshot_ms=snapshot_ms, summary=summary)
+
+            if not spec.paginated:
+                return True
+            # ``links.next`` is the authoritative "more pages" signal for
+            # the JSON:API dividends feed. Trusting it (rather than
+            # ``len(rows) < page_limit``) avoids false positives on the
+            # edge case where the final page happens to be exactly full.
+            next_link = None
+            if isinstance(result.payload, dict):
+                next_link = (result.payload.get("links") or {}).get("next")
+            if not next_link or not result.rows:
+                return True
+            params["page[offset]"] = (
+                int(params["page[offset]"]) + int(params["page[limit]"])
+            )
 
     def _persist(
         self,
