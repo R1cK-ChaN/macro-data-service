@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Iterable
@@ -31,12 +32,14 @@ MONTHLY_BUDGET = 1000
 BUDGET_HALT_THRESHOLD = 950
 
 # (year_lo, year_hi, target_window_days)
+# 2016-2022 tightened to 10d after the first P2 run hit 58 truncations on
+# the old 20d/12d brackets — 10d is the proven-safe size from P1 (121/121
+# clean windows over 2023-2026 density). 2014-2015 left at 30d: sparser
+# era, runner's in-session continuation catches any stragglers.
 ERA_BRACKETS: tuple[tuple[int, int, int], ...] = (
     (2013, 2013, 180),
     (2014, 2015, 30),
-    (2016, 2019, 20),
-    (2020, 2022, 12),
-    (2023, 2099, 10),
+    (2016, 2099, 10),
 )
 
 # Phase spans (inclusive). P1 runs first — recent data has the densest rows
@@ -72,6 +75,7 @@ class RunSummary:
     events_upserted: int = 0
     windows_fetched: int = 0
     truncated_windows: int = 0
+    continuation_fetches: int = 0
     budget_halt: bool = False
     stopped_reason: str = ""
     cursor_state: dict[str, dict] = field(default_factory=dict)
@@ -253,7 +257,7 @@ class BackfillRunner:
             return summary
 
         # Honor existing cursor — skip windows we've already completed.
-        active = []
+        active: list[Window] = []
         for window in planned:
             cursor = self._load_cursor(window.phase)
             if cursor is not None and cursor > window.end:
@@ -262,8 +266,16 @@ class BackfillRunner:
                 window = Window(phase=window.phase, start=cursor, end=window.end)
             active.append(window)
 
+        # Use a deque so we can prepend a continuation window when a fetch
+        # truncates at the 1000-row cap. The continuation re-fetches the
+        # dropped tail in-session; without this, the tail stays missing
+        # until a later invocation rewinds via the persisted cursor — and
+        # if the plan never rewinds (final window advances past phase end,
+        # as happened in the initial P2 run), the tail is lost for good.
+        pending: deque[tuple[Window, bool]] = deque((w, False) for w in active)
+
         spent_this_call = 0
-        for window in active:
+        while pending:
             if spent_this_call >= self._max_requests:
                 summary.stopped_reason = "max_requests_reached"
                 break
@@ -272,6 +284,7 @@ class BackfillRunner:
                 summary.stopped_reason = "cumulative_budget_halt"
                 break
 
+            window, is_continuation = pending.popleft()
             path = self.CALENDAR_ALL_PATH.format(
                 start=window.start.isoformat(), end=window.end.isoformat()
             )
@@ -282,6 +295,8 @@ class BackfillRunner:
                 break
             spent_this_call += 1
             summary.windows_fetched += 1
+            if is_continuation:
+                summary.continuation_fetches += 1
             if result.truncated:
                 summary.truncated_windows += 1
 
@@ -301,15 +316,54 @@ class BackfillRunner:
             summary.rows_raw_inserted += inserted
             summary.events_upserted += upserted
 
-            # Advance cursor. Truncation → next window starts at the last
-            # returned Date (inclusive); overlap row de-dups on content
-            # hash. When the response fits, advance past window.end.
+            # Advance cursor. On truncation, next_cursor is the last Date
+            # returned (inclusive) so a later invocation can resume there;
+            # and within THIS call we enqueue a continuation covering
+            # [last_date, window.end] — including the `last_date == end`
+            # boundary case, since a capped response may have dropped
+            # extra rows on the end date itself. Raw rows dedup on
+            # (provider, eid, content_hash) so the overlap at last_date
+            # is a cheap no-op.
             if result.truncated and event_records:
                 last_date_str = event_records[-1].event_time_utc[:10]
                 try:
-                    next_cursor = date.fromisoformat(last_date_str)
+                    last_date = date.fromisoformat(last_date_str)
                 except ValueError:
-                    next_cursor = window.end + timedelta(days=1)
+                    last_date = window.end
+                # Clamp: a well-behaved TE response never returns a Date
+                # beyond the requested window end, but belt-and-braces.
+                if last_date > window.end:
+                    last_date = window.end
+                if last_date > window.start:
+                    # Normal truncation: enqueue [last_date, window.end].
+                    # Raw content-hash dedup absorbs the last_date overlap.
+                    next_cursor = last_date
+                    pending.appendleft((
+                        Window(phase=window.phase, start=last_date, end=window.end),
+                        True,
+                    ))
+                else:
+                    # Pathological: 1000+ rows all on window.start. The
+                    # /calendar/country/All endpoint can't page finer than
+                    # a date, so rows past the cap on that single date are
+                    # unrecoverable here (the reconciler + /calendarid can
+                    # pick them up later if they carry a LastUpdate). But
+                    # we must not stall on the dense day: advance cursor
+                    # past it and enqueue the remaining tail, otherwise
+                    # every later invocation re-fetches the same dense
+                    # day and the rest of the window stays unfetched.
+                    abandon_from = window.start + timedelta(days=1)
+                    logger.warning(
+                        "truncation with no cursor progress at %s; "
+                        "abandoning rows past cap on that day, continuing %s..%s",
+                        window.start, abandon_from, window.end,
+                    )
+                    next_cursor = abandon_from
+                    if abandon_from <= window.end:
+                        pending.appendleft((
+                            Window(phase=window.phase, start=abandon_from, end=window.end),
+                            True,
+                        ))
             else:
                 next_cursor = window.end + timedelta(days=1)
 

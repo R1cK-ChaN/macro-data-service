@@ -397,6 +397,201 @@ def test_phase_end_marks_is_complete_when_cursor_passes_phase_boundary(
 
 
 @respx.mock
+def test_backfill_runner_refetches_truncated_tail_in_session(
+    store: SQLiteEngineStore, monkeypatch
+) -> None:
+    """When TE truncates a response at the 1000-row cap, the runner must
+    enqueue a continuation covering [last_date, window.end] **in the same
+    session**. Before this fix the runner saved the truncation cursor but
+    then advanced to the next planned window, leaving the tail missing
+    until a later invocation rewound — and if the final window advanced
+    past the phase end, the tail was lost for good (observed on the P2
+    2016-2022 backfill: 58 truncated windows → 255 missing days / 51
+    consecutive-day runs in `cal_econ_event`)."""
+    monkeypatch.setenv("TE_API_KEY", "unit:test")
+
+    # First fetch: 1000 rows clustered on 2026-04-01 → 2026-04-05, triggering
+    # truncation at last_date=2026-04-05. Continuation should fetch from
+    # 2026-04-05 to 2026-04-10 and return 3 non-overlapping rows.
+    truncated_rows = [
+        _te_row(CalendarId=str(i), Date=f"2026-04-0{(i % 5) + 1}T00:00:00")
+        for i in range(1000)
+    ]
+    continuation_rows = [
+        _te_row(CalendarId=str(2000 + i), Date=f"2026-04-0{5 + i}T00:00:00")
+        for i in range(3)  # 2026-04-05..2026-04-07, rest in-range but empty upstream
+    ]
+
+    call_log: list[str] = []
+
+    def responder(request):
+        call_log.append(str(request.url))
+        if len(call_log) == 1:
+            return httpx.Response(200, json=truncated_rows)
+        return httpx.Response(200, json=continuation_rows)
+
+    respx.get(url__startswith="https://api.tradingeconomics.com/calendar/country/All").mock(
+        side_effect=responder
+    )
+
+    connection = store.get_connection()
+    try:
+        client = TEAPIClient(rate_limit_seconds=0, sleeper=lambda _s: None)
+        fixed_now = datetime(2026, 4, 20, 12, 0, 0, tzinfo=timezone.utc)
+        runner = BackfillRunner(
+            connection=connection,
+            client=client,
+            max_requests=5,
+            now_utc=lambda: fixed_now,
+        )
+        # Use a single 10-day window that covers the truncated tail.
+        summary = runner.run(
+            start=date(2026, 4, 1), end=date(2026, 4, 10), dry_run=False,
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    assert summary.windows_fetched == 2, "expected 1 original + 1 continuation"
+    assert summary.truncated_windows == 1
+    assert summary.continuation_fetches == 1
+    assert summary.requests_spent == 2
+    # Continuation URL must start at last_date=2026-04-05 (inclusive overlap).
+    assert "/calendar/country/All/2026-04-05/2026-04-10" in call_log[1]
+    # Progress guard — if the continuation also truncates at last_date
+    # equal to its own start, no further enqueue. Validated implicitly
+    # here because we only returned 2 responses.
+
+
+@respx.mock
+def test_backfill_runner_refetches_tail_when_cap_lands_on_window_end(
+    store: SQLiteEngineStore, monkeypatch
+) -> None:
+    """Boundary case surfaced by Codex review of the P7 truncation fix:
+    if the 1000th row's Date equals `window.end`, extra rows on that
+    same end date may still have been truncated. Without a continuation
+    for the `last_date == window.end` branch, the next planned window
+    starts at `end + 1` and the dense end-date tail is silently lost —
+    same silent-loss class the deque-enqueue was meant to close."""
+    monkeypatch.setenv("TE_API_KEY", "unit:test")
+    # All 1000 rows spread across 2026-04-01..2026-04-05 with the 1000th
+    # row on the window boundary date.
+    truncated_rows = [
+        _te_row(CalendarId=str(i), Date=f"2026-04-0{(i // 200) + 1}T00:00:00")
+        for i in range(1000)
+    ]
+    # Continuation should fetch [2026-04-05, 2026-04-05] and return
+    # the previously-dropped end-date rows.
+    continuation_rows = [
+        _te_row(CalendarId=str(2000 + i), Date="2026-04-05T12:00:00")
+        for i in range(3)
+    ]
+
+    call_log: list[str] = []
+    def responder(request):
+        call_log.append(str(request.url))
+        if len(call_log) == 1:
+            return httpx.Response(200, json=truncated_rows)
+        return httpx.Response(200, json=continuation_rows)
+
+    respx.get(url__startswith="https://api.tradingeconomics.com/calendar/country/All").mock(
+        side_effect=responder
+    )
+
+    connection = store.get_connection()
+    try:
+        client = TEAPIClient(rate_limit_seconds=0, sleeper=lambda _s: None)
+        runner = BackfillRunner(
+            connection=connection,
+            client=client,
+            max_requests=5,
+            now_utc=lambda: datetime(2026, 4, 20, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        summary = runner.run(
+            start=date(2026, 4, 1), end=date(2026, 4, 5), dry_run=False,
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    assert summary.windows_fetched == 2
+    assert summary.truncated_windows == 1
+    assert summary.continuation_fetches == 1
+    # The continuation must target exactly the boundary date, not [end+1, end].
+    assert "/calendar/country/All/2026-04-05/2026-04-05" in call_log[1]
+
+
+@respx.mock
+def test_backfill_runner_progress_guard_advances_past_pathological_day(
+    store: SQLiteEngineStore, monkeypatch
+) -> None:
+    """Pathological 1000+ rows on a single date (window.start) — the
+    /calendar/country/All endpoint can't page finer than a date, so the
+    rows past the cap on that day are unrecoverable via this path.
+    But the runner must not stall on it: cursor advances to
+    `window.start + 1` and the remaining tail is enqueued so the rest
+    of the window still gets fetched. Saving `cursor=window.start` here
+    would cause every later invocation to re-fetch the dense day and
+    never advance (surfaced by Codex round 2 on P7)."""
+    monkeypatch.setenv("TE_API_KEY", "unit:test")
+    # First fetch: 1000 rows all on 2026-04-01 (truncated, last_date ==
+    # window.start). Second fetch: tail [2026-04-02..2026-04-05] with 2
+    # normal rows so the runner cleanly advances past window.end.
+    dense_day_rows = [
+        _te_row(CalendarId=str(i), Date="2026-04-01T00:00:00") for i in range(1000)
+    ]
+    tail_rows = [
+        _te_row(CalendarId=str(5000 + i), Date=f"2026-04-0{3 + i}T00:00:00")
+        for i in range(2)
+    ]
+    call_log: list[str] = []
+    def responder(request):
+        call_log.append(str(request.url))
+        if len(call_log) == 1:
+            return httpx.Response(200, json=dense_day_rows)
+        return httpx.Response(200, json=tail_rows)
+    respx.get(url__startswith="https://api.tradingeconomics.com/calendar/country/All").mock(
+        side_effect=responder
+    )
+
+    connection = store.get_connection()
+    try:
+        client = TEAPIClient(rate_limit_seconds=0, sleeper=lambda _s: None)
+        runner = BackfillRunner(
+            connection=connection,
+            client=client,
+            max_requests=5,
+            now_utc=lambda: datetime(2026, 4, 20, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        summary = runner.run(
+            start=date(2026, 4, 1), end=date(2026, 4, 5), dry_run=False,
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    # Runner fetched the dense day + one tail continuation, then stopped.
+    assert summary.windows_fetched == 2
+    assert summary.continuation_fetches == 1
+    assert summary.truncated_windows == 1
+    # Tail continuation must start at window.start + 1, not window.start.
+    assert "/calendar/country/All/2026-04-02/2026-04-05" in call_log[1]
+
+    # Cursor must be past the dense day, not stuck on it — otherwise a
+    # later invocation would re-fetch the same 1000 rows and hit the
+    # same truncation on every retry.
+    connection = store.get_connection()
+    try:
+        cur_row = connection.execute(
+            "SELECT cursor_date FROM cal_backfill_cursor WHERE phase='p1_recent'"
+        ).fetchone()
+    finally:
+        connection.close()
+    assert cur_row is not None
+    assert date.fromisoformat(cur_row[0]) > date(2026, 4, 1)
+
+
+@respx.mock
 def test_backfill_runner_executes_and_advances_cursor(
     store: SQLiteEngineStore, monkeypatch
 ) -> None:
