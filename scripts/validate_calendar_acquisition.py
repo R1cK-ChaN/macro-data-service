@@ -32,7 +32,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import quote
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -42,6 +42,15 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from ingestion.calendar.te_api import TEAPIClient, parse_calendar_row  # noqa: E402
 from ingestion.calendar.te_api.client import TECallResult  # noqa: E402
 from ingestion.calendar.te_api.parser import ALL_TE_FIELDS, MUTABLE_FIELDS  # noqa: E402
+
+from ingestion.calendar.eodhd_api import (  # noqa: E402
+    EODHDAPIClient,
+    parse_dividend_row,
+    parse_earnings_row,
+    parse_ipo_row,
+    parse_split_row,
+    parse_trend_row,
+)
 
 
 # Fields the TE parser actively reads (grep parser.py — these are the
@@ -64,6 +73,70 @@ TE_UPDATES_POINTER_READS: frozenset[str] = frozenset({
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# EODHD parser-reads per subtype (grep src/ingestion/calendar/eodhd_api/
+# parser.py — these are the keys each parse_*_row function accesses or
+# hashes). Compared against the observed row to surface UNKNOWN_OBSERVED
+# (EODHD added a field we don't see) and MISSING_EXPECTED (our parser
+# reads something upstream didn't return).
+# ──────────────────────────────────────────────────────────────────────────
+
+EODHD_EARNINGS_READS: frozenset[str] = frozenset({
+    "code", "report_date", "date", "before_after_market",
+    "currency", "actual", "estimate", "difference", "percent",
+})
+
+EODHD_TREND_READS: frozenset[str] = frozenset({
+    "code", "date", "period", "growth",
+    "earningsEstimateAvg", "earningsEstimateLow", "earningsEstimateHigh",
+    "earningsEstimateYearAgoEps", "earningsEstimateNumberOfAnalysts",
+    "earningsEstimateGrowth",
+    "revenueEstimateAvg", "revenueEstimateLow", "revenueEstimateHigh",
+    "revenueEstimateYearAgoEps", "revenueEstimateNumberOfAnalysts",
+    "revenueEstimateGrowth",
+    "epsTrendCurrent", "epsTrend7daysAgo", "epsTrend30daysAgo",
+    "epsTrend60daysAgo", "epsTrend90daysAgo",
+    "epsRevisionsUpLast7days", "epsRevisionsUpLast30days",
+    "epsRevisionsDownLast30days",
+})
+
+EODHD_IPO_READS: frozenset[str] = frozenset({
+    "code", "name", "exchange", "currency",
+    "start_date", "filing_date", "amended_date",
+    "price_from", "price_to", "offer_price",
+    "shares", "deal_type",
+})
+
+EODHD_SPLIT_READS: frozenset[str] = frozenset({
+    "code", "split_date", "optionable", "old_shares", "new_shares",
+})
+
+# /calendar/dividends is discovery-only: (symbol, date) pairs, no
+# value/period/currency/declaration/record/payment dates. Validated
+# against live EODHD 2026-04-21 for AAPL.US and filter[date_eq]=<recent>.
+# Richer per-ticker dividend details live on /api/div/{TICKER} and are
+# not consumed by this parser.
+EODHD_DIVIDEND_READS: frozenset[str] = frozenset({
+    "symbol", "date",
+})
+
+EODHD_SUBTYPE_READS: dict[str, frozenset[str]] = {
+    "earnings":       EODHD_EARNINGS_READS,
+    "earnings_trend": EODHD_TREND_READS,
+    "ipo":            EODHD_IPO_READS,
+    "split":          EODHD_SPLIT_READS,
+    "dividend":       EODHD_DIVIDEND_READS,
+}
+
+EODHD_SUBTYPE_PARSERS: dict[str, Any] = {
+    "earnings":       parse_earnings_row,
+    "earnings_trend": parse_trend_row,
+    "ipo":            parse_ipo_row,
+    "split":          parse_split_row,
+    "dividend":       parse_dividend_row,
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Probe definitions
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -72,21 +145,21 @@ TE_UPDATES_POINTER_READS: frozenset[str] = frozenset({
 class Probe:
     """One planned upstream request.
 
-    ``row_extractor`` lets the updates probe extract the 4-field pointer
-    list; the all-calendar and calendarid probes just return the list
-    directly.
+    ``expected_fields`` differs per probe (TE pointer shape has fewer
+    fields than full; each EODHD subtype has its own read set).
+    ``params`` + ``rows_key`` + ``subtype`` are EODHD-only; TE probes
+    embed everything in ``path`` and ignore these.
     """
 
     name: str
     path: str
     description: str
     expected_shape: str  # human-readable
-    # Parser-reads set to compare against. Differs for /calendar/updates
-    # which legitimately returns fewer fields than /country/All.
     expected_fields: frozenset[str] = TE_PARSER_READS
-    row_extractor: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] = (
-        lambda rows: rows
-    )
+    # EODHD-only knobs.
+    params: dict[str, Any] = field(default_factory=dict)
+    rows_key: str = ""
+    subtype: str = ""
 
 
 def _today_iso() -> str:
@@ -303,6 +376,232 @@ def resolve_dynamic_ids(prior: list[ProbeResult]) -> list[str]:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# EODHD probe plan + runner
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _days_ahead_iso(n: int) -> str:
+    return (datetime.now(timezone.utc).date() + timedelta(days=n)).isoformat()
+
+
+def plan_eodhd_probes() -> list[Probe]:
+    """Eight probes covering all five corporate subtypes.
+
+    Two dividend variants exercise the ``filter[symbol]`` vs
+    ``filter[date_eq]`` paths, and two trend variants confirm whether
+    ``/calendar/trends`` really returns ``[[...]]`` for multi-symbol
+    requests (and what it does for a single-symbol request).
+    """
+    today = _today_iso()
+    week_ahead = _days_ahead_iso(7)
+    month_ahead = _days_ahead_iso(30)
+    week_ago = _days_ago_iso(7)
+    yesterday = _days_ago_iso(1)
+    return [
+        Probe(
+            name="earnings_date_window",
+            path="/api/calendar/earnings",
+            description="earnings shape over a week-ahead window",
+            expected_shape="{earnings: [row, row, ...]}",
+            params={"from": today, "to": week_ahead},
+            rows_key="earnings",
+            subtype="earnings",
+            expected_fields=EODHD_EARNINGS_READS,
+        ),
+        Probe(
+            name="earnings_symbols",
+            path="/api/calendar/earnings",
+            description="earnings scoped to AAPL.US + MSFT.US",
+            expected_shape="{earnings: [row, row, ...]}",
+            params={"symbols": "AAPL.US,MSFT.US"},
+            rows_key="earnings",
+            subtype="earnings",
+            expected_fields=EODHD_EARNINGS_READS,
+        ),
+        Probe(
+            name="ipos_date_window",
+            path="/api/calendar/ipos",
+            description="IPO shape + deal_type vocabulary over 30-day window",
+            expected_shape="{ipos: [row, row, ...]}",
+            params={"from": today, "to": month_ahead},
+            rows_key="ipos",
+            subtype="ipo",
+            expected_fields=EODHD_IPO_READS,
+        ),
+        Probe(
+            name="splits_date_window",
+            path="/api/calendar/splits",
+            description="split shape over 30-day window",
+            expected_shape="{splits: [row, row, ...]}",
+            params={"from": today, "to": month_ahead},
+            rows_key="splits",
+            subtype="split",
+            expected_fields=EODHD_SPLIT_READS,
+        ),
+        Probe(
+            name="dividends_symbol_filter",
+            path="/api/calendar/dividends",
+            description="dividend shape under filter[symbol] — JSON:API envelope",
+            expected_shape="{meta, data: [row, row, ...], links}",
+            params={"filter[symbol]": "AAPL.US"},
+            rows_key="data",
+            subtype="dividend",
+            expected_fields=EODHD_DIVIDEND_READS,
+        ),
+        Probe(
+            name="dividends_date_eq_filter",
+            path="/api/calendar/dividends",
+            description="dividend shape under filter[date_eq]=<yesterday>",
+            expected_shape="{meta, data: [row, row, ...], links}",
+            params={"filter[date_eq]": yesterday},
+            rows_key="data",
+            subtype="dividend",
+            expected_fields=EODHD_DIVIDEND_READS,
+        ),
+        Probe(
+            name="trends_single_symbol",
+            path="/api/calendar/trends",
+            description="trend shape for 1 symbol — is outer list wrapped?",
+            expected_shape="{trends: [[row, ...]]} (or flat [row, ...] if single-symbol)",
+            params={"symbols": "AAPL.US"},
+            rows_key="trends",
+            subtype="earnings_trend",
+            expected_fields=EODHD_TREND_READS,
+        ),
+        Probe(
+            name="trends_multi_symbol",
+            path="/api/calendar/trends",
+            description="trend shape for 2 symbols — confirm [[…]] nesting",
+            expected_shape="{trends: [[row, ...], [row, ...]]}",
+            params={"symbols": "AAPL.US,MSFT.US"},
+            rows_key="trends",
+            subtype="earnings_trend",
+            expected_fields=EODHD_TREND_READS,
+        ),
+    ]
+
+
+# Enum-style fields tallied per subtype. Different subtypes have different
+# interesting vocabularies (deal_type for IPOs, period for dividends/
+# trends, before_after_market for earnings, etc.).
+EODHD_ENUM_FIELDS_BY_SUBTYPE: dict[str, tuple[str, ...]] = {
+    "earnings":       ("before_after_market", "currency"),
+    "earnings_trend": ("period",),
+    "ipo":            ("deal_type", "exchange", "currency"),
+    "split":          ("optionable",),
+    # /calendar/dividends is discovery-only (symbol/date) — no enum
+    # fields available on this feed. Period/currency live on
+    # /api/div/{TICKER}, to be added by a later slice.
+    "dividend":       (),
+}
+
+
+def _flatten_rows(rows: list[Any]) -> list[dict[str, Any]]:
+    """/calendar/trends responses wrap per-symbol row groups in lists;
+    every other endpoint returns a flat list. This flattens one level
+    without altering already-flat payloads."""
+    flat: list[dict[str, Any]] = []
+    for row in rows:
+        if isinstance(row, list):
+            flat.extend(r for r in row if isinstance(r, dict))
+        elif isinstance(row, dict):
+            flat.append(row)
+    return flat
+
+
+def diff_eodhd_row(row: dict[str, Any], expected_fields: frozenset[str]) -> RowDiff:
+    """Per-subtype field diff for an EODHD row.
+
+    ``expected_fields`` is the per-subtype EODHD_*_READS set. The union
+    of all subtype reads functions as the "known fields" reference so
+    UNKNOWN_OBSERVED only fires when upstream added something we've
+    never heard of in any subtype.
+    """
+    observed = set(row.keys())
+    known_any_subtype: frozenset[str] = frozenset().union(*EODHD_SUBTYPE_READS.values())
+    diff = RowDiff(
+        observed_fields=sorted(observed),
+        read_by_parser=sorted(observed & expected_fields),
+        ignored_by_parser=sorted((known_any_subtype & observed) - expected_fields),
+        unknown_observed=sorted(observed - known_any_subtype),
+        missing_expected=sorted(expected_fields - observed),
+    )
+
+    # Type spot-checks — nothing is P0 fatal, just surface surprises.
+    for numeric_field in ("actual", "estimate", "difference", "percent",
+                          "value", "unadjustedValue",
+                          "price_from", "price_to", "offer_price",
+                          "shares", "old_shares", "new_shares"):
+        v = row.get(numeric_field)
+        if v is not None and isinstance(v, str):
+            diff.type_warnings.append(
+                f"{numeric_field}={v!r} arrives as string — content_hash "
+                f"uses str(), so string↔number revisions flip the hash"
+            )
+    return diff
+
+
+def try_parse_eodhd(row: dict[str, Any], subtype: str) -> tuple[bool, str]:
+    parser = EODHD_SUBTYPE_PARSERS.get(subtype)
+    if parser is None:
+        return False, f"no parser registered for subtype={subtype!r}"
+    try:
+        raw, event = parser(row, snapshot_epoch_ms=1_700_000_000_000)
+        tag = getattr(event, "event_subtype", subtype)
+        return True, f"ok subtype={tag} event_id={raw.provider_event_id[:10]}…"
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def run_eodhd_probe(client: EODHDAPIClient, probe: Probe) -> ProbeResult:
+    result = ProbeResult(probe=probe, status="skipped")
+    result.request_path = f"{probe.path}?{_render_params(probe.params)}"
+
+    try:
+        call = client.get_rows(probe.path, params=probe.params, rows_key=probe.rows_key)
+    except Exception as exc:
+        result.status = "http_error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        return result
+
+    result.status = "ok"
+    result.http_elapsed_ms = call.elapsed_ms
+    # Client's `rows` may contain inner lists for /calendar/trends — flatten.
+    flat_rows = _flatten_rows(call.rows)
+    result.row_count = len(flat_rows)
+    if probe.subtype == "earnings_trend" and any(isinstance(r, list) for r in call.rows):
+        result.notes.append(f"trends payload wrapped [[…]] ({len(call.rows)} outer groups → {len(flat_rows)} rows)")
+
+    if flat_rows:
+        result.sample_row = flat_rows[0]
+        result.field_diff = diff_eodhd_row(flat_rows[0], probe.expected_fields)
+
+        enum_fields = EODHD_ENUM_FIELDS_BY_SUBTYPE.get(probe.subtype, ())
+        counters: dict[str, Counter] = {k: Counter() for k in enum_fields}
+        for row in flat_rows:
+            for key in enum_fields:
+                counters[key][repr(row.get(key))] += 1
+        result.enum_counters = counters
+
+        sample_n = min(10, len(flat_rows))
+        result.parse_attempts = sample_n
+        for row in flat_rows[:sample_n]:
+            ok, msg = try_parse_eodhd(row, probe.subtype)
+            if ok:
+                result.parse_successes += 1
+            else:
+                if len(result.parse_error_samples) < 3:
+                    result.parse_error_samples.append(msg)
+    return result
+
+
+def _render_params(params: dict[str, Any]) -> str:
+    if not params:
+        return ""
+    return "&".join(f"{k}={v}" for k, v in params.items())
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Report writer
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -311,10 +610,17 @@ def _json_pretty(obj: Any) -> str:
     return json.dumps(obj, indent=2, ensure_ascii=False, sort_keys=True, default=str)
 
 
-def render_report(results: list[ProbeResult], *, requests_spent: int) -> str:
+def render_report(
+    results: list[ProbeResult], *, requests_spent: int, provider: str,
+) -> str:
     today = datetime.now(timezone.utc).date().isoformat()
+    provider_label = {"te": "TE", "eodhd": "EODHD"}.get(provider, provider.upper())
+    budget_line = {
+        "te": "- TE basic-plan monthly cap: 1000",
+        "eodhd": "- EODHD All-in-One plan: per-call consumption (no tight cap)",
+    }.get(provider, f"- {provider_label} plan: unknown cap")
     lines: list[str] = [
-        f"# TE Calendar Acquisition Validation — {today}",
+        f"# {provider_label} Calendar Acquisition Validation — {today}",
         "",
         "Scope: verifies the **acquisition** step only (fetch + parse).",
         "Storage and downstream API are under our control and may be "
@@ -323,7 +629,7 @@ def render_report(results: list[ProbeResult], *, requests_spent: int) -> str:
         "## Budget",
         "",
         f"- Requests spent this run: **{requests_spent}**",
-        f"- TE basic-plan monthly cap: 1000",
+        budget_line,
         f"- Probes planned: {len(results)} / executed: {sum(1 for r in results if r.status == 'ok')}",
         "",
         "## Probes",
@@ -451,8 +757,8 @@ def _fmt_field_list(fields: list[str]) -> str:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
-        "--provider", choices=["te"], default="te",
-        help="which acquisition lane to validate (EODHD will ship as a follow-up)",
+        "--provider", choices=["te", "eodhd"], default="te",
+        help="which acquisition lane to validate",
     )
     ap.add_argument(
         "--execute", action="store_true",
@@ -481,14 +787,15 @@ def confirm_budget(probes: list[Probe]) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    probes = plan_te_probes()
+    probes = plan_te_probes() if args.provider == "te" else plan_eodhd_probes()
 
     if not args.execute:
-        print("DRY RUN — pass --execute to actually hit upstream.")
+        print(f"DRY RUN ({args.provider}) — pass --execute to actually hit upstream.")
         print()
         for i, p in enumerate(probes, 1):
             print(f"{i}. {p.name}")
-            print(f"   path: {p.path}")
+            query = _render_params(p.params)
+            print(f"   path: {p.path}{'?' + query if query else ''}")
             print(f"   purpose: {p.description}")
             print(f"   expected shape: {p.expected_shape}")
         print()
@@ -500,22 +807,34 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     results: list[ProbeResult] = []
-    with TEAPIClient() as client:
-        for probe in probes:
-            if probe.name == "calendarid_rehydrate":
-                dynamic_ids = resolve_dynamic_ids(results)
-                result = run_probe(client, probe, dynamic_ids=dynamic_ids)
-            else:
-                result = run_probe(client, probe)
-            results.append(result)
-            _print_probe_summary(result)
+    if args.provider == "te":
+        with TEAPIClient() as client:
+            for probe in probes:
+                if probe.name == "calendarid_rehydrate":
+                    dynamic_ids = resolve_dynamic_ids(results)
+                    result = run_probe(client, probe, dynamic_ids=dynamic_ids)
+                else:
+                    result = run_probe(client, probe)
+                results.append(result)
+                _print_probe_summary(result)
+    else:
+        with EODHDAPIClient() as client:
+            for probe in probes:
+                result = run_eodhd_probe(client, probe)
+                results.append(result)
+                _print_probe_summary(result)
 
-    report = render_report(results, requests_spent=sum(
-        1 for r in results if r.status == "ok"
-    ))
+    report = render_report(
+        results,
+        requests_spent=sum(1 for r in results if r.status == "ok"),
+        provider=args.provider,
+    )
     report_dir = Path(args.report_dir)
     report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / f"calendar_acquisition_te_{datetime.now(timezone.utc).date().isoformat()}.md"
+    report_path = report_dir / (
+        f"calendar_acquisition_{args.provider}_"
+        f"{datetime.now(timezone.utc).date().isoformat()}.md"
+    )
     report_path.write_text(report, encoding="utf-8")
     print()
     print(f"Report written: {report_path}")

@@ -51,6 +51,11 @@ class _SubtypeSpec:
     date_scoped: bool
     accepts_symbols: bool
     date_params: tuple[str, str] | None = None  # (from_param, to_param)
+    # Most endpoints take ``symbols=A,B,C`` in one request; dividends use
+    # the JSON:API-style ``filter[symbol]=A`` which is singular and
+    # forces one request per symbol.
+    symbols_param: str = "symbols"
+    one_symbol_per_request: bool = False
 
 
 _EARNINGS = _SubtypeSpec(
@@ -84,6 +89,8 @@ _DIVIDEND = _SubtypeSpec(
     date_scoped=True,
     accepts_symbols=True,
     date_params=("filter[date_from]", "filter[date_to]"),
+    symbols_param="filter[symbol]",
+    one_symbol_per_request=True,
 )
 _TREND = _SubtypeSpec(
     path="/api/calendar/trends",
@@ -177,36 +184,53 @@ class CorpCalendarFetcher:
             summary.stopped_reason = "dry_run"
             return summary
 
+        # Fail fast: trends is symbol-mandatory upstream, no point iterating
+        # windows when we'd just error on every request.
+        if subtype == "earnings_trend" and not symbols_list:
+            summary.stopped_reason = "symbols_required_for_earnings_trend"
+            return summary
+
+        # /calendar/dividends accepts `filter[symbol]=X` which is singular —
+        # multiple symbols require multiple requests. Every other endpoint
+        # batches into a single comma-separated `symbols=A,B,C` param.
+        if spec.accepts_symbols and symbols_list:
+            if spec.one_symbol_per_request:
+                symbol_groups: list[list[str]] = [[s] for s in symbols_list]
+            else:
+                symbol_groups = [symbols_list]
+        else:
+            symbol_groups = [[]]  # one pass with no symbol filter
+
         # Execution ----------------------------------------------------------
         snapshot_ms = int(self._now_utc().timestamp() * 1000)
         for window_start, window_end in windows:
             if summary.requests_spent >= self._max_requests:
                 summary.stopped_reason = "max_requests_reached"
                 break
+            for symbols_subset in symbol_groups:
+                if summary.requests_spent >= self._max_requests:
+                    summary.stopped_reason = "max_requests_reached"
+                    break
 
-            params: dict[str, Any] = {}
-            if spec.date_scoped and window_start is not None and window_end is not None:
-                assert spec.date_params is not None
-                from_param, to_param = spec.date_params
-                params[from_param] = window_start.isoformat()
-                params[to_param] = window_end.isoformat()
-            if spec.accepts_symbols and symbols_list:
-                params["symbols"] = ",".join(symbols_list)
-            if subtype == "earnings_trend" and not symbols_list:
-                # Trends is symbol-mandatory upstream; a missing symbols
-                # list would error from EODHD. Fail fast with a clear
-                # reason so callers see the misconfiguration.
-                summary.stopped_reason = "symbols_required_for_earnings_trend"
+                params: dict[str, Any] = {}
+                if spec.date_scoped and window_start is not None and window_end is not None:
+                    assert spec.date_params is not None
+                    from_param, to_param = spec.date_params
+                    params[from_param] = window_start.isoformat()
+                    params[to_param] = window_end.isoformat()
+                if symbols_subset:
+                    params[spec.symbols_param] = ",".join(symbols_subset)
+
+                try:
+                    result = self._client.get_rows(spec.path, params=params, rows_key=spec.rows_key)
+                except EODHDThrottled as exc:
+                    summary.stopped_reason = f"throttled:{exc}"
+                    break
+                summary.requests_spent += 1
+
+                self._persist(spec, result, snapshot_ms=snapshot_ms, summary=summary)
+            if summary.stopped_reason:
                 break
-
-            try:
-                result = self._client.get_rows(spec.path, params=params, rows_key=spec.rows_key)
-            except EODHDThrottled as exc:
-                summary.stopped_reason = f"throttled:{exc}"
-                break
-            summary.requests_spent += 1
-
-            self._persist(spec, result, snapshot_ms=snapshot_ms, summary=summary)
 
         if not summary.stopped_reason:
             summary.stopped_reason = "completed"

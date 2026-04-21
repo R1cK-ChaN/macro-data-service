@@ -65,8 +65,13 @@ _SPLIT_MUTABLE: frozenset[str] = frozenset({
     "split_date", "old_shares", "new_shares", "optionable",
 })
 _DIVIDEND_MUTABLE: frozenset[str] = frozenset({
-    "date", "declaration_date", "record_date", "payment_date",
-    "value", "unadjustedValue", "period", "currency",
+    # /api/calendar/dividends is a discovery-only feed: rows carry just
+    # ``symbol`` + ``date`` (ex-dividend) — no value, period, or
+    # declaration/record/payment dates. The extended fields live on the
+    # per-ticker ``/api/div/{TICKER}.{EXCHANGE}`` endpoint and will be
+    # wired by a later slice. The only mutable field on the calendar
+    # feed itself is ``date`` (an upstream ex-date correction).
+    "date",
 })
 
 
@@ -486,28 +491,32 @@ def parse_dividend_row(
 ) -> tuple[CalendarCorpRawRecord, CalendarCorpEventRecord]:
     """Map a ``/calendar/dividends`` row.
 
-    EODHD's dividend calendar uses ``date`` as the ex-dividend date and
-    wraps rows in a JSON:API-ish envelope (accessed via the ``symbol``
-    key rather than ``code`` — :func:`_require_code` handles both).
-    ``period`` enters the subtype_key so special dividends ("Special",
-    "Others") don't collide with the next regular "Quarterly" row.
+    EODHD's calendar dividends feed is *discovery-only*: each row is
+    ``{"symbol": "...", "date": "YYYY-MM-DD"}`` (the date is the
+    ex-dividend date). There is no value, period, currency, or
+    declaration/record/payment dates — those fields live on
+    ``/api/div/{TICKER}.{EXCHANGE}`` and will be wired by a later slice.
+
+    Identity is ``(symbol, date)`` — the (symbol, ex-date) tuple is
+    naturally unique for a single dividend event. The ``subtype_key``
+    stays empty because ``period`` isn't available on this feed.
+
+    :func:`_require_code` accepts both ``code`` and ``symbol`` so the
+    same parser works if EODHD later harmonises the key name.
     """
     code = _require_code(row)
     ticker, exchange = _split_code(code)
     ex_date = str(row.get("date") or "").strip()
     if not ex_date:
         raise ValueError("EODHD dividend row missing date")
-    period = str(row.get("period") or "").strip()
 
     provider_event_id = synthesize_provider_event_id(
-        subtype="dividend", code=code, primary_date=ex_date, subtype_key=period,
+        subtype="dividend", code=code, primary_date=ex_date, subtype_key="",
     )
     content_hash = _content_hash_for_fields(row, _DIVIDEND_MUTABLE)
     observed = observed_at_epoch_ms if observed_at_epoch_ms is not None else snapshot_epoch_ms
 
     title = f"{ticker} dividend" if ticker else "dividend"
-    if period:
-        title = f"{title} ({period})"
 
     event = CalendarCorpEventRecord(
         provider=PROVIDER,
@@ -517,10 +526,12 @@ def parse_dividend_row(
         event_time_precision="date",
         ticker=ticker,
         exchange=exchange,
-        currency=str(row.get("currency") or ""),
+        # Calendar feed doesn't carry currency — left empty; populated
+        # later when the per-ticker /api/div endpoint is integrated.
+        currency="",
         currency_reporting="",
         title=title,
-        reference_date=_opt_str(row.get("record_date") or row.get("payment_date")),
+        reference_date=None,
         source_url="",
         content_hash=content_hash,
         payload_json=_stable_json(row),

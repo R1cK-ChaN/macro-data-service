@@ -62,6 +62,13 @@ Service operation:
 Defaults to dry-run. `earnings_trend` requires `symbols` because EODHD's
 `/calendar/trends` endpoint is symbol-scoped only.
 
+The dividend parser targets EODHD's calendar feed, which is **discovery-only**:
+each row is `(symbol, ex-dividend-date)` with no value, period, currency, or
+declaration/record/payment dates. Those richer fields live on the per-ticker
+`/api/div/{TICKER}.{EXCHANGE}` endpoint and will be integrated by a later
+slice. Validated against live EODHD on 2026-04-21 (see
+`docs/validation/calendar_acquisition_eodhd_2026-04-21.md`).
+
 ### Forward Calendar Data
 
 Forward data should come from official publishers. This lane should resolve

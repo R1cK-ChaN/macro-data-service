@@ -120,18 +120,15 @@ def _split_row(**overrides):
 
 
 def _dividend_row(**overrides):
-    # EODHD's dividends endpoint uses ``symbol`` (JSON:API-style) —
-    # exercise the code/symbol fallback here.
+    # /calendar/dividends is discovery-only — rows are just (symbol, date).
+    # Validated against live EODHD on 2026-04-21 for AAPL.US / filter[date_eq]:
+    # no value, period, currency, or declaration/record/payment fields
+    # arrived even for major US tickers. EODHD's blog on the "extended"
+    # dividend fields refers to the per-ticker /api/div/{TICKER} endpoint,
+    # not to this calendar feed.
     base = {
         "symbol": "MSFT.US",
         "date": "2026-05-15",
-        "declaration_date": "2026-04-20",
-        "record_date": "2026-05-16",
-        "payment_date": "2026-06-12",
-        "value": 0.75,
-        "unadjustedValue": 0.75,
-        "period": "Quarterly",
-        "currency": "USD",
     }
     base.update(overrides)
     return base
@@ -267,15 +264,34 @@ def test_split_ratio_encoded_in_id() -> None:
     assert ev_a.provider_event_id != ev_b.provider_event_id
 
 
-def test_dividend_uses_symbol_fallback() -> None:
-    row = _dividend_row()  # uses "symbol" not "code"
-    raw, event = parse_dividend_row(row, snapshot_epoch_ms=1)
+def test_dividend_parses_discovery_only_shape() -> None:
+    """Live EODHD /calendar/dividends returns just {symbol, date} — no
+    value/period/currency/declaration/record/payment dates. The parser
+    must accept that minimal shape without raising, and the resulting
+    event row must leave currency/reference_date empty (the richer
+    fields are sourced from /api/div/{TICKER} in a follow-up slice)."""
+    row = _dividend_row()
+    _raw, event = parse_dividend_row(row, snapshot_epoch_ms=1)
     assert event.ticker == "MSFT"
     assert event.exchange == "US"
     assert event.event_time_utc == "2026-05-15"
     assert event.event_subtype == "dividend"
-    # reference_date prefers record_date over payment_date
-    assert event.reference_date == "2026-05-16"
+    assert event.currency == ""
+    assert event.reference_date is None
+
+
+def test_dividend_id_stable_for_symbol_date_pair() -> None:
+    """(symbol, date) is the natural key for a dividend calendar entry.
+    Two identical rows produce the same provider_event_id; changing
+    either component forks it."""
+    a = _dividend_row(symbol="AAPL.US", date="2026-02-09")
+    b = _dividend_row(symbol="AAPL.US", date="2026-02-09")
+    c = _dividend_row(symbol="AAPL.US", date="2026-05-15")  # different date
+    _, ev_a = parse_dividend_row(a, snapshot_epoch_ms=1)
+    _, ev_b = parse_dividend_row(b, snapshot_epoch_ms=1)
+    _, ev_c = parse_dividend_row(c, snapshot_epoch_ms=1)
+    assert ev_a.provider_event_id == ev_b.provider_event_id
+    assert ev_a.provider_event_id != ev_c.provider_event_id
 
 
 def test_synthesize_provider_event_id_is_deterministic() -> None:
@@ -566,6 +582,57 @@ def test_fetcher_trend_flattens_nested_payload(
     assert summary.rows_raw_inserted == 3
     assert summary.events_upserted == 3
     assert summary.stopped_reason == "completed"
+
+
+@respx.mock
+def test_fetcher_dividend_symbols_route_through_filter_param(
+    store: SQLiteEngineStore, monkeypatch
+) -> None:
+    """EODHD's /calendar/dividends uses ``filter[symbol]=X`` (singular) —
+    not the generic ``symbols=A,B`` param. The fetcher must issue one
+    request per symbol for dividends; otherwise the symbol filter is
+    silently ignored and the caller gets the whole date range."""
+    monkeypatch.setenv("EODHD_API_KEY", "unit")
+    captured_params: list[dict[str, str]] = []
+
+    def _record(request):
+        captured_params.append(dict(request.url.params))
+        return httpx.Response(
+            200,
+            json={"meta": {"total": 1, "offset": 0, "limit": 1000},
+                  "data": [_dividend_row()],
+                  "links": {"next": None}},
+        )
+
+    respx.get(url__startswith="https://eodhd.com/api/calendar/dividends").mock(
+        side_effect=_record
+    )
+    connection = store.get_connection()
+    try:
+        client = EODHDAPIClient(sleeper=lambda _s: None)
+        fetcher = CorpCalendarFetcher(
+            connection=connection, client=client, window_days=30,
+        )
+        summary = fetcher.fetch(
+            subtype="dividend",
+            start=date(2026, 5, 1),
+            end=date(2026, 5, 3),
+            symbols=["AAPL.US", "MSFT.US"],
+            dry_run=False,
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    # Two symbols → two requests, each carrying filter[symbol]=<one>.
+    assert summary.requests_spent == 2
+    assert len(captured_params) == 2
+    seen_symbols = {p.get("filter[symbol]") for p in captured_params}
+    assert seen_symbols == {"AAPL.US", "MSFT.US"}
+    # The generic `symbols` param must NOT appear — that's the bug this
+    # test locks against.
+    for p in captured_params:
+        assert "symbols" not in p
 
 
 def test_fetcher_trend_requires_symbols(store: SQLiteEngineStore) -> None:
