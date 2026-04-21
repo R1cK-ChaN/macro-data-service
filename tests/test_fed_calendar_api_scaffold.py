@@ -59,13 +59,23 @@ def _fixture_html(name: str) -> str:
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def test_registry_ships_single_anchor() -> None:
-    assert set(INDICATOR_REGISTRY.keys()) == {"FOMC_RATE"}
+def test_registry_keeps_fomc_rate_anchor() -> None:
+    """FOMC_RATE is still in the registry after P4a — we only added
+    new indicators for the releasedates.htm surface, we didn't
+    remove or rename the original anchor."""
+    assert "FOMC_RATE" in INDICATOR_REGISTRY
     spec = INDICATOR_REGISTRY["FOMC_RATE"]
     assert spec.country_code == "US"
     assert spec.importance == "high"
     assert spec.unit == "percent"
     assert "FOMC" in spec.title
+
+
+def test_registry_includes_p4a_additions() -> None:
+    """P4a adds three releasedates-surface indicators."""
+    assert {"BEIGE_BOOK", "FED_H41", "FED_H8"} <= set(
+        INDICATOR_REGISTRY.keys()
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -410,7 +420,10 @@ def test_fetch_dry_run_returns_indicator_plan(store: SQLiteEngineStore) -> None:
     with store._connection(commit=False) as conn:
         summary = fetch_fed_calendar(conn, dry_run=True)
     assert summary.dry_run is True
-    assert summary.indicators_planned == list(INDICATOR_REGISTRY.keys())
+    # FOMC scraper owns FOMC_RATE only; the P4a releasedates-surface
+    # indicators (BEIGE_BOOK / FED_H41 / FED_H8) ship via
+    # ``fetch_fed_releasedates``, not here.
+    assert summary.indicators_planned == ["FOMC_RATE"]
     assert summary.meetings_parsed == 0
 
 

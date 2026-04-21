@@ -52,4 +52,37 @@ INDICATOR_REGISTRY: dict[str, FedIndicatorSpec] = {
         importance="high",
         category="Monetary Policy",
     ),
+    # ── P4a: releasedates.htm additions ────────────────────────────
+    # Beige Book: narrative summary of regional economic conditions,
+    # ~8 per year, 2 weeks before each FOMC meeting at 14:00 ET.
+    "BEIGE_BOOK": FedIndicatorSpec(
+        indicator="Beige Book",
+        country_code="US",
+        title="Beige Book",
+        unit="event",
+        importance="high",
+        category="Monetary Policy",
+    ),
+    # H.4.1 — Factors Affecting Reserve Balances, weekly (Thursdays)
+    # at 16:30 ET. Traders watch the balance-sheet line items for
+    # Fed liquidity posture.
+    "FED_H41": FedIndicatorSpec(
+        indicator="H.4.1",
+        country_code="US",
+        title="H.4.1 — Factors Affecting Reserve Balances",
+        unit="event",
+        importance="medium",
+        category="Monetary Policy",
+    ),
+    # H.8 — Assets and Liabilities of Commercial Banks in the United
+    # States, weekly (Fridays) at 16:15 ET. Less market-moving than
+    # H.4.1 but carried on the same releasedates page.
+    "FED_H8": FedIndicatorSpec(
+        indicator="H.8",
+        country_code="US",
+        title="H.8 — Assets and Liabilities of Commercial Banks",
+        unit="event",
+        importance="low",
+        category="Monetary Policy",
+    ),
 }
