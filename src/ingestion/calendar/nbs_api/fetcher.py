@@ -34,6 +34,8 @@ from .parser import (
 from .projector import project_events, store_raw
 from .scraper import (
     NBSCalendarParseError,
+    discover_nbs_calendar_url,
+    fetch_nbs_calendar_index_html,
     fetch_nbs_yearly_calendar_html,
     parse_nbs_calendar_html,
 )
@@ -52,19 +54,21 @@ class FetchRunSummary:
     entries_parsed: int = 0
     rows_raw_inserted: int = 0
     events_upserted: int = 0
+    url_auto_discovered: bool = False
     wall_seconds: float = 0.0
 
 
 def fetch_nbs_calendar(
     connection: sqlite3.Connection,
     *,
-    calendar_url: str,
+    calendar_url: str | None = None,
     year: int | None = None,
     dry_run: bool = True,
     snapshot_epoch_ms: int | None = None,
     html_fetcher: Callable[[str], str] | None = None,
+    index_fetcher: Callable[..., str] | None = None,
 ) -> FetchRunSummary:
-    """Scrape a specific NBS yearly-calendar article and project rows.
+    """Scrape an NBS yearly-calendar article and project rows.
 
     Parameters
     ----------
@@ -72,12 +76,16 @@ def fetch_nbs_calendar(
         Open SQLite connection. Caller manages commit / rollback.
     calendar_url:
         Absolute URL of the NBS yearly-calendar article
-        (``.../ReleaseCalendar/YYYYMM/tYYYYMMDD_N.html``). Required
-        — the scraper does not auto-discover the current year's
-        article. Stored on every event's ``source_url``.
+        (``.../ReleaseCalendar/YYYYMM/tYYYYMMDD_N.html``). When
+        ``None`` (the P5a default path), the fetcher hits the
+        release-calendar index page at
+        :data:`NBS_CALENDAR_INDEX_URL`, finds the link for ``year``
+        (or the current calendar year), and uses that. Still
+        overridable for ad-hoc historical scrapes.
     year:
-        Optional year override fed to the parser. When omitted, the
-        parser reads the year from the article title.
+        Year used for index-page resolution when ``calendar_url`` is
+        ``None``. Also fed to the parser as ``year_override``; when
+        ``None`` the parser reads the year from the article title.
     dry_run:
         When ``True`` (default) no HTTP call is made and no row is
         written; the returned summary shows the indicator plan only.
@@ -86,11 +94,15 @@ def fetch_nbs_calendar(
     html_fetcher:
         Test seam — when supplied, called with ``calendar_url`` in
         place of :func:`scraper.fetch_nbs_yearly_calendar_html`.
+    index_fetcher:
+        Test seam for the index-page fetch (used by the
+        auto-discovery path). When supplied, called in place of
+        :func:`scraper.fetch_nbs_calendar_index_html`.
     """
     started = time.monotonic()
     summary = FetchRunSummary(
         indicators_planned=list(INDICATOR_REGISTRY.keys()),
-        calendar_url=calendar_url,
+        calendar_url=calendar_url or "",
         year=year,
         dry_run=dry_run,
     )
@@ -101,6 +113,21 @@ def fetch_nbs_calendar(
     snapshot = snapshot_epoch_ms or int(
         datetime.now(timezone.utc).timestamp() * 1000
     )
+
+    # Auto-discover URL when caller didn't supply one. The index-page
+    # lookup needs a concrete year; fall back to the current UTC year
+    # when the caller didn't set ``year`` explicitly. Callers who
+    # already know the article URL (ad-hoc historical fetch) skip the
+    # index entirely and spend only the one article request.
+    if not calendar_url:
+        resolved_index_fetcher = index_fetcher or fetch_nbs_calendar_index_html
+        discovery_year = year or datetime.now(timezone.utc).year
+        calendar_url = discover_nbs_calendar_url(
+            discovery_year,
+            index_fetcher=resolved_index_fetcher,
+        )
+        summary.calendar_url = calendar_url
+        summary.url_auto_discovered = True
 
     fetcher = html_fetcher or (
         lambda url: fetch_nbs_yearly_calendar_html(url)

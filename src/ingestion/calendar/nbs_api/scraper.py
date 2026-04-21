@@ -46,8 +46,10 @@ from __future__ import annotations
 
 import logging
 import re
+import time as _time
 from datetime import date
 from typing import Iterable
+from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -269,8 +271,9 @@ def fetch_nbs_yearly_calendar_html(
 
     The caller supplies the full article URL (the release-calendar
     index at ``NBS_CALENDAR_INDEX_URL`` links to one article per
-    year). The scraper doesn't auto-discover the current year's URL
-    — that's a P5a concern once the shape is verified.
+    year). Use :func:`discover_nbs_calendar_url` to resolve the URL
+    automatically from the index when the caller doesn't already
+    know it.
     """
     owned_session = session is None
     s = session or requests.Session()
@@ -281,3 +284,107 @@ def fetch_nbs_yearly_calendar_html(
     finally:
         if owned_session:
             s.close()
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# P5a — yearly-calendar URL auto-discovery
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def parse_nbs_calendar_index(html: str, *, year: int) -> str | None:
+    """Return the yearly-calendar article URL for ``year``, or ``None``.
+
+    Walks every ``<a>`` on the release-calendar index page. A link is
+    a match when its text matches ``Calendar of NBS in <year>`` (case-
+    insensitive) and ``<year>`` equals the requested year. Relative
+    ``href`` values are resolved against :data:`NBS_CALENDAR_INDEX_URL`
+    so the caller receives an absolute URL.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for anchor in soup.find_all("a"):
+        text = anchor.get_text(" ", strip=True)
+        match = _YEAR_TITLE_RE.search(text)
+        if not match or int(match.group(1)) != year:
+            continue
+        href = (anchor.get("href") or "").strip()
+        if not href:
+            continue
+        return urljoin(NBS_CALENDAR_INDEX_URL, href)
+    return None
+
+
+def fetch_nbs_calendar_index_html(
+    *,
+    session: requests.Session | None = None,
+    timeout: float = 30.0,
+    retries: int = 2,
+    retry_delay: float = 2.0,
+    _sleep=_time.sleep,
+) -> str:
+    """GET the NBS release-calendar index page with retry.
+
+    stats.gov.cn is documented as the highest-risk upstream on this
+    issue: HTTP-only by default, HTML-fragile, frequent timeouts
+    from non-CN IPs. This helper retries on transient failures
+    (``requests.exceptions.RequestException``) — connection resets
+    and read timeouts are the common shape of the flakiness. The
+    caller manages the session (to re-use TCP connections across
+    retries when one is passed in).
+
+    ``_sleep`` is the seam tests inject to avoid real delays while
+    still exercising the retry loop.
+    """
+    attempts = max(1, retries + 1)
+    owned_session = session is None
+    s = session or requests.Session()
+    last_exc: Exception | None = None
+    try:
+        for attempt in range(attempts):
+            try:
+                response = s.get(
+                    NBS_CALENDAR_INDEX_URL,
+                    headers=_NBS_BROWSER_HEADERS,
+                    timeout=timeout,
+                )
+                response.raise_for_status()
+                return response.text
+            except requests.exceptions.RequestException as exc:
+                last_exc = exc
+                if attempt + 1 < attempts:
+                    logger.warning(
+                        "NBS index fetch attempt %d/%d failed: %s — retrying",
+                        attempt + 1, attempts, exc,
+                    )
+                    _sleep(retry_delay)
+                    continue
+        assert last_exc is not None
+        raise last_exc
+    finally:
+        if owned_session:
+            s.close()
+
+
+def discover_nbs_calendar_url(
+    year: int,
+    *,
+    session: requests.Session | None = None,
+    timeout: float = 30.0,
+    retries: int = 2,
+    index_fetcher=fetch_nbs_calendar_index_html,
+) -> str:
+    """Resolve the NBS yearly-calendar article URL for ``year``.
+
+    Fetches the release-calendar index page and matches the requested
+    year against the indexed articles. Raises :class:`NBSCalendarParseError`
+    when the year isn't on the index (either the article hasn't been
+    published yet or the link text drifted from the known shape).
+    """
+    html = index_fetcher(
+        session=session, timeout=timeout, retries=retries,
+    )
+    url = parse_nbs_calendar_index(html, year=year)
+    if url is None:
+        raise NBSCalendarParseError(
+            f"no NBS yearly-calendar article for {year} on the index page"
+        )
+    return url

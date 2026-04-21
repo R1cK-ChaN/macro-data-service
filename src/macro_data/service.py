@@ -1140,17 +1140,28 @@ class LocalMacroDataService:
         """Scrape an NBS yearly-calendar article into the calendar schema.
 
         Arguments:
-          calendar_url   — required in execute mode. Full URL of the
-                           NBS yearly-calendar article
-                           (``.../ReleaseCalendar/YYYYMM/tYYYYMMDD_N.html``).
+          calendar_url   — optional. Full URL of an NBS yearly-calendar
+                           article. Required unless ``auto_discover``
+                           is ``true``.
+          auto_discover  — default False. When ``true`` and
+                           ``calendar_url`` is omitted, the fetcher
+                           resolves the article URL for ``year`` (or
+                           the current UTC year) by scraping the NBS
+                           release-calendar index page. Explicit
+                           opt-in keeps accidental network calls out
+                           of caller loops that forgot to pass the
+                           URL.
           year           — optional integer year override; the parser
                            defaults to reading it from the article title.
+                           Used for index-page lookup when
+                           ``auto_discover`` is ``true``.
           dry_run        — default True. No HTTP, no DB writes.
 
-        Dry-run returns the indicator plan. Execute mode fetches the
-        named NBS calendar article once, parses the schedule table,
-        projects each scheduled release as a ``cal_econ_event`` row
-        with ``actual=NULL`` / ``event_time_precision='datetime'``.
+        Dry-run returns the indicator plan. Execute mode hits the URL
+        (or discovers it when ``auto_discover=true``), parses the
+        schedule table, and lands each scheduled release as a
+        ``cal_econ_event`` row with ``actual=NULL`` /
+        ``event_time_precision='datetime'``.
         """
         from ingestion.calendar.nbs_api import (
             INDICATOR_REGISTRY,
@@ -1158,7 +1169,8 @@ class LocalMacroDataService:
         )
 
         dry_run = bool(arguments.get("dry_run", True))
-        calendar_url = arguments.get("calendar_url") or ""
+        calendar_url = arguments.get("calendar_url") or None
+        auto_discover = bool(arguments.get("auto_discover", False))
         year_raw = arguments.get("year")
         try:
             year = int(year_raw) if year_raw is not None else None
@@ -1169,13 +1181,18 @@ class LocalMacroDataService:
             return {
                 "dry_run":            True,
                 "indicators_planned": list(INDICATOR_REGISTRY.keys()),
-                "calendar_url":       calendar_url,
+                "calendar_url":       calendar_url or "",
+                "auto_discover":      auto_discover,
                 "year":               year,
                 "stopped_reason":     "dry_run",
             }
 
-        if not calendar_url:
-            return {"error": "calendar_url is required in execute mode"}
+        if not calendar_url and not auto_discover:
+            return {
+                "error": (
+                    "calendar_url is required unless auto_discover=true"
+                ),
+            }
 
         get_conn = getattr(self._store, "get_connection", None)
         if not callable(get_conn):
@@ -1197,13 +1214,14 @@ class LocalMacroDataService:
             connection.close()
 
         return {
-            "dry_run":            False,
-            "indicators_planned": summary.indicators_planned,
-            "calendar_url":       summary.calendar_url,
-            "year":               summary.year,
-            "entries_parsed":     summary.entries_parsed,
-            "rows_raw_inserted":  summary.rows_raw_inserted,
-            "events_upserted":    summary.events_upserted,
+            "dry_run":              False,
+            "indicators_planned":   summary.indicators_planned,
+            "calendar_url":         summary.calendar_url,
+            "year":                 summary.year,
+            "url_auto_discovered":  summary.url_auto_discovered,
+            "entries_parsed":       summary.entries_parsed,
+            "rows_raw_inserted":    summary.rows_raw_inserted,
+            "events_upserted":      summary.events_upserted,
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
