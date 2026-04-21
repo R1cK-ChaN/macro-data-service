@@ -898,6 +898,63 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    def _op_calendar_econ_schedule_ecb(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape ECB press-calendar pages into ``cal_econ_event``.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+
+        Scrapes two ECB calendar surfaces in one run:
+        Governing Council monetary-policy meetings and Economic
+        Bulletin publications. Each lands as a schedule-only
+        indicator (``ECB Monetary Policy Decision`` / ``ECB
+        Economic Bulletin``) — distinct from the SDMX rate-level
+        rows because the SDMX lane carries the rate's effective
+        date, not the decision date. Schedule rows land with
+        ``actual=NULL`` / ``event_time_precision='datetime'``.
+
+        ``fetch_errors`` on the return dict surfaces per-page
+        upstream failures — one page failing doesn't stop the
+        other from landing.
+        """
+        from ingestion.calendar.ecb_api import schedule_ecb_calendar
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":        True,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = schedule_ecb_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":              False,
+            "mp_decision_entries":  summary.mp_decision_entries,
+            "bulletin_entries":     summary.bulletin_entries,
+            "entries_parsed":       summary.entries_parsed,
+            "rows_raw_inserted":    summary.rows_raw_inserted,
+            "events_upserted":      summary.events_upserted,
+            "row_issues":           summary.row_issues,
+            "fetch_errors":         summary.fetch_errors,
+            "wall_seconds":         round(summary.wall_seconds, 3),
+        }
+
     def _op_calendar_econ_fetch_fed(
         self, arguments: dict[str, Any],
     ) -> dict[str, Any]:

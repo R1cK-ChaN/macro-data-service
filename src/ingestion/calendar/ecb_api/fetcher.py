@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Iterable
 
+import requests
+
 from ingestion.timeseries.sdmx._types import SDMXObservation
 from ingestion.timeseries.sdmx.providers.ecb import ECBClient
 
@@ -35,6 +37,13 @@ from .parser import (
     parse_observation,
 )
 from .projector import project_events, store_raw
+from .schedule import (
+    fetch_bulletin_html,
+    fetch_gc_meetings_html,
+    parse_bulletin_html,
+    parse_gc_meetings_html,
+    schedule_entry_to_records,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +280,87 @@ def fetch_ecb_calendar(
             event_records.append(event_rec)
 
     summary.observations_seen = len(event_records)
+    summary.rows_raw_inserted = store_raw(connection, raw_records)
+    summary.events_upserted = project_events(connection, event_records)
+    summary.wall_seconds = time.monotonic() - started
+    return summary
+
+
+@dataclass
+class ScheduleRunSummary:
+    """Outcome of a single :func:`schedule_ecb_calendar` invocation."""
+
+    dry_run: bool = True
+    mp_decision_entries: int = 0
+    bulletin_entries: int = 0
+    entries_parsed: int = 0
+    rows_raw_inserted: int = 0
+    events_upserted: int = 0
+    # Per-row failures after page identification — e.g. a GC meeting
+    # row with a garbled time. Empty in happy path.
+    row_issues: list[str] = field(default_factory=list)
+    wall_seconds: float = 0.0
+    fetch_errors: dict[str, str] = field(default_factory=dict)
+
+
+def schedule_ecb_calendar(
+    connection: sqlite3.Connection,
+    *,
+    dry_run: bool = True,
+    session: "requests.Session | None" = None,
+    snapshot_epoch_ms: int | None = None,
+    gc_meetings_fetcher=fetch_gc_meetings_html,
+    bulletin_fetcher=fetch_bulletin_html,
+) -> ScheduleRunSummary:
+    """Scrape ECB's press-calendar pages and project to ``cal_econ_event``.
+
+    Emits schedule-only events under distinct indicators
+    (``ECB_MP_DECISION`` / ``ECB_BULLETIN``) — not merged with the
+    SDMX rate-level rows, which anchor on a different date (effective
+    vs decision). Schedule rows flow through
+    :func:`project_events` (full writer) because the schedule is the
+    sole writer for these indicators — same pattern as BEA P2a's GDP.
+
+    Fetch failures on either page are collected in ``fetch_errors``
+    and don't stop the run; the other page still lands.
+    """
+    started = time.monotonic()
+    summary = ScheduleRunSummary(dry_run=dry_run)
+    if dry_run:
+        summary.wall_seconds = time.monotonic() - started
+        return summary
+
+    snapshot = snapshot_epoch_ms or int(
+        datetime.now(timezone.utc).timestamp() * 1000
+    )
+
+    page_jobs = (
+        ("mp_decision", gc_meetings_fetcher, parse_gc_meetings_html),
+        ("bulletin",    bulletin_fetcher,    parse_bulletin_html),
+    )
+
+    raw_records: list[ECBCalendarRawRecord] = []
+    event_records: list[ECBCalendarEventRecord] = []
+    for kind, fetcher, parser in page_jobs:
+        try:
+            html = fetcher(session=session)
+            entries = parser(html, row_issues=summary.row_issues)
+        except Exception as exc:
+            logger.warning("ECB schedule fetch failed (%s): %s", kind, exc)
+            summary.fetch_errors[kind] = str(exc)
+            continue
+        for entry in entries:
+            raw_rec, event_rec = schedule_entry_to_records(
+                entry, snapshot_epoch_ms=snapshot,
+            )
+            raw_records.append(raw_rec)
+            event_records.append(event_rec)
+            if kind == "mp_decision":
+                summary.mp_decision_entries += 1
+            else:
+                summary.bulletin_entries += 1
+
+    summary.entries_parsed = len(event_records)
     summary.rows_raw_inserted = store_raw(connection, raw_records)
     summary.events_upserted = project_events(connection, event_records)
     summary.wall_seconds = time.monotonic() - started
