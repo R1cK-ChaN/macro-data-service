@@ -64,10 +64,16 @@ Defaults to dry-run. `earnings_trend` requires `symbols` because EODHD's
 
 The dividend parser targets EODHD's calendar feed, which is **discovery-only**:
 each row is `(symbol, ex-dividend-date)` with no value, period, currency, or
-declaration/record/payment dates. Those richer fields live on the per-ticker
-`/api/div/{TICKER}.{EXCHANGE}` endpoint and will be integrated by a later
-slice. Validated against live EODHD on 2026-04-21 (see
-`docs/validation/calendar_acquisition_eodhd_2026-04-21.md`).
+declaration/record/payment dates. Those richer fields are pulled via the
+per-ticker `/api/div/{TICKER}.{EXCHANGE}` endpoint — see
+`parse_dividend_detail_row` and the `fetch_dividend_details` free function.
+The detail parser reuses the same `provider_event_id` the discovery parser
+synthesised, so the rich snapshot upserts the existing `cal_corp_event` row
+in place (discovery and detail land as two `cal_corp_raw` revisions of one
+event). Exposed as the `calendar_corp_fetch_dividend_details(symbols, from,
+to, dry_run, max_requests)` service op. Validated against live EODHD on
+2026-04-21 (see `docs/validation/calendar_acquisition_eodhd_2026-04-21.md`);
+enrichment probe `dividend_details_aapl` added to the live validator.
 
 ### Forward Calendar Data
 

@@ -68,10 +68,21 @@ _DIVIDEND_MUTABLE: frozenset[str] = frozenset({
     # /api/calendar/dividends is a discovery-only feed: rows carry just
     # ``symbol`` + ``date`` (ex-dividend) — no value, period, or
     # declaration/record/payment dates. The extended fields live on the
-    # per-ticker ``/api/div/{TICKER}.{EXCHANGE}`` endpoint and will be
-    # wired by a later slice. The only mutable field on the calendar
-    # feed itself is ``date`` (an upstream ex-date correction).
+    # per-ticker ``/api/div/{TICKER}.{EXCHANGE}`` endpoint (see
+    # :func:`parse_dividend_detail_row`). The only mutable field on the
+    # calendar feed itself is ``date`` (an upstream ex-date correction).
     "date",
+})
+_DIVIDEND_DETAIL_MUTABLE: frozenset[str] = frozenset({
+    # /api/div/{TICKER}.{EXCHANGE} enrichment feed. Covers the rich row
+    # fields that the calendar discovery feed omits. Extended-format
+    # fields (declarationDate / recordDate / paymentDate / unadjustedValue
+    # / currency) only arrive for major US + European tickers; for
+    # smaller symbols only ``date`` and ``value`` are present, and the
+    # missing-key normalisation in :func:`_content_hash_for_fields` keeps
+    # the hash stable when fields stay absent.
+    "date", "value", "unadjustedValue", "currency",
+    "declarationDate", "recordDate", "paymentDate", "period",
 })
 
 
@@ -532,6 +543,74 @@ def parse_dividend_row(
         currency_reporting="",
         title=title,
         reference_date=None,
+        source_url="",
+        content_hash=content_hash,
+        payload_json=_stable_json(row),
+        observed_at_epoch_ms=observed,
+    )
+    raw = _build_raw(
+        provider_event_id=provider_event_id,
+        row=row,
+        content_hash=content_hash,
+        snapshot_epoch_ms=snapshot_epoch_ms,
+    )
+    return raw, event
+
+
+def parse_dividend_detail_row(
+    row: dict[str, Any],
+    *,
+    code: str,
+    snapshot_epoch_ms: int,
+    observed_at_epoch_ms: int | None = None,
+) -> tuple[CalendarCorpRawRecord, CalendarCorpEventRecord]:
+    """Map a ``/api/div/{TICKER}.{EXCHANGE}`` row (enrichment feed).
+
+    Shares identity with :func:`parse_dividend_row` — both anchor on
+    ``sha256(eodhd|dividend|{code}|{ex_date}|"")`` so the rich detail
+    snapshot upserts the same ``cal_corp_event`` row discovery wrote.
+    ``code`` is passed in by the caller because ``/api/div`` carries the
+    ticker on the URL path, not inside the row body.
+
+    Extended-format fields (``declarationDate`` / ``recordDate`` /
+    ``paymentDate`` / ``unadjustedValue`` / ``currency``) are optional —
+    EODHD only returns them for major US + European tickers. Missing
+    fields stay absent from the event row (empty string / None).
+
+    Revision trade-off: ``cal_corp_event`` upserts obey
+    "latest ``observed_at`` wins". A later discovery-feed refresh will
+    overwrite the enriched ``currency`` with ``""`` — re-run detail to
+    re-enrich. This matches how all other subtypes behave.
+    """
+    code = str(code or "").strip()
+    if not code:
+        raise ValueError("EODHD dividend detail row requires a code (from URL path)")
+    ticker, exchange = _split_code(code)
+    ex_date = str(row.get("date") or "").strip()
+    if not ex_date:
+        raise ValueError("EODHD dividend detail row missing date")
+
+    provider_event_id = synthesize_provider_event_id(
+        subtype="dividend", code=code, primary_date=ex_date, subtype_key="",
+    )
+    content_hash = _content_hash_for_fields(row, _DIVIDEND_DETAIL_MUTABLE)
+    observed = observed_at_epoch_ms if observed_at_epoch_ms is not None else snapshot_epoch_ms
+
+    title = f"{ticker} dividend" if ticker else "dividend"
+    period = _opt_str(row.get("period"))
+
+    event = CalendarCorpEventRecord(
+        provider=PROVIDER,
+        provider_event_id=provider_event_id,
+        event_subtype="dividend",
+        event_time_utc=ex_date,
+        event_time_precision="date",
+        ticker=ticker,
+        exchange=exchange,
+        currency=str(row.get("currency") or ""),
+        currency_reporting="",
+        title=title,
+        reference_date=period,
         source_url="",
         content_hash=content_hash,
         payload_json=_stable_json(row),

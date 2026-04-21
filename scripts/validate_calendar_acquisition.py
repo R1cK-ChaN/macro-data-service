@@ -45,6 +45,7 @@ from ingestion.calendar.te_api.parser import ALL_TE_FIELDS, MUTABLE_FIELDS  # no
 
 from ingestion.calendar.eodhd_api import (  # noqa: E402
     EODHDAPIClient,
+    parse_dividend_detail_row,
     parse_dividend_row,
     parse_earnings_row,
     parse_ipo_row,
@@ -114,17 +115,27 @@ EODHD_SPLIT_READS: frozenset[str] = frozenset({
 # value/period/currency/declaration/record/payment dates. Validated
 # against live EODHD 2026-04-21 for AAPL.US and filter[date_eq]=<recent>.
 # Richer per-ticker dividend details live on /api/div/{TICKER} and are
-# not consumed by this parser.
+# consumed by :func:`parse_dividend_detail_row` (subtype
+# ``dividend_detail`` below).
 EODHD_DIVIDEND_READS: frozenset[str] = frozenset({
     "symbol", "date",
 })
 
+# /api/div/{TICKER}.{EXCHANGE} enrichment feed. Extended fields arrive
+# only for major US + European tickers; smaller tickers return just
+# {date, value}.
+EODHD_DIVIDEND_DETAIL_READS: frozenset[str] = frozenset({
+    "date", "value", "unadjustedValue", "currency",
+    "declarationDate", "recordDate", "paymentDate", "period",
+})
+
 EODHD_SUBTYPE_READS: dict[str, frozenset[str]] = {
-    "earnings":       EODHD_EARNINGS_READS,
-    "earnings_trend": EODHD_TREND_READS,
-    "ipo":            EODHD_IPO_READS,
-    "split":          EODHD_SPLIT_READS,
-    "dividend":       EODHD_DIVIDEND_READS,
+    "earnings":         EODHD_EARNINGS_READS,
+    "earnings_trend":   EODHD_TREND_READS,
+    "ipo":              EODHD_IPO_READS,
+    "split":            EODHD_SPLIT_READS,
+    "dividend":         EODHD_DIVIDEND_READS,
+    "dividend_detail":  EODHD_DIVIDEND_DETAIL_READS,
 }
 
 EODHD_SUBTYPE_PARSERS: dict[str, Any] = {
@@ -160,6 +171,10 @@ class Probe:
     params: dict[str, Any] = field(default_factory=dict)
     rows_key: str = ""
     subtype: str = ""
+    # True for EODHD endpoints whose payload is itself the row list
+    # (``/api/div/{TICKER}``); False for envelope-style calendar endpoints
+    # that wrap rows under a subtype-specific key.
+    top_level_array: bool = False
 
 
 def _today_iso() -> str:
@@ -478,6 +493,21 @@ def plan_eodhd_probes() -> list[Probe]:
             subtype="earnings_trend",
             expected_fields=EODHD_TREND_READS,
         ),
+        Probe(
+            # Enrichment feed — populates amount / currency / declaration /
+            # record / payment dates that /calendar/dividends can't carry.
+            # AAPL.US is the canonical "major US ticker" test case: it
+            # should always return the extended fields.
+            name="dividend_details_aapl",
+            path="/api/div/AAPL.US",
+            description="per-ticker dividend extended fields — amount / currency / D/R/P dates",
+            expected_shape="list[row] (top-level array, not enveloped)",
+            params={"from": _days_ago_iso(180), "to": _today_iso()},
+            rows_key="",
+            subtype="dividend_detail",
+            expected_fields=EODHD_DIVIDEND_DETAIL_READS,
+            top_level_array=True,
+        ),
     ]
 
 
@@ -485,14 +515,15 @@ def plan_eodhd_probes() -> list[Probe]:
 # interesting vocabularies (deal_type for IPOs, period for dividends/
 # trends, before_after_market for earnings, etc.).
 EODHD_ENUM_FIELDS_BY_SUBTYPE: dict[str, tuple[str, ...]] = {
-    "earnings":       ("before_after_market", "currency"),
-    "earnings_trend": ("period",),
-    "ipo":            ("deal_type", "exchange", "currency"),
-    "split":          ("optionable",),
+    "earnings":         ("before_after_market", "currency"),
+    "earnings_trend":   ("period",),
+    "ipo":              ("deal_type", "exchange", "currency"),
+    "split":            ("optionable",),
     # /calendar/dividends is discovery-only (symbol/date) — no enum
-    # fields available on this feed. Period/currency live on
-    # /api/div/{TICKER}, to be added by a later slice.
-    "dividend":       (),
+    # fields available on this feed. Period/currency arrive via
+    # dividend_detail (/api/div/{TICKER}) instead.
+    "dividend":         (),
+    "dividend_detail":  ("period", "currency"),
 }
 
 
@@ -541,7 +572,15 @@ def diff_eodhd_row(row: dict[str, Any], expected_fields: frozenset[str]) -> RowD
     return diff
 
 
-def try_parse_eodhd(row: dict[str, Any], subtype: str) -> tuple[bool, str]:
+def try_parse_eodhd(row: dict[str, Any], subtype: str, *, code: str = "") -> tuple[bool, str]:
+    if subtype == "dividend_detail":
+        try:
+            raw, event = parse_dividend_detail_row(
+                row, code=code, snapshot_epoch_ms=1_700_000_000_000,
+            )
+            return True, f"ok subtype=dividend_detail event_id={raw.provider_event_id[:10]}…"
+        except Exception as exc:
+            return False, f"{type(exc).__name__}: {exc}"
     parser = EODHD_SUBTYPE_PARSERS.get(subtype)
     if parser is None:
         return False, f"no parser registered for subtype={subtype!r}"
@@ -558,7 +597,12 @@ def run_eodhd_probe(client: EODHDAPIClient, probe: Probe) -> ProbeResult:
     result.request_path = f"{probe.path}?{_render_params(probe.params)}"
 
     try:
-        call = client.get_rows(probe.path, params=probe.params, rows_key=probe.rows_key)
+        if probe.top_level_array:
+            # /api/div/{code} returns the row list at payload root — bypass
+            # the envelope extractor and use payload directly.
+            call = client.get(probe.path, params=probe.params)
+        else:
+            call = client.get_rows(probe.path, params=probe.params, rows_key=probe.rows_key)
     except Exception as exc:
         result.status = "http_error"
         result.notes.append(f"{type(exc).__name__}: {exc}")
@@ -566,11 +610,15 @@ def run_eodhd_probe(client: EODHDAPIClient, probe: Probe) -> ProbeResult:
 
     result.status = "ok"
     result.http_elapsed_ms = call.elapsed_ms
+    if probe.top_level_array:
+        raw_rows = call.payload if isinstance(call.payload, list) else []
+    else:
+        raw_rows = call.rows
     # Client's `rows` may contain inner lists for /calendar/trends — flatten.
-    flat_rows = _flatten_rows(call.rows)
+    flat_rows = _flatten_rows(raw_rows)
     result.row_count = len(flat_rows)
-    if probe.subtype == "earnings_trend" and any(isinstance(r, list) for r in call.rows):
-        result.notes.append(f"trends payload wrapped [[…]] ({len(call.rows)} outer groups → {len(flat_rows)} rows)")
+    if probe.subtype == "earnings_trend" and any(isinstance(r, list) for r in raw_rows):
+        result.notes.append(f"trends payload wrapped [[…]] ({len(raw_rows)} outer groups → {len(flat_rows)} rows)")
 
     if flat_rows:
         result.sample_row = flat_rows[0]
@@ -583,10 +631,16 @@ def run_eodhd_probe(client: EODHDAPIClient, probe: Probe) -> ProbeResult:
                 counters[key][repr(row.get(key))] += 1
         result.enum_counters = counters
 
+        # /api/div/{code} carries the ticker on the URL, not in the row;
+        # pass it to the parser so the identity hash can be produced.
+        parse_code = ""
+        if probe.subtype == "dividend_detail":
+            parse_code = probe.path.rsplit("/", 1)[-1]
+
         sample_n = min(10, len(flat_rows))
         result.parse_attempts = sample_n
         for row in flat_rows[:sample_n]:
-            ok, msg = try_parse_eodhd(row, probe.subtype)
+            ok, msg = try_parse_eodhd(row, probe.subtype, code=parse_code)
             if ok:
                 result.parse_successes += 1
             else:

@@ -26,6 +26,8 @@ from ingestion.calendar.eodhd_api import (
     EODHDAPIClient,
     EODHDAuthMissing,
     SUBTYPES,
+    fetch_dividend_details,
+    parse_dividend_detail_row,
     parse_dividend_row,
     parse_earnings_row,
     parse_ipo_row,
@@ -129,6 +131,24 @@ def _dividend_row(**overrides):
     base = {
         "symbol": "MSFT.US",
         "date": "2026-05-15",
+    }
+    base.update(overrides)
+    return base
+
+
+def _dividend_detail_row(**overrides):
+    # /api/div/{TICKER}.{EXCHANGE} extended shape. Major US/EU tickers
+    # return this rich form; smaller symbols may return just
+    # {date, value}. Tests cover both.
+    base = {
+        "date": "2026-02-09",
+        "value": 0.24,
+        "unadjustedValue": 0.24,
+        "currency": "USD",
+        "declarationDate": "2026-01-30",
+        "recordDate": "2026-02-10",
+        "paymentDate": "2026-02-13",
+        "period": "Quarterly",
     }
     base.update(overrides)
     return base
@@ -633,6 +653,219 @@ def test_fetcher_dividend_symbols_route_through_filter_param(
     # test locks against.
     for p in captured_params:
         assert "symbols" not in p
+
+
+@respx.mock
+def test_dividend_detail_parser_populates_extended_fields() -> None:
+    row = _dividend_detail_row()
+    raw, event = parse_dividend_detail_row(
+        row, code="AAPL.US", snapshot_epoch_ms=1_700_000_000_000,
+    )
+    assert event.event_subtype == "dividend"
+    assert event.ticker == "AAPL"
+    assert event.exchange == "US"
+    assert event.event_time_utc == "2026-02-09"
+    assert event.currency == "USD"
+    assert event.reference_date == "Quarterly"
+    # Raw payload preserves every detail field for downstream extraction.
+    payload = json.loads(raw.payload_json)
+    for k in ("value", "unadjustedValue", "declarationDate", "recordDate", "paymentDate"):
+        assert payload[k] == row[k]
+
+
+def test_dividend_detail_shares_identity_with_discovery_row() -> None:
+    """Detail parser must produce the same provider_event_id the
+    discovery parser produced for the same (symbol, ex_date) — that is
+    how the enrichment snapshot lands on the existing cal_corp_event
+    row instead of forking into a new event."""
+    code = "AAPL.US"
+    ex_date = "2026-02-09"
+    discovery = _dividend_row(symbol=code, date=ex_date)
+    detail = _dividend_detail_row(date=ex_date)
+    _, ev_d = parse_dividend_row(discovery, snapshot_epoch_ms=1)
+    _, ev_x = parse_dividend_detail_row(detail, code=code, snapshot_epoch_ms=2)
+    assert ev_d.provider_event_id == ev_x.provider_event_id
+    # Content hashes differ — discovery hashes {date}, detail hashes 8
+    # extended fields — so both land as separate cal_corp_raw snapshots.
+    assert ev_d.content_hash != ev_x.content_hash
+
+
+def test_dividend_detail_handles_minimal_shape() -> None:
+    """Smaller tickers only return {date, value}. Parser must not raise
+    on the missing extended fields; currency/reference_date stay empty."""
+    row = {"date": "2026-02-09", "value": 0.05}
+    _raw, event = parse_dividend_detail_row(
+        row, code="SMALL.US", snapshot_epoch_ms=1,
+    )
+    assert event.currency == ""
+    assert event.reference_date is None
+
+
+def test_dividend_detail_requires_code_and_date() -> None:
+    with pytest.raises(ValueError):
+        parse_dividend_detail_row({"date": "2026-02-09"}, code="", snapshot_epoch_ms=1)
+    with pytest.raises(ValueError):
+        parse_dividend_detail_row({}, code="AAPL.US", snapshot_epoch_ms=1)
+
+
+def test_dividend_detail_upserts_existing_discovery_event(
+    connection: sqlite3.Connection,
+) -> None:
+    """Discovery writes the thin event first; detail upserts in place so
+    we end up with one cal_corp_event row carrying the richer fields
+    plus two cal_corp_raw snapshots."""
+    code = "AAPL.US"
+    ex_date = "2026-02-09"
+    # Step 1: discovery lands at t=1.
+    raw_d, ev_d = parse_dividend_row(
+        _dividend_row(symbol=code, date=ex_date), snapshot_epoch_ms=1_000,
+    )
+    store_corp_raw(connection, [raw_d])
+    project_corp_events(connection, [ev_d])
+    # Step 2: detail lands later at t=2 with richer fields.
+    raw_x, ev_x = parse_dividend_detail_row(
+        _dividend_detail_row(date=ex_date),
+        code=code,
+        snapshot_epoch_ms=2_000,
+    )
+    store_corp_raw(connection, [raw_x])
+    project_corp_events(connection, [ev_x])
+
+    (raw_count,) = connection.execute("SELECT COUNT(*) FROM cal_corp_raw").fetchone()
+    (event_count,) = connection.execute("SELECT COUNT(*) FROM cal_corp_event").fetchone()
+    assert raw_count == 2
+    assert event_count == 1
+    row = connection.execute(
+        "SELECT currency, content_hash FROM cal_corp_event"
+    ).fetchone()
+    assert row[0] == "USD"
+    assert row[1] == ev_x.content_hash
+
+
+@respx.mock
+def test_fetch_dividend_details_persists_and_counts(
+    store: SQLiteEngineStore, monkeypatch,
+) -> None:
+    monkeypatch.setenv("EODHD_API_KEY", "unit")
+    respx.get(url__startswith="https://eodhd.com/api/div/AAPL.US").mock(
+        return_value=httpx.Response(
+            200, json=[_dividend_detail_row(date="2026-02-09"),
+                       _dividend_detail_row(date="2026-05-15", value=0.26)],
+        )
+    )
+    connection = store.get_connection()
+    try:
+        client = EODHDAPIClient(sleeper=lambda _s: None)
+        fixed_now = datetime(2026, 4, 21, 12, 0, 0, tzinfo=timezone.utc)
+        summary = fetch_dividend_details(
+            connection=connection,
+            client=client,
+            symbols=["AAPL.US"],
+            dry_run=False,
+            now_utc=lambda: fixed_now,
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    assert summary.subtype == "dividend_detail"
+    assert summary.requests_spent == 1
+    assert summary.rows_parsed == 2
+    assert summary.rows_raw_inserted == 2
+    assert summary.events_upserted == 2
+    assert summary.stopped_reason == "completed"
+
+
+@respx.mock
+def test_fetch_dividend_details_caps_at_max_requests(
+    store: SQLiteEngineStore, monkeypatch,
+) -> None:
+    monkeypatch.setenv("EODHD_API_KEY", "unit")
+    respx.get(url__startswith="https://eodhd.com/api/div/").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    connection = store.get_connection()
+    try:
+        client = EODHDAPIClient(sleeper=lambda _s: None)
+        summary = fetch_dividend_details(
+            connection=connection,
+            client=client,
+            symbols=["A.US", "B.US", "C.US", "D.US"],
+            max_requests=2,
+            dry_run=False,
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    assert summary.requests_spent == 2
+    assert summary.stopped_reason == "max_requests_reached"
+
+
+def test_fetch_dividend_details_dry_run_emits_no_http(
+    store: SQLiteEngineStore,
+) -> None:
+    connection = store.get_connection()
+    try:
+        client = EODHDAPIClient(api_key="unit", sleeper=lambda _s: None)
+        with respx.mock(assert_all_called=False) as router:
+            router.route().mock(return_value=httpx.Response(500, text="must_not_call"))
+            summary = fetch_dividend_details(
+                connection=connection,
+                client=client,
+                symbols=["AAPL.US", "MSFT.US"],
+                dry_run=True,
+            )
+            assert router.calls.call_count == 0
+    finally:
+        connection.close()
+    assert summary.dry_run is True
+    assert summary.windows_planned == 2
+    assert summary.stopped_reason == "dry_run"
+
+
+def test_calendar_corp_fetch_dividend_details_rejects_missing_symbols(
+    store: SQLiteEngineStore,
+) -> None:
+    from macro_data.service import LocalMacroDataService
+
+    service = LocalMacroDataService(store=store)
+    result = service.invoke("calendar_corp_fetch_dividend_details", {})
+    assert "error" in result
+
+
+def test_calendar_corp_fetch_dividend_details_rejects_malformed_dates(
+    store: SQLiteEngineStore,
+) -> None:
+    """A typo in from/to must fail loudly — silently dropping the bound
+    would turn /api/div/{symbol} into a full-history pull for every
+    requested symbol."""
+    from macro_data.service import LocalMacroDataService
+
+    service = LocalMacroDataService(store=store)
+    result = service.invoke(
+        "calendar_corp_fetch_dividend_details",
+        {"symbols": ["AAPL.US"], "from": "2026-02-30", "dry_run": True},
+    )
+    assert "error" in result
+    assert "from" in result["error"]
+
+
+def test_calendar_corp_fetch_dividend_details_dry_run(
+    store: SQLiteEngineStore,
+) -> None:
+    from macro_data.service import LocalMacroDataService
+
+    service = LocalMacroDataService(store=store)
+    with respx.mock(assert_all_called=False) as router:
+        router.route().mock(return_value=httpx.Response(500, text="must_not_call"))
+        result = service.invoke(
+            "calendar_corp_fetch_dividend_details",
+            {"symbols": ["AAPL.US", "MSFT.US"], "dry_run": True},
+        )
+        assert router.calls.call_count == 0
+    assert result["dry_run"] is True
+    assert result["subtype"] == "dividend_detail"
+    assert result["symbols_planned"] == 2
+    assert result["stopped_reason"] == "dry_run"
 
 
 def test_fetcher_trend_requires_symbols(store: SQLiteEngineStore) -> None:

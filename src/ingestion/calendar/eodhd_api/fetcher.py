@@ -24,6 +24,7 @@ from .client import EODHDAPIClient, EODHDCallResult, EODHDThrottled
 from .parser import (
     CalendarCorpEventRecord,
     CalendarCorpRawRecord,
+    parse_dividend_detail_row,
     parse_dividend_row,
     parse_earnings_row,
     parse_ipo_row,
@@ -279,6 +280,90 @@ class CorpCalendarFetcher:
         raw_records.append(raw)
         event_records.append(event)
         summary.rows_parsed += 1
+
+
+def fetch_dividend_details(
+    *,
+    connection: sqlite3.Connection,
+    client: EODHDAPIClient,
+    symbols: Iterable[str],
+    start: date | None = None,
+    end: date | None = None,
+    max_requests: int = 20,
+    dry_run: bool = True,
+    now_utc: Callable[[], datetime] | None = None,
+) -> CorpRunSummary:
+    """Fetch per-ticker dividend details from ``/api/div/{TICKER}.{EXCHANGE}``.
+
+    Enrichment pass over the discovery-only ``/calendar/dividends`` feed.
+    One request per symbol — the endpoint is per-ticker and returns a
+    top-level JSON array (no envelope key to extract). Rows land on the
+    same ``provider_event_id`` the discovery parser synthesised, so this
+    upserts the existing ``cal_corp_event`` rows in place with
+    ``value`` / ``currency`` / declaration-record-payment dates.
+
+    ``start`` / ``end`` default to an unconstrained query (no ``from`` /
+    ``to`` params). Callers typically pass a bounded window matching the
+    discovery sweep so the response size stays small.
+    """
+    now = now_utc or (lambda: datetime.now(timezone.utc))
+    summary = CorpRunSummary(subtype="dividend_detail", dry_run=dry_run)
+
+    symbols_list = [s.strip() for s in symbols if str(s).strip()]
+    summary.windows_planned = len(symbols_list)
+    summary.windows = [{"symbol": s} for s in symbols_list]
+
+    if dry_run:
+        summary.stopped_reason = "dry_run"
+        return summary
+    if not symbols_list:
+        summary.stopped_reason = "no_symbols"
+        return summary
+
+    params_base: dict[str, Any] = {}
+    if start is not None:
+        params_base["from"] = start.isoformat()
+    if end is not None:
+        params_base["to"] = end.isoformat()
+
+    max_req = max(1, max_requests)
+    snapshot_ms = int(now().timestamp() * 1000)
+
+    for code in symbols_list:
+        if summary.requests_spent >= max_req:
+            summary.stopped_reason = "max_requests_reached"
+            break
+        path = f"/api/div/{code}"
+        try:
+            result = client.get(path, params=dict(params_base))
+        except EODHDThrottled as exc:
+            summary.stopped_reason = f"throttled:{exc}"
+            break
+        summary.requests_spent += 1
+
+        rows = result.payload if isinstance(result.payload, list) else []
+        raw_records: list[CalendarCorpRawRecord] = []
+        event_records: list[CalendarCorpEventRecord] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                raw, event = parse_dividend_detail_row(
+                    row, code=code, snapshot_epoch_ms=snapshot_ms,
+                )
+            except ValueError:
+                summary.parse_errors += 1
+                continue
+            raw_records.append(raw)
+            event_records.append(event)
+            summary.rows_parsed += 1
+
+        summary.rows_raw_inserted += store_corp_raw(connection, raw_records)
+        summary.events_upserted += project_corp_events(connection, event_records)
+
+    if not summary.stopped_reason:
+        summary.stopped_reason = "completed"
+    return summary
 
 
 def _split_windows(start: date, end: date, window_days: int) -> list[tuple[date, date]]:

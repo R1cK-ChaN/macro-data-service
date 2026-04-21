@@ -340,6 +340,106 @@ class LocalMacroDataService:
             "stopped_reason":    summary.stopped_reason,
         }
 
+    def _op_calendar_corp_fetch_dividend_details(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Enrich discovered dividends via ``/api/div/{TICKER}.{EXCHANGE}``.
+
+        The ``/calendar/dividends`` discovery feed returns only
+        ``(symbol, ex_date)``; this op fetches the per-ticker feed that
+        carries ``value``, ``currency``, and declaration / record /
+        payment dates. Rows upsert the same ``cal_corp_event`` row the
+        discovery parser created (identity is shared).
+
+        Arguments:
+          symbols      — list or comma string of EODHD codes
+                         (``AAPL.US``, ``MSFT.US``). Required.
+          from         — ISO date. Optional; when set, narrows the
+                         per-ticker response to that window.
+          to           — ISO date. Optional; pairs with ``from``.
+          dry_run      — default True. Returns the symbol plan without
+                         issuing any HTTP request.
+          max_requests — default 20. Caps symbols fetched per call
+                         (1 request per symbol).
+        """
+        from datetime import date as _date
+
+        from ingestion.calendar.eodhd_api import EODHDAPIClient, fetch_dividend_details
+
+        dry_run = bool(arguments.get("dry_run", True))
+        try:
+            max_requests = max(1, int(arguments.get("max_requests") or 20))
+        except (TypeError, ValueError):
+            max_requests = 20
+
+        raw_symbols = arguments.get("symbols")
+        symbols: list[str]
+        if isinstance(raw_symbols, list):
+            symbols = [str(s).strip() for s in raw_symbols if str(s).strip()]
+        elif isinstance(raw_symbols, str) and raw_symbols.strip():
+            symbols = [s.strip() for s in raw_symbols.split(",") if s.strip()]
+        else:
+            symbols = []
+        if not symbols:
+            return {"error": "symbols is required"}
+
+        # Missing field → None (unbounded — caller wants full history).
+        # Malformed field → return an error instead of silently dropping
+        # the bound, which would otherwise turn a typo into an unbounded
+        # /api/div/{symbol} sweep burning API budget on every symbol.
+        def _parse_iso(v: Any) -> tuple[_date | None, str | None]:
+            if v is None or v == "":
+                return None, None
+            try:
+                return _date.fromisoformat(str(v)), None
+            except ValueError:
+                return None, str(v)
+
+        start, bad_start = _parse_iso(arguments.get("from"))
+        end, bad_end = _parse_iso(arguments.get("to"))
+        if bad_start is not None:
+            return {"error": f"invalid 'from' date: {bad_start!r} (expected YYYY-MM-DD)"}
+        if bad_end is not None:
+            return {"error": f"invalid 'to' date: {bad_end!r} (expected YYYY-MM-DD)"}
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        with EODHDAPIClient() as client:
+            connection = get_conn()
+            try:
+                summary = fetch_dividend_details(
+                    connection=connection,
+                    client=client,
+                    symbols=symbols,
+                    start=start,
+                    end=end,
+                    max_requests=max_requests,
+                    dry_run=dry_run,
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+        return {
+            "subtype":           summary.subtype,
+            "dry_run":           summary.dry_run,
+            "from":              start.isoformat() if start else None,
+            "to":                end.isoformat() if end else None,
+            "symbols_planned":   summary.windows_planned,
+            "symbols":           summary.windows,
+            "requests_spent":    summary.requests_spent,
+            "rows_parsed":       summary.rows_parsed,
+            "rows_raw_inserted": summary.rows_raw_inserted,
+            "events_upserted":   summary.events_upserted,
+            "parse_errors":      summary.parse_errors,
+            "stopped_reason":    summary.stopped_reason,
+        }
+
     def _op_calendar_econ_sync_updates(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Run the ``/calendar/updates`` → ``/calendarid`` reconciliation loop.
 

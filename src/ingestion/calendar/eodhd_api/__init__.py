@@ -27,11 +27,12 @@ from .client import (
     EODHDAuthMissing,
     EODHDThrottled,
 )
-from .fetcher import CorpCalendarFetcher, CorpRunSummary
+from .fetcher import CorpCalendarFetcher, CorpRunSummary, fetch_dividend_details
 from .parser import (
     CalendarCorpEventRecord,
     CalendarCorpRawRecord,
     SUBTYPES,
+    parse_dividend_detail_row,
     parse_dividend_row,
     parse_earnings_row,
     parse_ipo_row,
@@ -50,6 +51,8 @@ __all__ = [
     "EODHDAuthMissing",
     "EODHDThrottled",
     "SUBTYPES",
+    "fetch_dividend_details",
+    "parse_dividend_detail_row",
     "parse_dividend_row",
     "parse_earnings_row",
     "parse_ipo_row",
