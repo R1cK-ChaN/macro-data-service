@@ -80,6 +80,29 @@ TE_COUNTRY_MAP = {
     "suriname": "SR",
     "peru": "PE", "ecuador": "EC", "bolivia": "BO", "paraguay": "PY",
     "uruguay": "UY", "venezuela": "VE",
+    # 2016-2022 extended coverage — countries TE published events for
+    # before ~2019 but has since dropped from the feed. Still need ISO
+    # codes for historical events from earlier backfills to be queryable.
+    # Europe & micro-states
+    "andorra": "AD", "liechtenstein": "LI", "monaco": "MC", "san marino": "SM",
+    "isle of man": "IM", "greenland": "GL",
+    # Middle East / Africa (additional)
+    "syria": "SY", "yemen": "YE", "afghanistan": "AF", "sudan": "SD",
+    "south sudan": "SS", "burkina faso": "BF", "chad": "TD", "niger": "NE",
+    "togo": "TG", "djibouti": "DJ", "equatorial guinea": "GQ",
+    # North Korea — full name (PRK) via TE's short-form
+    "north korea": "KP",
+    # Pacific / island nations (small-state coverage TE has since dropped)
+    "kiribati": "KI", "micronesia": "FM", "palau": "PW", "samoa": "WS",
+    "solomon islands": "SB", "tonga": "TO", "vanuatu": "VU",
+    "new caledonia": "NC", "northern mariana islands": "MP",
+    # Caribbean
+    "bahamas": "BS", "bermuda": "BM", "cayman islands": "KY",
+    "aruba": "AW", "puerto rico": "PR",
+    "antigua and barbuda": "AG", "dominica": "DM", "grenada": "GD",
+    "haiti": "HT", "belize": "BZ", "guyana": "GY",
+    "st kitts and nevis": "KN", "saint kitts and nevis": "KN",
+    "st lucia": "LC", "saint lucia": "LC",
     # Supra-national aggregates — codes drawn from ISO-3166-1's formal
     # user-assigned range QM-QZ (14 reserved codes for private use). Chose
     # letters from that range so the typed column stays strictly alpha-2

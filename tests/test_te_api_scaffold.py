@@ -199,6 +199,45 @@ def test_country_code_maps_full_sovereign_coverage() -> None:
         )
 
 
+def test_country_code_maps_discontinued_coverage_countries() -> None:
+    """TE published events for 40 small states / territories through
+    2019-2022 before dropping them from the feed — they never appear in
+    P1's 2023+ window, so the original map (built from P1 enumeration)
+    missed them. P2's 2016-2022 run surfaced 1,773 events across these
+    names. Regression guard that every one still ISO-maps — TE never
+    sends these anymore, but historical events must stay queryable."""
+    discontinued = {
+        # Europe micro-states
+        "Andorra": "AD", "Liechtenstein": "LI", "Monaco": "MC",
+        "San Marino": "SM", "Isle of Man": "IM", "Greenland": "GL",
+        # Casing variant observed in raw data
+        "Isle Of Man": "IM",
+        # Middle East / Africa (small-state coverage)
+        "Afghanistan": "AF", "Syria": "SY", "Yemen": "YE", "Sudan": "SD",
+        "South Sudan": "SS", "Burkina Faso": "BF", "Chad": "TD",
+        "Niger": "NE", "Togo": "TG", "Djibouti": "DJ",
+        "Equatorial Guinea": "GQ", "North Korea": "KP",
+        # Pacific / island nations
+        "Kiribati": "KI", "Micronesia": "FM", "Palau": "PW", "Samoa": "WS",
+        "Solomon Islands": "SB", "Tonga": "TO", "Vanuatu": "VU",
+        "New Caledonia": "NC", "Northern Mariana Islands": "MP",
+        # Caribbean
+        "Bahamas": "BS", "Bermuda": "BM", "Cayman Islands": "KY",
+        "Aruba": "AW", "Puerto Rico": "PR",
+        "Antigua and Barbuda": "AG", "Dominica": "DM", "Grenada": "GD",
+        "Haiti": "HT", "Belize": "BZ", "Guyana": "GY",
+        "St Kitts and Nevis": "KN", "St Lucia": "LC",
+        # "Saint" variants — may appear in future / other TE endpoints
+        "Saint Kitts and Nevis": "KN", "Saint Lucia": "LC",
+    }
+    for country, expected in discontinued.items():
+        row = _te_row(Country=country)
+        _, event = parse_calendar_row(row, snapshot_epoch_ms=1)
+        assert event.country_code == expected, (
+            f"{country!r} should map to {expected!r}, got {event.country_code!r}"
+        )
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Projector
 # ──────────────────────────────────────────────────────────────────────────
