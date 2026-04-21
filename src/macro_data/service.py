@@ -502,6 +502,98 @@ class LocalMacroDataService:
             "stopped_reason":      summary.stopped_reason,
         }
 
+    # ── Economic calendar — BLS connector (issue #9 P1) ─────────────────
+
+    def _op_calendar_econ_fetch_bls(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch BLS Public Data API observations into the calendar.
+
+        Arguments:
+          start_year     — int. Default current year − 1.
+          end_year       — int. Default current year.
+          series_ids     — optional list of BLS series ids. Omit for the
+                           full P1 whitelist (CPI, NFP).
+          dry_run        — default True. No HTTP, no DB writes.
+
+        Dry-run returns the plan only. Execute mode returns counts for
+        observations seen, raw rows inserted, events upserted, plus
+        per-series success / empty / unknown lists.
+        """
+        from datetime import datetime as _dt, timezone as _tz
+
+        from ingestion.calendar.bls_api import fetch_bls_calendar
+        from ingestion.timeseries.scrapers.bls import BLSClient
+
+        dry_run = bool(arguments.get("dry_run", True))
+        now_year = _dt.now(_tz.utc).year
+        try:
+            start_year = int(arguments.get("start_year") or (now_year - 1))
+        except (TypeError, ValueError):
+            start_year = now_year - 1
+        try:
+            end_year = int(arguments.get("end_year") or now_year)
+        except (TypeError, ValueError):
+            end_year = now_year
+        if end_year < start_year:
+            start_year, end_year = end_year, start_year
+
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list) and raw_series:
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            # Run the same resolver the execute path uses so dry-run
+            # mirrors what would actually be fetched — callers must see
+            # unknown ids surfaced here, not after they've triggered HTTP.
+            from ingestion.calendar.bls_api.fetcher import _resolve_series
+            planned, unknown = _resolve_series(series_ids)
+            return {
+                "dry_run":        True,
+                "start_year":     start_year,
+                "end_year":       end_year,
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        client = BLSClient()
+        if not client.api_key:
+            return {"error": "BLS_API_KEY not set"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_bls_calendar(
+                connection, client,
+                start_year=start_year, end_year=end_year,
+                series_ids=series_ids, dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "start_year":         summary.start_year,
+            "end_year":           summary.end_year,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "series_unknown":     summary.series_unknown,
+            "observations_seen":  summary.observations_seen,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Unified document queries (issue #2 / #3) ────────────────────────
 
     def _op_list_items(self, arguments: dict[str, Any]) -> dict[str, Any]:
