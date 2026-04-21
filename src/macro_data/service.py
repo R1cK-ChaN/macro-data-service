@@ -897,6 +897,80 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    def _op_list_calendar_items(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """List calendar items from the unified ``v_calendar_item`` view.
+
+        Shipped with issue #9 P7 so downstream consumers can query the
+        calendar without importing from ``src/`` or reading
+        ``engine.db`` directly.
+
+        Arguments:
+          domain       — optional ``'economic'`` / ``'corporate'``.
+          country      — optional ISO-3166 alpha-2 (economic rows only).
+          ticker       — optional symbol (corporate rows only).
+          subtype      — optional ``'release'`` / ``'dividend'`` / … .
+          provider     — optional ``cal_provider.provider_id``.
+          page_offset  — default 0. Rows to skip before the first result.
+          page_limit   — default 100; capped at 500.
+
+        Returns a JSON:API-shaped envelope:
+
+            {"data": [...CalendarItem dicts...],
+             "meta": {"count": total, "offset": X, "limit": Y},
+             "links": {"next": {"page_offset": …, "page_limit": …} or null}}
+
+        ``links.next`` carries the cursor for the next page when more
+        rows match the filter; ``null`` otherwise. Cursor keys are
+        the same names this op reads (``page_offset`` / ``page_limit``)
+        so a client can spread the cursor back in as arguments and
+        the next call Just Works; they're also usable as query-string
+        pairs on ``GET /v1/calendar`` after the conventional
+        ``page[offset]`` → ``page_offset`` mapping the HTTP handler
+        performs.
+        """
+        domain = (arguments.get("domain") or "").strip() or None
+        country = (arguments.get("country") or "").strip() or None
+        ticker = (arguments.get("ticker") or "").strip() or None
+        subtype = (arguments.get("subtype") or "").strip() or None
+        provider = (arguments.get("provider") or "").strip() or None
+        try:
+            offset = int(arguments.get("page_offset") or 0)
+        except (TypeError, ValueError):
+            offset = 0
+        try:
+            limit = int(arguments.get("page_limit") or 100)
+        except (TypeError, ValueError):
+            limit = 100
+        offset = max(0, offset)
+        limit = max(1, min(500, limit))
+
+        lister = getattr(self._store, "list_calendar_items", None)
+        if not callable(lister):
+            return {"error": "store does not expose list_calendar_items"}
+
+        items, total = lister(
+            domain=domain,
+            country=country,
+            ticker=ticker,
+            subtype=subtype,
+            provider=provider,
+            offset=offset,
+            limit=limit,
+        )
+        next_cursor: dict[str, int] | None = None
+        if offset + len(items) < total:
+            next_cursor = {
+                "page_offset": offset + len(items),
+                "page_limit":  limit,
+            }
+        return {
+            "data":  items,
+            "meta":  {"count": total, "offset": offset, "limit": limit},
+            "links": {"next": next_cursor},
+        }
+
     def _op_calendar_econ_fetch_nbs(
         self, arguments: dict[str, Any],
     ) -> dict[str, Any]:

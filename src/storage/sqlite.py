@@ -2508,7 +2508,8 @@ class SQLiteEngineStore:
                     consensus_forecast                   AS consensus_forecast,
                     source_url                           AS source_url,
                     last_update_epoch_ms                 AS last_update_epoch_ms,
-                    observed_at_epoch_ms                 AS observed_at_epoch_ms
+                    observed_at_epoch_ms                 AS observed_at_epoch_ms,
+                    NULL                                 AS payload_json
                 FROM cal_econ_event
                 UNION ALL
                 SELECT
@@ -2533,7 +2534,8 @@ class SQLiteEngineStore:
                     NULL                                 AS consensus_forecast,
                     source_url                           AS source_url,
                     NULL                                 AS last_update_epoch_ms,
-                    observed_at_epoch_ms                 AS observed_at_epoch_ms
+                    observed_at_epoch_ms                 AS observed_at_epoch_ms,
+                    payload_json                         AS payload_json
                 FROM cal_corp_event
                 """
             )
@@ -7856,6 +7858,150 @@ class SQLiteEngineStore:
         if row is None:
             return None
         return self._row_to_calendar_indicator(row)
+
+    def list_calendar_items(
+        self,
+        *,
+        domain: str | None = None,
+        country: str | None = None,
+        ticker: str | None = None,
+        subtype: str | None = None,
+        provider: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Filtered read of ``v_calendar_item`` with offset pagination.
+
+        Returns ``(items, total_count)``. ``items`` is the current
+        page as a list of dicts shaped to the ``CalendarItem`` DTO
+        contract; ``total_count`` is the number of rows matching the
+        filter set (before offset/limit are applied) so HTTP callers
+        can compute ``links.next`` themselves.
+
+        Filter semantics — every non-``None`` argument collapses to an
+        equality clause on the view column:
+
+        - ``domain``   → ``'economic'`` / ``'corporate'``
+        - ``country``  → ISO-3166 alpha-2 (economic lane only; corporate
+                         rows have ``NULL`` and won't match any value).
+        - ``ticker``   → corporate lane only (economic rows are ``NULL``).
+        - ``subtype``  → ``'release'`` for econ, ``dividend`` / ``earnings``
+                         / ``earnings_trend`` / ``ipo`` / ``split`` for
+                         corp.
+        - ``provider`` → ``cal_provider.provider_id`` value.
+
+        ``offset`` is clamped to ``>= 0``; ``limit`` to ``[1, 500]``.
+        Rows are ordered by ``event_time_utc`` ascending then
+        ``event_id`` for stable pagination.
+        """
+        conditions: list[str] = []
+        params: list[Any] = []
+        if domain:
+            conditions.append("domain = ?")
+            params.append(domain)
+        if country:
+            conditions.append("country = ?")
+            params.append(country)
+        if ticker:
+            conditions.append("ticker = ?")
+            params.append(ticker)
+        if subtype:
+            conditions.append("subtype = ?")
+            params.append(subtype)
+        if provider:
+            conditions.append("provider = ?")
+            params.append(provider)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        safe_offset = max(0, int(offset))
+        safe_limit = max(1, min(500, int(limit)))
+
+        with self._connection(commit=False) as connection:
+            total_row = connection.execute(
+                f"SELECT COUNT(*) FROM v_calendar_item {where}",
+                params,
+            ).fetchone()
+            total_count = int(total_row[0]) if total_row else 0
+            rows = connection.execute(
+                f"""
+                SELECT event_id, domain, subtype, provider, provider_event_id,
+                       event_time_utc, event_time_precision, title, country,
+                       ticker, exchange, currency, importance, indicator_id,
+                       reference_date, actual, previous, forecast,
+                       consensus_forecast, source_url, last_update_epoch_ms,
+                       observed_at_epoch_ms, payload_json
+                FROM v_calendar_item
+                {where}
+                ORDER BY event_time_utc ASC, event_id ASC
+                LIMIT ? OFFSET ?
+                """,
+                [*params, safe_limit, safe_offset],
+            ).fetchall()
+
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            (
+                event_id, domain_val, subtype_val, provider_val, _peid,
+                event_time_utc, precision, title, country_val,
+                ticker_val, exchange_val, currency_val, importance_val,
+                indicator_id, reference_date, actual, previous, forecast,
+                consensus_forecast, source_url, last_update_epoch_ms,
+                _observed_at, payload_raw,
+            ) = row
+            values: dict[str, Any] = {}
+            if actual is not None:
+                values["actual"] = actual
+            if previous is not None:
+                values["previous"] = previous
+            if forecast is not None:
+                values["forecast"] = forecast
+            if consensus_forecast is not None:
+                values["consensus_forecast"] = consensus_forecast
+            # Corporate lane: the value-bearing fields (eps_actual,
+            # dividend_amount, split_ratio, ipo_price, …) live in
+            # ``cal_corp_event.payload_json`` — the economic-column
+            # slots are NULL in the view. Flatten scalar keys from the
+            # payload into ``values`` so the unified DTO carries the
+            # subtype-specific data HTTP clients need. Nested objects
+            # / arrays are skipped here because the CalendarItem
+            # contract declares ``values: dict[str, str | None]``.
+            if payload_raw and domain_val == "corporate":
+                try:
+                    payload = json.loads(payload_raw)
+                except (TypeError, ValueError):
+                    payload = None
+                if isinstance(payload, dict):
+                    for key, val in payload.items():
+                        if val is None:
+                            continue
+                        if isinstance(val, (str, int, float, bool)):
+                            values.setdefault(str(key), str(val))
+            items.append(
+                {
+                    "event_id": event_id,
+                    "release_time": event_time_utc,
+                    "release_time_precision": precision,
+                    "indicator": indicator_id or "",
+                    "country": country_val or "",
+                    "importance": importance_val or "medium",
+                    "domain": domain_val,
+                    "subtype": subtype_val,
+                    "provider": provider_val,
+                    "title": title or "",
+                    "ticker": ticker_val,
+                    "exchange": exchange_val,
+                    "currency": currency_val,
+                    "reference_date": reference_date,
+                    "expected": forecast,
+                    "previous": previous,
+                    "values": values,
+                    "last_update_epoch_ms": last_update_epoch_ms,
+                    "source_url": source_url or "",
+                    "references": [],
+                    "notes": "",
+                    "tags": [],
+                }
+            )
+        return items, total_count
 
     def list_calendar_indicators(
         self,
