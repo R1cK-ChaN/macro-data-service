@@ -135,15 +135,41 @@ def test_parser_rejects_missing_calendar_id() -> None:
         parse_calendar_row({}, snapshot_epoch_ms=0)
 
 
-def test_country_code_falls_through_to_empty_for_cross_institution_tags() -> None:
-    """TE returns cross-institution tags like "IMF" / "OECD" / "OPEC" in
-    the Country field. The prior `.upper()[:2]` fallback mis-cast
-    "IMF" → "IM" (Isle of Man). Empty string is recoverable; a wrong
-    ISO code silently corrupts country filtering downstream."""
-    for tag in ("IMF", "OECD", "OPEC", "World", "G20", "G7"):
+def test_country_code_maps_supra_national_aggregates_from_user_assigned_range() -> None:
+    """Supra-national tags have no ISO-3166 alpha-2 code, but downstream
+    still needs to filter IMF/OPEC/World/G20/G7 events without string
+    matching on `title`. Codes are drawn from ISO's user-assigned QM-QZ
+    range so the column stays alpha-2-conformant. These five codes must
+    also show up in SUPRA_NATIONAL_CODES — downstream uses that set
+    because LIKE 'Q%' would catch Qatar (QA)."""
+    from ingestion.calendar.scrapers.tradingeconomics import SUPRA_NATIONAL_CODES
+    expected = {
+        "IMF":   "QM",
+        "OPEC":  "QP",
+        "World": "QW",
+        "G20":   "QT",
+        "G7":    "QS",
+    }
+    for tag, code in expected.items():
         row = _te_row(Country=tag)
         _, event = parse_calendar_row(row, snapshot_epoch_ms=1)
-        assert event.country_code == "", f"aggregate {tag!r} must stay empty"
+        assert event.country_code == code, (
+            f"{tag!r} should map to {code!r}, got {event.country_code!r}"
+        )
+        assert code in SUPRA_NATIONAL_CODES
+    assert set(expected.values()) == SUPRA_NATIONAL_CODES
+
+
+def test_country_code_falls_through_to_empty_for_unmapped_tags() -> None:
+    """Unknown entities (aggregates we haven't observed yet, typos,
+    future sovereigns) fall through to empty rather than onto a wrong
+    ISO code. The prior `.upper()[:2]` fallback mis-cast "OECD" → "OE".
+    Empty is recoverable (add to TE_COUNTRY_MAP when observed); a wrong
+    code silently corrupts country filtering."""
+    for tag in ("OECD", "BRICS", "NATO", "ASEAN"):
+        row = _te_row(Country=tag)
+        _, event = parse_calendar_row(row, snapshot_epoch_ms=1)
+        assert event.country_code == "", f"unmapped {tag!r} must stay empty"
 
 
 def test_country_code_maps_full_sovereign_coverage() -> None:

@@ -137,17 +137,25 @@ def _iso_to_epoch_ms(value: str | None) -> int | None:
 
 
 def _country_code(raw_country: str) -> str:
+    """Map a TE ``Country`` value to a 2-char code.
+
+    Returns one of:
+      - ISO-3166-1 alpha-2 for sovereigns (``US``, ``DE``, ``XK``, …);
+        the ``X-`` range is ISO user-assigned and holds Kosovo (``XK``).
+      - A code from the ISO user-assigned ``QM-QZ`` range for supra-
+        national aggregates (``IMF`` → ``QM``, ``OPEC`` → ``QP``,
+        ``World`` → ``QW``, ``G20`` → ``QT``, ``G7`` → ``QS``). The full
+        set lives in ``SUPRA_NATIONAL_CODES`` — downstream must filter
+        by explicit set membership, not ``LIKE 'Q%'``, because Qatar
+        (``QA``) is also Q-prefixed.
+      - Empty string for values not yet in ``TE_COUNTRY_MAP``. Empty is
+        recoverable (add to the map later); a wrong ISO code silently
+        corrupts downstream filtering, so the old ``.upper()[:2]``
+        fallback that turned ``IMF`` into ``IM`` (Isle of Man) is gone
+        for good.
+    """
     key = (raw_country or "").strip().lower()
-    code = TE_COUNTRY_MAP.get(key)
-    if code:
-        return code
-    # Unknown country — return empty string rather than slicing the
-    # first two characters. TE mixes cross-institution tags like "IMF",
-    # "OECD", "OPEC" into Country, and the old `.upper()[:2]` fallback
-    # clobbered them onto real ISO codes ("IMF" → "IM" = Isle of Man).
-    # An empty country_code is recoverable (add to TE_COUNTRY_MAP later);
-    # a wrong country_code silently corrupts downstream filtering.
-    return ""
+    return TE_COUNTRY_MAP.get(key, "")
 
 
 def _stringify_optional(value: Any) -> str | None:

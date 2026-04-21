@@ -80,7 +80,22 @@ TE_COUNTRY_MAP = {
     "suriname": "SR",
     "peru": "PE", "ecuador": "EC", "bolivia": "BO", "paraguay": "PY",
     "uruguay": "UY", "venezuela": "VE",
+    # Supra-national aggregates — codes drawn from ISO-3166-1's formal
+    # user-assigned range QM-QZ (14 reserved codes for private use). Chose
+    # letters from that range so the typed column stays strictly alpha-2
+    # and ISO-conformant; mnemonics noted inline. Do NOT filter by
+    # `LIKE 'Q%'` downstream — Qatar (`QA`) is also Q-prefixed. Filter
+    # aggregates explicitly: `country_code IN ('QM','QP','QS','QT','QW')`.
+    "imf":   "QM",  # Monetary (IMF)
+    "opec":  "QP",  # Petroleum (OPEC)
+    "world": "QW",  # World aggregate
+    "g20":   "QT",  # Twenty (G20)
+    "g7":    "QS",  # Seven (G7)
 }
+
+# Code set for supra-national aggregates — downstream filter helper so
+# callers don't have to duplicate the literal tuple.
+SUPRA_NATIONAL_CODES: frozenset[str] = frozenset({"QM", "QP", "QS", "QT", "QW"})
 
 TE_SLUG_MAP = {
     "united-states": "US", "china": "CN", "japan": "JP", "germany": "DE",
