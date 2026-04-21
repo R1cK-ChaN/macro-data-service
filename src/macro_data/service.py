@@ -845,6 +845,58 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    def _op_calendar_econ_fetch_fed(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape FOMC meeting calendar into the calendar schema.
+
+        Arguments:
+          dry_run        — default True. No HTTP, no DB writes.
+
+        Dry-run returns the indicator plan only. Execute mode fetches
+        ``federalreserve.gov/monetarypolicy/fomccalendars.htm`` once,
+        parses each ``<div class="row fomc-meeting">`` into a
+        FOMC_RATE event, and upserts via the shared merge-rule
+        projector. Returns counts for meetings parsed, raw rows
+        inserted, and events upserted.
+        """
+        from ingestion.calendar.fed_api import (
+            INDICATOR_REGISTRY,
+            fetch_fed_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": list(INDICATOR_REGISTRY.keys()),
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_fed_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "meetings_parsed":    summary.meetings_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Unified document queries (issue #2 / #3) ────────────────────────
 
     def _op_list_items(self, arguments: dict[str, Any]) -> dict[str, Any]:
