@@ -74,6 +74,7 @@ def test_registry_ships_p5c_whitelist() -> None:
         "RETAIL_SALES",
         "MANUFACTURING_PMI",
         "NON_MANUFACTURING_PMI",
+        "GDP",
     }
     for spec in INDICATOR_REGISTRY.values():
         assert spec.country_code == "CN"
@@ -85,6 +86,13 @@ def test_registry_ships_p5c_whitelist() -> None:
         INDICATOR_REGISTRY["MANUFACTURING_PMI"].label_fragment
         == INDICATOR_REGISTRY["NON_MANUFACTURING_PMI"].label_fragment
     )
+    # GDP is the one quarterly-cadence spec — shares the "National
+    # Economic Performance" row with monthly roll-ups, filtered down
+    # to {1, 4, 7, 10}.
+    gdp = INDICATOR_REGISTRY["GDP"]
+    assert gdp.reference_cadence == "quarterly"
+    assert gdp.publishing_months == frozenset({1, 4, 7, 10})
+    assert gdp.label_fragment == "national economic performance"
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -113,10 +121,84 @@ def test_parse_2026_calendar_extracts_whitelist_releases() -> None:
         "RETAIL_SALES": 11,
         "MANUFACTURING_PMI": 12,
         "NON_MANUFACTURING_PMI": 12,
+        # GDP rides on the "National Economic Performance" row, which
+        # lists 11 release dates (every month except Feb) — but the
+        # quarterly-month filter keeps only Jan / Apr / Jul / Oct.
+        "GDP": 4,
     }
     for entry in entries:
         assert entry.year == 2026
         assert entry.release_time_local in {"9:30", "10:00"}
+
+
+def test_parse_gdp_fires_only_on_quarterly_months() -> None:
+    """The "National Economic Performance" row publishes on 11 months
+    (every month except Feb), but only Jan / Apr / Jul / Oct carry
+    the quarterly GDP release — the other seven are monthly roll-ups
+    the NBS 2026 calendar note 3 describes as a separate cadence.
+    The GDP spec's ``publishing_months`` filter keeps this from
+    over-emitting."""
+    entries = parse_nbs_calendar_html(_fixture_html("nbs_2026.html"))
+    gdp_months = sorted(e.month for e in entries if e.indicator == "GDP")
+    assert gdp_months == [1, 4, 7, 10]
+
+
+def test_parse_gdp_projects_end_of_prior_quarter_reference() -> None:
+    """GDP carries ``reference_cadence="quarterly"`` so the projector
+    anchors each event on the end-of-prior-quarter date. Jan release
+    → prior-year Q4; Apr / Jul / Oct → the current year's Q1 / Q2 /
+    Q3. The ``reference_label`` switches from ``"YYYY-MM"`` to
+    ``"YYYY-QN"`` so downstream parity buckets compare against TE's
+    quarterly convention cleanly."""
+    entries = parse_nbs_calendar_html(_fixture_html("nbs_2026.html"))
+    gdp_entries = sorted(
+        (e for e in entries if e.indicator == "GDP"),
+        key=lambda e: e.month,
+    )
+    from ingestion.calendar.nbs_api import release_entry_to_records
+
+    projected = [
+        release_entry_to_records(e, snapshot_epoch_ms=0)[1]
+        for e in gdp_entries
+    ]
+    assert [(p.reference_date, p.reference_label) for p in projected] == [
+        ("2025-12-31", "2025-Q4"),   # Jan 2026 release → Q4 2025
+        ("2026-03-31", "2026-Q1"),   # Apr 2026 release → Q1 2026
+        ("2026-06-30", "2026-Q2"),   # Jul 2026 release → Q2 2026
+        ("2026-09-30", "2026-Q3"),   # Oct 2026 release → Q3 2026
+    ]
+
+
+def test_china_gdp_canonicalizes_to_gdp_alias() -> None:
+    """Codex P2 on 2026-04-22 — the parity harness canonicalizes every
+    ``cal_econ_event.title`` before bucketing; without this alias the
+    four NBS GDP rows would land in their own ``"china gdp"`` bucket
+    instead of joining TE's ``"GDP"`` rows for the same reference
+    quarter. Lock the alias down here so a future drop from the
+    shared table raises a loud regression instead of a silent
+    parity-harness miss."""
+    from ingestion.calendar._official_shared import canonicalize_indicator
+
+    assert canonicalize_indicator("China GDP") == "GDP"
+    # The NBS spec's ``title`` is the input the projector writes into
+    # ``cal_econ_event.title`` and the parity harness reads back.
+    assert canonicalize_indicator(INDICATOR_REGISTRY["GDP"].title) == "GDP"
+
+
+def test_parse_monthly_indicators_unchanged_by_gdp_addition() -> None:
+    """CPI / PPI and the other monthly indicators still use
+    release-month-first reference dates and ``"YYYY-MM"`` labels —
+    the GDP quarterly branch is gated on the spec's
+    ``reference_cadence``, so monthly specs land exactly as before."""
+    entries = parse_nbs_calendar_html(_fixture_html("nbs_2026.html"))
+    january_cpi = next(
+        e for e in entries if e.indicator == "CPI" and e.month == 1
+    )
+    from ingestion.calendar.nbs_api import release_entry_to_records
+
+    _, event = release_entry_to_records(january_cpi, snapshot_epoch_ms=0)
+    assert event.reference_date == "2026-01-01"
+    assert event.reference_label == "2026-01"
 
 
 def test_parse_pmi_march_cell_emits_both_spring_festival_and_regular_dates() -> None:
@@ -510,11 +592,12 @@ def test_fetch_projects_fixture_into_events(store: SQLiteEngineStore) -> None:
             snapshot_epoch_ms=1_700_000_000,
         )
     # 12 CPI + 12 PPI + 11 Industrial Production + 11 Fixed Asset
-    # Investment + 11 Retail Sales + 12×2 PMI = 81 entries. PMI lands
-    # 12 per spec because the March cell carries both the
+    # Investment + 11 Retail Sales + 12×2 PMI + 4 GDP = 85 entries.
+    # PMI lands 12 per spec because the March cell carries both the
     # Spring-Festival-delayed Feb release and the regular Mar 31
-    # release.
-    expected_entries = 81
+    # release. GDP lands 4 entries from the quarterly-month filter on
+    # the "National Economic Performance" row.
+    expected_entries = 85
     assert captured_url == [FIXTURE_CALENDAR_URL]
     assert summary.entries_parsed == expected_entries
     assert summary.rows_raw_inserted == expected_entries

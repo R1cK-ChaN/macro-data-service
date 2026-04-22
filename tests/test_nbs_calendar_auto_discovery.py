@@ -245,11 +245,13 @@ def test_fetch_auto_discovers_url_when_not_supplied(
     assert summary.calendar_url.endswith("t20260105_1234567.html")
     assert captured_article_urls == [summary.calendar_url]
     # 12 CPI + 12 PPI + 11 Industrial Production + 11 Fixed Asset
-    # Investment + 11 Retail Sales + 12×2 PMI = 81 entries (PMI's
-    # March cell carries the Spring-Festival-delayed Feb date plus
-    # the regular Mar 31 date).
-    assert summary.entries_parsed == 81
-    assert summary.events_upserted == 81
+    # Investment + 11 Retail Sales + 12×2 PMI + 4 GDP = 85 entries.
+    # PMI's March cell carries the Spring-Festival-delayed Feb date
+    # plus the regular Mar 31 date; GDP lands 4 entries from the
+    # quarterly-month filter on the "National Economic Performance"
+    # row.
+    assert summary.entries_parsed == 85
+    assert summary.events_upserted == 85
 
 
 def test_fetch_skips_index_when_calendar_url_supplied(
@@ -274,7 +276,7 @@ def test_fetch_skips_index_when_calendar_url_supplied(
         )
     assert summary.url_auto_discovered is False
     assert index_calls == []  # explicit URL bypasses discovery
-    assert summary.entries_parsed == 81
+    assert summary.entries_parsed == 85
 
 
 # ──────────────────────────────────────────────────────────────────────────

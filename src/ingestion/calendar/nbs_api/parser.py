@@ -24,6 +24,7 @@ the corresponding press-release URL and upsert on the same id).
 
 from __future__ import annotations
 
+import calendar as _calendar
 import hashlib
 import json
 from dataclasses import dataclass
@@ -120,6 +121,46 @@ _HASH_FIELDS: tuple[str, ...] = (
     "date_cell",
 )
 
+# For indicators with ``reference_cadence="quarterly"`` (currently
+# GDP only — see ``indicators.py``). Each map key is the release
+# month; the value is ``(reference_year_delta, reference_quarter)``
+# where ``reference_year_delta`` is added to the release year to get
+# the reference year. January's quarterly release covers the prior
+# year's Q4 (year_delta = -1); April / July / October cover the
+# immediately preceding quarter of the current year (year_delta = 0).
+_QUARTERLY_RELEASE_MAP: dict[int, tuple[int, int]] = {
+    1:  (-1, 4),
+    4:  (0,  1),
+    7:  (0,  2),
+    10: (0,  3),
+}
+_QUARTER_END_MONTH: dict[int, int] = {1: 3, 2: 6, 3: 9, 4: 12}
+
+
+def _quarterly_reference(release_date: date) -> tuple[str, str]:
+    """Translate a quarterly-cadence release date to its reference period.
+
+    Returns ``(reference_date_iso, reference_label)``. The reference
+    date is the last day of the reference quarter (``"2025-12-31"`` for
+    Q4 2025); the label follows the ``"YYYY-QN"`` shape so downstream
+    consumers (parity harness, UI) distinguish quarterly from monthly
+    buckets at a glance.
+
+    Release months outside the quarterly set fall back to release-
+    month-first semantics — defence-in-depth against a scraper-side
+    regression that lets an off-cadence month slip through the
+    ``publishing_months`` filter on the spec.
+    """
+    mapping = _QUARTERLY_RELEASE_MAP.get(release_date.month)
+    if mapping is None:
+        reference_date = date(release_date.year, release_date.month, 1)
+        return reference_date.isoformat(), release_date.strftime("%Y-%m")
+    year_delta, quarter = mapping
+    year = release_date.year + year_delta
+    month = _QUARTER_END_MONTH[quarter]
+    day = _calendar.monthrange(year, month)[1]
+    return date(year, month, day).isoformat(), f"{year}-Q{quarter}"
+
 
 def _content_hash(payload: dict[str, Any]) -> str:
     parts = []
@@ -167,8 +208,11 @@ def release_entry_to_records(
         release_date.isoformat(),
     )
 
-    reference_month_date = date(entry.year, entry.month, 1).isoformat()
-    reference_label = release_date.strftime("%Y-%m")
+    if resolved_spec.reference_cadence == "quarterly":
+        reference_date_iso, reference_label = _quarterly_reference(release_date)
+    else:
+        reference_date_iso = date(entry.year, entry.month, 1).isoformat()
+        reference_label = release_date.strftime("%Y-%m")
 
     payload: dict[str, Any] = {
         "kind":               "nbs_scheduled_release",
@@ -210,7 +254,7 @@ def release_entry_to_records(
         provider_event_id=provider_event_id,
         event_time_utc=event_time_utc,
         event_time_precision="datetime",
-        reference_date=reference_month_date,
+        reference_date=reference_date_iso,
         reference_label=reference_label,
         country_code=resolved_spec.country_code,
         indicator_id=None,

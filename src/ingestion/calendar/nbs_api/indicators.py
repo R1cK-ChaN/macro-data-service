@@ -5,8 +5,8 @@ the projector writes into ``cal_econ_event``: country, display title,
 unit, and trader-impact importance.
 
 P5 shipped one anchor — ``CPI`` (China Consumer Price Index). P5c
-expands the whitelist with six more indicators, each verified against
-the NBS 2026 yearly calendar via the live probe (2026-04-22):
+expanded the whitelist with six more indicators, each verified
+against the NBS 2026 yearly calendar via the live probe (2026-04-22):
 
 - **PPI** — Industrial Producer Price Index (monthly, 09:30 CST).
 - **Industrial Production** — "Monthly Report on Industrial Production
@@ -25,14 +25,17 @@ the NBS 2026 yearly calendar via the live probe (2026-04-22):
   :class:`NBSReleaseEntry` rows per match so both indicators land as
   distinct calendar events.
 
-GDP is *not* registered. NBS publishes quarterly GDP inside the
-monthly "National Economic Performance" release (rows 1–2 on the
-calendar), which mixes 20+ indicators into one release rather than
-giving GDP a dedicated row. Registering
-``label_fragment="national economic performance"`` as GDP would
-over-emit (11 monthly events vs the 4 quarterly GDP releases that
-matter to traders); handling that cadence needs a quarterly-month
-filter that belongs in a dedicated follow-up slice.
+P5c-gdp adds **GDP** — quarterly, 10:00 CST — published under the
+"National Economic Performance" row alongside monthly roll-ups. The
+NBS 2026 calendar note 3 states explicitly: "Annual and quarterly
+national economic performance will be released in January, April,
+July, and October", with the other seven calendar entries on that
+row being the monthly aggregate rather than a GDP release. The spec
+carries ``publishing_months=frozenset({1, 4, 7, 10})`` so the
+scraper emits exactly four GDP events per year, and
+``reference_cadence="quarterly"`` so the projector anchors each
+event on the end-of-prior-quarter instead of the release-month
+first-of-month used for monthly indicators.
 
 The shape mirrors :mod:`ingestion.calendar.bls_api.indicators`,
 :mod:`ingestion.calendar.bea_api.indicators`,
@@ -43,6 +46,7 @@ The shape mirrors :mod:`ingestion.calendar.bls_api.indicators`,
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,19 @@ class NBSIndicatorSpec:
     # (CPI)``). Match is substring-based and case-insensitive so minor
     # upstream wording tweaks don't silently drop the indicator.
     label_fragment: str
+    # Optional filter — emit entries only for months in this set. Used
+    # by GDP, which shares the "National Economic Performance" row with
+    # monthly roll-ups; restricting to {1, 4, 7, 10} keeps the four
+    # quarterly GDP events and drops the seven monthly cadence entries.
+    # ``None`` (default) means every non-empty month cell emits an
+    # entry — current behavior for monthly indicators.
+    publishing_months: frozenset[int] | None = None
+    # ``"monthly"`` (default): reference_date = first-of-release-month,
+    # reference_label = ``"YYYY-MM"``. ``"quarterly"``: reference_date =
+    # end-of-prior-quarter relative to the release date, reference_label
+    # = ``"YYYY-QN"``. Determines how the projector anchors the event's
+    # reference period on ``cal_econ_event``.
+    reference_cadence: Literal["monthly", "quarterly"] = "monthly"
 
 
 INDICATOR_REGISTRY: dict[str, NBSIndicatorSpec] = {
@@ -141,5 +158,30 @@ INDICATOR_REGISTRY: dict[str, NBSIndicatorSpec] = {
         importance="high",
         category="Activity",
         label_fragment="purchasing managers",
+    ),
+    "GDP": NBSIndicatorSpec(
+        indicator="GDP",
+        country_code="CN",
+        title="China GDP",
+        unit="percent_yoy",
+        importance="high",
+        category="Activity",
+        # "National Economic Performance" is NBS's umbrella row — it
+        # carries the quarterly GDP release alongside monthly roll-ups.
+        # The month filter below is what separates the quarterly GDP
+        # entries from the monthly aggregate entries; without it, GDP
+        # would over-emit 11 events per year.
+        label_fragment="national economic performance",
+        # Per NBS 2026 calendar note 3: "Annual and quarterly national
+        # economic performance will be released in January, April,
+        # July, and October". Everything outside these four months on
+        # this row is the monthly national-economic-performance release
+        # (a different publication that isn't on our whitelist).
+        publishing_months=frozenset({1, 4, 7, 10}),
+        # January release covers the prior-year Q4 annual + quarterly;
+        # April / July / October cover the immediately preceding
+        # quarter. The projector translates release month → end-of-
+        # prior-quarter reference date.
+        reference_cadence="quarterly",
     ),
 }

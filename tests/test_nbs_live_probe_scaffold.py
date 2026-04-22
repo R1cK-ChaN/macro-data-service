@@ -122,7 +122,10 @@ def test_runner_happy_path(validator) -> None:
         html_fetcher=_article_fetcher,
     )
     assert result.status == "ok"
-    assert result.row_count == 81
+    # 12 CPI + 12 PPI + 11 Industrial Production + 11 Fixed Asset
+    # Investment + 11 Retail Sales + 12×2 PMI + 4 GDP = 85 entries
+    # from the fixture.
+    assert result.row_count == 85
     # Sample is newest-first — December.
     assert result.sample_row["month"] == 12
     assert result.parse_attempts == 10  # capped at 10 per existing pattern

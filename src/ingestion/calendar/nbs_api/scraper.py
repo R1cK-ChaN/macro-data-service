@@ -250,6 +250,17 @@ def parse_nbs_calendar_html(
         for month_idx, cell in enumerate(month_cells, start=1):
             for day, weekday, normalized in _parse_day_cell(cell):
                 for spec in matching_specs:
+                    # Indicators that share a row with off-cadence
+                    # entries (GDP inside the "National Economic
+                    # Performance" row) carry a ``publishing_months``
+                    # filter. Without it, GDP would over-emit the
+                    # seven monthly national-economic-performance
+                    # entries as spurious quarterly GDP releases.
+                    if (
+                        spec.publishing_months is not None
+                        and month_idx not in spec.publishing_months
+                    ):
+                        continue
                     entries.append(
                         NBSReleaseEntry(
                             year=year,
