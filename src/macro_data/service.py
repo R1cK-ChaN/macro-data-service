@@ -1121,6 +1121,76 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    # ── Cross-connector recurring refresh (issue #9 P-sched-1) ──────────
+
+    def _op_calendar_econ_refresh_schedules(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Invoke every official-source connector's schedule scrape.
+
+        Daily-cron candidate for the recurring-fetch scheduler
+        (:mod:`ingestion.calendar.scheduler`). Iterates BLS + BEA +
+        ECB + Fed FOMC + Fed releasedates + NBS in order, isolating
+        per-connector exceptions so one upstream outage (ECB 502, NBS
+        timeout, …) doesn't roll back the rest. Each connector gets
+        its own connection / commit / rollback lifecycle.
+
+        Arguments:
+          dry_run    — default True. No HTTP, no DB writes.
+          connectors — optional list subset of
+                       ``["bls","bea","ecb","fed-fomc","fed-releases","nbs"]``;
+                       omit to run all six.
+
+        This slice ships only the schedule-side aggregator. The
+        value-side sweep (triggered after each expected release
+        crosses its scheduled time), budget guards / circuit breakers,
+        and health-telemetry wiring are follow-up slices under the
+        P-sched umbrella.
+        """
+        from ingestion.calendar.scheduler import (
+            ALL_CONNECTORS,
+            refresh_all_schedules,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_connectors = arguments.get("connectors") or None
+        connectors: list[str] | None
+        if isinstance(raw_connectors, list) and raw_connectors:
+            connectors = [str(c) for c in raw_connectors]
+        else:
+            connectors = None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        summary = refresh_all_schedules(
+            get_conn,
+            dry_run=dry_run,
+            connectors=connectors,
+        )
+
+        return {
+            "dry_run":             summary.dry_run,
+            "connectors_planned":  summary.connectors_planned,
+            "connectors_all":      list(ALL_CONNECTORS),
+            "unknown_connectors":  summary.unknown_connectors,
+            "ok_count":            summary.ok_count,
+            "failed_count":        summary.failed_count,
+            "results": [
+                {
+                    "connector":    r.connector,
+                    "ok":           r.ok,
+                    "error":        r.error,
+                    "summary":      r.summary,
+                    "wall_seconds": r.wall_seconds,
+                }
+                for r in summary.results
+            ],
+            "stopped_reason":      "dry_run" if dry_run else None,
+            "wall_seconds":        round(summary.wall_seconds, 3),
+        }
+
     def _op_list_calendar_items(
         self, arguments: dict[str, Any],
     ) -> dict[str, Any]:
