@@ -886,17 +886,18 @@ class LocalMacroDataService:
             connection.close()
 
         return {
-            "dry_run":            False,
-            "start_period":       summary.start_period,
-            "end_period":         summary.end_period,
-            "series_planned":     summary.series_planned,
-            "series_ok":          summary.series_ok,
-            "series_empty":       summary.series_empty,
-            "series_unknown":     summary.series_unknown,
-            "observations_seen":  summary.observations_seen,
-            "rows_raw_inserted":  summary.rows_raw_inserted,
-            "events_upserted":    summary.events_upserted,
-            "wall_seconds":       round(summary.wall_seconds, 3),
+            "dry_run":                   False,
+            "start_period":              summary.start_period,
+            "end_period":                summary.end_period,
+            "series_planned":            summary.series_planned,
+            "series_ok":                 summary.series_ok,
+            "series_empty":              summary.series_empty,
+            "series_unknown":            summary.series_unknown,
+            "observations_seen":         summary.observations_seen,
+            "rows_raw_inserted":         summary.rows_raw_inserted,
+            "events_upserted":           summary.events_upserted,
+            "decision_anchor_fallbacks": summary.decision_anchor_fallbacks,
+            "wall_seconds":              round(summary.wall_seconds, 3),
         }
 
     def _op_calendar_econ_schedule_ecb(

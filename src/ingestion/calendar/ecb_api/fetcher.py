@@ -18,26 +18,33 @@ no table-wide fan-out to dedupe at the client.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import sqlite3
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Iterable
 
 import requests
 
+from ingestion.calendar._official_shared import (
+    canonicalize_indicator,
+    synthesize_event_id,
+)
 from ingestion.timeseries.sdmx._types import SDMXObservation
 from ingestion.timeseries.sdmx.providers.ecb import ECBClient
 
 from .indicators import INDICATOR_REGISTRY
 from .parser import (
+    PROVIDER,
     ECBCalendarEventRecord,
     ECBCalendarRawRecord,
     parse_observation,
 )
 from .projector import project_events, store_raw
 from .schedule import (
+    ECB_MP_DECISION_SPEC,
     fetch_bulletin_html,
     fetch_gc_meetings_html,
     parse_bulletin_html,
@@ -46,6 +53,16 @@ from .schedule import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Maximum gap in days from an ECB decision date to the next rate
+# effective date. The ECB Governing Council decides rates around
+# 14:15 CET on a meeting day; new levels take effect on the next
+# main refinancing settlement day (Wednesday of the following week
+# under normal operational conditions — gap typically 5–7 days,
+# occasionally longer around holidays). 14 days leaves headroom
+# without reaching into the previous meeting cycle (meetings run
+# ~every six weeks).
+_DECISION_EFFECTIVE_GAP_DAYS: int = 14
 
 
 @dataclass
@@ -62,6 +79,11 @@ class FetchRunSummary:
     series_ok: list[str] = field(default_factory=list)
     series_empty: list[str] = field(default_factory=list)
     series_unknown: list[str] = field(default_factory=list)
+    # Count of rate-change observations that kept the parser's
+    # effective-date anchor because no MP-decision schedule row was
+    # found within ``_DECISION_EFFECTIVE_GAP_DAYS``. Expected to be
+    # zero once the schedule scrape has run against the same window.
+    decision_anchor_fallbacks: int = 0
     wall_seconds: float = 0.0
 
 
@@ -124,6 +146,90 @@ def _collapse_to_rate_changes(
             kept.append(obs)
             previous_value = obs.value
     return kept
+
+
+def _resolve_decision_timestamp(
+    connection: sqlite3.Connection,
+    *,
+    effective_date: str,
+    gap_days: int = _DECISION_EFFECTIVE_GAP_DAYS,
+) -> str | None:
+    """Find the nearest preceding ECB MP-decision timestamp.
+
+    The SDMX FM dataflow emits rate-level observations on the
+    **effective date** — typically 5–7 days after the Governing
+    Council meeting. Schedule-side scraping has already landed one
+    ``ECB_MP_DECISION`` row per meeting with ``event_time_utc`` at
+    the 14:15 CET decision timestamp (DST-correct). We look up that
+    row within ``gap_days`` before ``effective_date`` so every rate
+    observation shares an anchor with the meeting that produced it.
+
+    Returns the decision row's ``event_time_utc`` string, or ``None``
+    when no row is found — callers then keep the parser's
+    effective-date timestamp and log a warning.
+    """
+    try:
+        effective = date.fromisoformat(effective_date)
+    except (TypeError, ValueError):
+        return None
+    decision_indicator = canonicalize_indicator(ECB_MP_DECISION_SPEC.indicator)
+    candidate_ids = [
+        synthesize_event_id(
+            PROVIDER,
+            ECB_MP_DECISION_SPEC.country_code,
+            decision_indicator,
+            (effective - timedelta(days=offset)).isoformat(),
+        )
+        for offset in range(0, gap_days + 1)
+    ]
+    placeholders = ",".join(["?"] * len(candidate_ids))
+    cursor = connection.execute(
+        f"""
+        SELECT event_time_utc
+        FROM cal_econ_event
+        WHERE provider = ?
+          AND event_time_precision = 'datetime'
+          AND provider_event_id IN ({placeholders})
+        ORDER BY reference_date DESC
+        LIMIT 1
+        """,
+        (PROVIDER, *candidate_ids),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    decision_event_time_utc = row[0]
+    if not decision_event_time_utc:
+        return None
+    return decision_event_time_utc
+
+
+def _apply_decision_timestamp(
+    event: ECBCalendarEventRecord,
+    *,
+    decision_event_time_utc: str,
+) -> ECBCalendarEventRecord:
+    """Promote a rate observation's ``event_time_utc`` onto the
+    decision datetime while keeping its ``provider_event_id``
+    stable.
+
+    The rate row stays anchored on effective date so identical
+    re-fetches hit the same conflict key; the corrected merge CASE
+    in the shared projector then promotes a stored
+    ``approximate``-precision row to the new ``datetime``
+    timestamp. Rebasing the id too (earlier draft) would have
+    created a second ``(provider, provider_event_id)`` key for the
+    same observation and left pre-slice effective-date rows
+    orphaned alongside new decision-date rows. Three rates of one
+    decision still converge to the same minute via
+    ``event_time_utc``; a time-range calendar query at 14:15 CET on
+    decision day surfaces all of them.
+    """
+    return dataclasses.replace(
+        event,
+        event_time_utc=decision_event_time_utc,
+        event_time_precision="datetime",
+    )
 
 
 def _latest_stored_rate(
@@ -276,6 +382,31 @@ def fetch_ecb_calendar(
             raw_rec, event_rec = parse_observation(
                 obs, snapshot_epoch_ms=snapshot, spec=spec,
             )
+            # Promote the rate's timestamp onto the preceding
+            # ECB_MP_DECISION schedule row's 14:15 CET decision
+            # datetime. The ``provider_event_id`` stays at the
+            # effective-date anchor so identical re-fetches upsert
+            # onto the same row rather than forking into a
+            # decision-anchored duplicate; a trader querying the
+            # calendar at 2025-10-23T14:15 still sees MRO + DFR +
+            # MLF converging on the same minute via their shared
+            # ``event_time_utc``.
+            decision_event_time_utc = _resolve_decision_timestamp(
+                connection, effective_date=obs.date,
+            )
+            if decision_event_time_utc is None:
+                summary.decision_anchor_fallbacks += 1
+                logger.warning(
+                    "ECB rate observation %s effective=%s has no "
+                    "preceding MP_DECISION schedule row within "
+                    "%d days; keeping effective-date timestamp",
+                    sid, obs.date, _DECISION_EFFECTIVE_GAP_DAYS,
+                )
+            else:
+                event_rec = _apply_decision_timestamp(
+                    event_rec,
+                    decision_event_time_utc=decision_event_time_utc,
+                )
             raw_records.append(raw_rec)
             event_records.append(event_rec)
 
