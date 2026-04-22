@@ -1121,7 +1121,103 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
-    # ── Cross-connector recurring refresh (issue #9 P-sched-1) ──────────
+    # ── Cross-connector recurring refresh (issue #9 P-sched-1 / P-sched-2) ──
+
+    def _op_calendar_econ_sweep_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Invoke every value-side connector to fill ``actual`` on recent rows.
+
+        Frequent-cron candidate — paired with
+        :func:`calendar_econ_refresh_schedules` for the full P-sched
+        coverage. The schedule-side refresh runs once daily (cheap,
+        forward-looking); this sweep runs every few minutes so a
+        just-published release crosses into ``cal_econ_event`` with
+        ``actual`` populated within minutes of publication.
+
+        Arguments:
+          dry_run      — default True. No HTTP, no DB writes.
+          connectors   — optional list subset of
+                         ``["bls", "bea", "ecb", "fed-values"]``.
+          start_year   — optional int; default ``current_year − 1``.
+                         Applied to BLS / BEA only.
+          end_year     — optional int; default current year. BLS / BEA.
+          start_period — optional SDMX period string (ECB only).
+          end_period   — optional SDMX period string (ECB only).
+
+        NBS is not in the plan — the yearly calendar scraper is
+        schedule-only; per-release value scraping for NBS indicators
+        is a future slice.
+        """
+        from ingestion.calendar.scheduler import (
+            ALL_VALUE_SIDE_CONNECTORS,
+            sweep_value_side,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_connectors = arguments.get("connectors")
+        connectors: list[str] | None
+        if raw_connectors is None:
+            # Key absent → fall through to the full default plan.
+            connectors = None
+        elif isinstance(raw_connectors, list):
+            # Key present — preserve the list shape so an explicit
+            # empty ``[]`` means "run nothing" rather than being
+            # silently promoted to the full plan.
+            connectors = [str(c) for c in raw_connectors]
+        else:
+            connectors = None
+
+        def _opt_int(key: str) -> int | None:
+            raw = arguments.get(key)
+            if raw is None or raw == "":
+                return None
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return None
+
+        def _opt_str(key: str) -> str | None:
+            raw = arguments.get(key)
+            if raw is None:
+                return None
+            text = str(raw).strip()
+            return text or None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        summary = sweep_value_side(
+            get_conn,
+            dry_run=dry_run,
+            start_year=_opt_int("start_year"),
+            end_year=_opt_int("end_year"),
+            start_period=_opt_str("start_period"),
+            end_period=_opt_str("end_period"),
+            connectors=connectors,
+        )
+
+        return {
+            "dry_run":             summary.dry_run,
+            "connectors_planned":  summary.connectors_planned,
+            "connectors_all":      list(ALL_VALUE_SIDE_CONNECTORS),
+            "unknown_connectors":  summary.unknown_connectors,
+            "ok_count":            summary.ok_count,
+            "failed_count":        summary.failed_count,
+            "results": [
+                {
+                    "connector":    r.connector,
+                    "ok":           r.ok,
+                    "error":        r.error,
+                    "summary":      r.summary,
+                    "wall_seconds": r.wall_seconds,
+                }
+                for r in summary.results
+            ],
+            "stopped_reason":      "dry_run" if dry_run else None,
+            "wall_seconds":        round(summary.wall_seconds, 3),
+        }
 
     def _op_calendar_econ_refresh_schedules(
         self, arguments: dict[str, Any],
@@ -1153,9 +1249,15 @@ class LocalMacroDataService:
         )
 
         dry_run = bool(arguments.get("dry_run", True))
-        raw_connectors = arguments.get("connectors") or None
+        raw_connectors = arguments.get("connectors")
         connectors: list[str] | None
-        if isinstance(raw_connectors, list) and raw_connectors:
+        if raw_connectors is None:
+            # Key absent → fall through to the full default plan.
+            connectors = None
+        elif isinstance(raw_connectors, list):
+            # Key present — preserve the list shape so an explicit
+            # empty ``[]`` means "run nothing" rather than being
+            # silently promoted to the full plan.
             connectors = [str(c) for c in raw_connectors]
         else:
             connectors = None

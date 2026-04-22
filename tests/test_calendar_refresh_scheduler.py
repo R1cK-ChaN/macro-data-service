@@ -1,20 +1,18 @@
-"""Mocked tests for the cross-connector schedule refresh driver
-(issue #9 P-sched-1).
+"""Mocked tests for the cross-connector schedule refresh + value-side
+sweep drivers (issue #9 P-sched-1 / P-sched-2).
 
 Covers:
 
-- Dry-run returns the per-connector plan with no HTTP.
-- Execute mode hits every connector's override in the declared order.
-- Per-connector exception is isolated — one connector raising does not
-  skip the subsequent connectors.
-- Per-connector commit / rollback — a failing connector's writes roll
-  back while prior connectors' commits stay landed.
-- ``connectors=[...]`` subset argument narrows the run.
-- Service op ``calendar_econ_refresh_schedules`` dry-run + execute +
-  subset path exposes the same shape.
+- Schedule-side refresh (P-sched-1) — dry-run plan, per-connector
+  exception isolation, commit / rollback semantics, subset argument,
+  in-summary failure detection, unknown connector names.
+- Value-side sweep (P-sched-2) — same isolation invariants applied to
+  the value-side connectors (BLS / BEA / ECB / Fed-values), plus
+  year / period config forwarded to per-connector closures, and the
+  NBS-absent plan (no value-side op yet).
 
-The driver is written around a ``_connector_overrides`` test seam so
-no real BLS / BEA / ECB / Fed / NBS HTTP fires in CI.
+The drivers are written around a ``_connector_overrides`` test seam
+so no real BLS / BEA / ECB / Fed / NBS HTTP fires in CI.
 """
 
 from __future__ import annotations
@@ -27,9 +25,11 @@ import pytest
 
 from ingestion.calendar.scheduler import (
     ALL_CONNECTORS,
+    ALL_VALUE_SIDE_CONNECTORS,
     ConnectorResult,
     RefreshRunSummary,
     refresh_all_schedules,
+    sweep_value_side,
 )
 from storage.sqlite import SQLiteEngineStore
 
@@ -445,3 +445,328 @@ def test_service_op_connectors_subset_narrows_the_run(
     )
     assert result["connectors_planned"] == ["bls", "ecb"]
     assert len(result["results"]) == 2
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# sweep_value_side (P-sched-2)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_value_side_default_plan_covers_four_connectors() -> None:
+    """Value-side plan omits NBS (no value-side op shipped) and the
+    two Fed schedule-side surfaces (``fed-fomc`` / ``fed-releases``)
+    — the value-bearing Fed op lives under ``fed-values``."""
+    assert ALL_VALUE_SIDE_CONNECTORS == ("bls", "bea", "ecb", "fed-values")
+
+
+def test_value_side_dry_run_hits_every_connector(
+    store: SQLiteEngineStore,
+) -> None:
+    call_log: list[tuple[str, bool]] = []
+
+    def _make_fn(name: str):
+        def _fn(conn: sqlite3.Connection, dry_run: bool):
+            call_log.append((name, dry_run))
+            return _FakeSummary(connector=name, dry_run=dry_run, calls=1)
+        return _fn
+
+    overrides = {name: _make_fn(name) for name in ALL_VALUE_SIDE_CONNECTORS}
+    summary = sweep_value_side(
+        store.get_connection,
+        dry_run=True,
+        _connector_overrides=overrides,
+    )
+    assert summary.dry_run is True
+    assert summary.connectors_planned == list(ALL_VALUE_SIDE_CONNECTORS)
+    assert [c for c, _ in call_log] == list(ALL_VALUE_SIDE_CONNECTORS)
+    assert summary.ok_count == 4
+    assert summary.failed_count == 0
+
+
+def test_value_side_missing_api_key_isolates_to_one_connector(
+    store: SQLiteEngineStore,
+) -> None:
+    """The default BLS shim raises ``BLS_API_KEY not set`` when the env
+    var is absent — the test exercises that contract through the fake
+    override path so the isolation guarantee is pinned."""
+    def _no_key(conn, dry_run):
+        raise RuntimeError("BLS_API_KEY not set")
+
+    def _ok(name: str):
+        def _fn(conn, dry_run):
+            return _FakeSummary(connector=name, dry_run=dry_run, calls=1)
+        return _fn
+
+    overrides = {
+        "bls":        _no_key,
+        "bea":        _ok("bea"),
+        "ecb":        _ok("ecb"),
+        "fed-values": _ok("fed-values"),
+    }
+    summary = sweep_value_side(
+        store.get_connection,
+        dry_run=False,
+        _connector_overrides=overrides,
+    )
+    bls_result = next(r for r in summary.results if r.connector == "bls")
+    assert bls_result.ok is False
+    assert "BLS_API_KEY" in (bls_result.error or "")
+    assert summary.ok_count == 3
+    assert summary.failed_count == 1
+
+
+def test_value_side_subset_narrows_and_skips_unknown(
+    store: SQLiteEngineStore,
+) -> None:
+    """Value-side subset filter: only ``fed-values`` runs (auto-
+    discovery), and a typo like ``"nbss"`` surfaces on
+    ``unknown_connectors`` rather than silently dropping."""
+    call_log: list[str] = []
+
+    def _fn(conn, dry_run):
+        call_log.append("fed-values")
+        return _FakeSummary(connector="fed-values", dry_run=dry_run, calls=1)
+
+    summary = sweep_value_side(
+        store.get_connection,
+        dry_run=True,
+        connectors=["fed-values", "nbss"],
+        _connector_overrides={"fed-values": _fn},
+    )
+    assert call_log == ["fed-values"]
+    assert summary.connectors_planned == ["fed-values"]
+    assert summary.unknown_connectors == ["nbss"]
+    assert summary.ok_count == 1
+    assert summary.failed_count == 1
+
+
+def test_value_side_failure_marker_detection_is_shared(
+    store: SQLiteEngineStore,
+) -> None:
+    """The summary-level failure detection (`fetch_error`, `series_failed`,
+    …) added to schedule-side refresh in P-sched-1 still applies to
+    value-side summaries — BLS's value-side op also stores per-series
+    failures in ``series_failed``."""
+
+    @dataclass
+    class _BlsLikeSummary:
+        dry_run: bool
+        series_failed: list[tuple[str, str]]
+
+    def _bls_outage(conn, dry_run):
+        return _BlsLikeSummary(
+            dry_run=dry_run,
+            series_failed=[("CUUR0000SA0", "500")],
+        )
+
+    summary = sweep_value_side(
+        store.get_connection,
+        dry_run=False,
+        connectors=["bls"],
+        _connector_overrides={"bls": _bls_outage},
+    )
+    bls_result = next(r for r in summary.results if r.connector == "bls")
+    assert bls_result.ok is False
+    assert "series failed" in (bls_result.error or "")
+
+
+def test_value_side_service_op_dry_run_envelope(
+    store: SQLiteEngineStore,
+) -> None:
+    """Dry-run through the service surface — the envelope shape
+    matches the schedule-side refresh op so cron scripts can use the
+    same parser."""
+    from macro_data.service import LocalMacroDataService
+
+    svc = LocalMacroDataService(store=store)
+    result = svc.invoke(
+        "calendar_econ_sweep_values",
+        {"dry_run": True, "connectors": ["fed-values"]},
+    )
+    assert result["dry_run"] is True
+    assert result["stopped_reason"] == "dry_run"
+    assert result["connectors_all"] == list(ALL_VALUE_SIDE_CONNECTORS)
+    assert result["connectors_planned"] == ["fed-values"]
+    assert result["ok_count"] == 1
+    assert result["failed_count"] == 0
+
+
+def test_fed_values_fetch_failures_flip_ok_false(
+    store: SQLiteEngineStore,
+) -> None:
+    """Fix for Codex P2 round 1 on P-sched-2: Fed-values stores
+    per-URL failures in ``fetch_failures`` / ``parse_failures``
+    tuples. A sweep that 404s on every statement URL lands them there
+    and returns normally, so the driver would otherwise report
+    ``ok=True`` for a Fed run that fetched zero actuals.
+
+    Driver now inspects both lists and flips ``ok=False`` with the
+    count + first failure as the reason."""
+
+    @dataclass
+    class _FedValuesLikeSummary:
+        dry_run: bool
+        fetch_failures: list[tuple[str, str]]
+
+    @dataclass
+    class _FedValuesParseFailSummary:
+        dry_run: bool
+        parse_failures: list[tuple[str, str]]
+
+    def _fetch_404(conn, dry_run):
+        return _FedValuesLikeSummary(
+            dry_run=dry_run,
+            fetch_failures=[("2025-01-29", "HTTP 404")],
+        )
+
+    def _parse_drift(conn, dry_run):
+        return _FedValuesParseFailSummary(
+            dry_run=dry_run,
+            parse_failures=[("2025-03-19", "target-range sentence not found")],
+        )
+
+    fetch_summary = sweep_value_side(
+        store.get_connection,
+        dry_run=False,
+        connectors=["fed-values"],
+        _connector_overrides={"fed-values": _fetch_404},
+    )
+    r = next(r for r in fetch_summary.results if r.connector == "fed-values")
+    assert r.ok is False
+    assert "1 fetch failures" in (r.error or "")
+
+    parse_summary = sweep_value_side(
+        store.get_connection,
+        dry_run=False,
+        connectors=["fed-values"],
+        _connector_overrides={"fed-values": _parse_drift},
+    )
+    r = next(r for r in parse_summary.results if r.connector == "fed-values")
+    assert r.ok is False
+    assert "1 parse failures" in (r.error or "")
+
+
+def test_ecb_default_period_is_bounded(
+    store: SQLiteEngineStore,
+) -> None:
+    """Fix for Codex P2 round 2 finding #1: the frequent-cron sweep
+    must not issue unbounded SDMX requests. Left to its own devices,
+    ``fetch_ecb_calendar(start_period=None, end_period=None)``
+    re-projects the full ECB history every run. The driver now
+    resolves ``start_period`` to ~180 days ago (``"YYYY-MM"``) unless
+    the operator overrides it, covering the last 3-4 GC meetings
+    cheaply."""
+    import re
+    captured: dict[str, Any] = {}
+
+    def _spy_ecb(conn, dry_run):
+        # The real shim closes over ``resolved_start_period`` so the
+        # override path sees what the driver passes into the library
+        # function. Simulate the spy by reading the closure variable
+        # back via a fresh sweep.
+        return _FakeSummary(connector="ecb", dry_run=dry_run, calls=1)
+
+    # The resolved start_period isn't directly exposed, so drive the
+    # real ``_ecb_values`` closure path through the service op's
+    # dry-run and assert the observable window in the output envelope
+    # (fetch_ecb_calendar dry-run reports its window in the summary).
+    from macro_data.service import LocalMacroDataService
+    svc = LocalMacroDataService(store=store)
+    result = svc.invoke(
+        "calendar_econ_sweep_values",
+        {"dry_run": True, "connectors": ["ecb"]},
+    )
+    ecb_summary = result["results"][0]["summary"]
+    # The fetch_ecb_calendar dry-run plan carries ``start_period``.
+    assert "start_period" in ecb_summary
+    period = ecb_summary["start_period"]
+    # Should be a "YYYY-MM" string, not empty and not "" (unbounded).
+    assert re.fullmatch(r"\d{4}-\d{2}", period), (
+        f"ECB default period expected YYYY-MM format, got {period!r}"
+    )
+    captured["period"] = period
+
+
+def test_ecb_explicit_period_wins_over_default(
+    store: SQLiteEngineStore,
+) -> None:
+    """Operator override: an explicit ``start_period`` passed through
+    the service op flows into the driver and wins over the 180-day
+    default. Needed for one-off historical backfills."""
+    from macro_data.service import LocalMacroDataService
+    svc = LocalMacroDataService(store=store)
+    result = svc.invoke(
+        "calendar_econ_sweep_values",
+        {
+            "dry_run": True,
+            "connectors": ["ecb"],
+            "start_period": "2015-01",
+            "end_period": "2015-12",
+        },
+    )
+    ecb_summary = result["results"][0]["summary"]
+    assert ecb_summary["start_period"] == "2015-01"
+    assert ecb_summary["end_period"] == "2015-12"
+
+
+def test_empty_connectors_list_runs_nothing(
+    store: SQLiteEngineStore,
+) -> None:
+    """Fix for Codex P2 round 2 finding #2: an operator who filters
+    their connector list down to ``[]`` expects to run nothing — the
+    earlier ``or None`` coercion promoted that to the full default
+    plan, which could have executed four connectors in execute mode
+    unintentionally. Key-absent and key-present-empty now behave
+    differently."""
+    from macro_data.service import LocalMacroDataService
+
+    svc = LocalMacroDataService(store=store)
+
+    # Schedule-side: empty explicit list → zero connectors run.
+    refresh = svc.invoke(
+        "calendar_econ_refresh_schedules",
+        {"dry_run": True, "connectors": []},
+    )
+    assert refresh["connectors_planned"] == []
+    assert refresh["results"] == []
+
+    # Value-side: same contract.
+    sweep = svc.invoke(
+        "calendar_econ_sweep_values",
+        {"dry_run": True, "connectors": []},
+    )
+    assert sweep["connectors_planned"] == []
+    assert sweep["results"] == []
+
+    # Key absent → full plan still runs.
+    refresh_default = svc.invoke(
+        "calendar_econ_refresh_schedules", {"dry_run": True},
+    )
+    assert refresh_default["connectors_planned"] == list(ALL_CONNECTORS)
+
+
+def test_value_side_service_op_forwards_year_args(
+    store: SQLiteEngineStore,
+) -> None:
+    """Operator-driven one-off with an explicit year window: the
+    service op forwards ``start_year`` / ``end_year`` into the driver.
+    Verified via the dry-run output since the real connectors still
+    surface their plan regardless of the window."""
+    from macro_data.service import LocalMacroDataService
+
+    svc = LocalMacroDataService(store=store)
+    result = svc.invoke(
+        "calendar_econ_sweep_values",
+        {
+            "dry_run": True,
+            "connectors": ["bls"],
+            "start_year": 2020,
+            "end_year": 2021,
+        },
+    )
+    assert result["dry_run"] is True
+    bls = result["results"][0]
+    # BLS dry-run surfaces its resolved year window in the summary
+    # dict via ``FetchRunSummary.start_year`` / ``end_year``.
+    assert bls["summary"]["start_year"] == 2020
+    assert bls["summary"]["end_year"] == 2021
