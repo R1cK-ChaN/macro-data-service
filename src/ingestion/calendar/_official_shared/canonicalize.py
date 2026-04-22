@@ -166,14 +166,21 @@ _ALIASES: dict[str, str] = {
     "non-manufacturing pmi": "NON_MFG_PMI",
     "nbs manufacturing pmi": "MFG_PMI",
     "nbs non-manufacturing pmi": "NON_MFG_PMI",
-    # NBS's ``cal_econ_event.title`` is "China GDP" (country-prefixed
-    # so a multi-country display surface can tell the indicator's
-    # origin at a glance). The parity harness canonicalizes every
-    # row's title; without this alias the four NBS GDP events would
-    # bucket separately from TE's ``"GDP"`` rows and show up as
-    # spurious official-only gaps even when reference dates align.
-    # Codex P2 on 2026-04-22.
+    # NBS's ``cal_econ_event.title`` carries a ``"China "`` country
+    # prefix on every indicator (so a multi-country display surface
+    # can tell the origin at a glance). The parity harness
+    # canonicalizes every row's title; without these aliases each
+    # NBS indicator's events would bucket separately from TE's rows
+    # for the same indicator, surfacing as spurious official-only
+    # gaps even when reference dates align.
     "china gdp": "GDP",
+    "china consumer price index": "CPI",
+    "china producer price index": "PPI",
+    "china industrial production": "INDUSTRIAL_PRODUCTION",
+    "china fixed asset investment": "FIXED_ASSET_INVESTMENT",
+    "china retail sales": "RETAIL_SALES",
+    "china manufacturing pmi": "MFG_PMI",
+    "china non-manufacturing pmi": "NON_MFG_PMI",
 }
 
 

@@ -185,6 +185,39 @@ def test_china_gdp_canonicalizes_to_gdp_alias() -> None:
     assert canonicalize_indicator(INDICATOR_REGISTRY["GDP"].title) == "GDP"
 
 
+def test_every_nbs_registry_title_canonicalizes_to_shared_token() -> None:
+    """Every NBS indicator's ``title`` prefixes ``"China "`` for display;
+    the parity harness canonicalizes each row's title before
+    bucketing. If any title lacks an alias, the NBS rows for that
+    indicator would bucket separately from TE's rows and surface as
+    spurious official-only gaps. Walk the registry end-to-end so the
+    invariant stays locked as new indicators land — adding a new NBS
+    spec without a matching alias fails here, not silently in the
+    parity report weeks later."""
+    from ingestion.calendar._official_shared import canonicalize_indicator
+
+    expected_tokens = {
+        "CPI":                    "CPI",
+        "PPI":                    "PPI",
+        "INDUSTRIAL_PRODUCTION":  "INDUSTRIAL_PRODUCTION",
+        "FIXED_ASSET_INVESTMENT": "FIXED_ASSET_INVESTMENT",
+        "RETAIL_SALES":           "RETAIL_SALES",
+        "MANUFACTURING_PMI":      "MFG_PMI",
+        "NON_MANUFACTURING_PMI":  "NON_MFG_PMI",
+        "GDP":                    "GDP",
+    }
+    assert set(expected_tokens) == set(INDICATOR_REGISTRY)
+    for key, expected in expected_tokens.items():
+        title = INDICATOR_REGISTRY[key].title
+        canonical = canonicalize_indicator(title)
+        assert canonical == expected, (
+            f"NBS spec {key!r} title {title!r} canonicalizes to "
+            f"{canonical!r} — expected {expected!r}. Add a "
+            f"'{title.lower()}': '{expected}' entry to _ALIASES in "
+            "ingestion.calendar._official_shared.canonicalize."
+        )
+
+
 def test_parse_monthly_indicators_unchanged_by_gdp_addition() -> None:
     """CPI / PPI and the other monthly indicators still use
     release-month-first reference dates and ``"YYYY-MM"`` labels —
