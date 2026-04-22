@@ -1060,6 +1060,67 @@ class LocalMacroDataService:
             "wall_seconds":         round(summary.wall_seconds, 3),
         }
 
+    def _op_calendar_econ_fetch_fed_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape FOMC statement pages and fill ``actual`` on existing rows.
+
+        Arguments:
+          dry_run       — default True. No HTTP, no DB writes.
+          closing_dates — optional list of ISO closing dates
+                          (``["2025-01-29"]``). When omitted, the op
+                          auto-discovers past FOMC meetings from
+                          ``cal_econ_event`` whose ``actual`` is still
+                          NULL.
+
+        The ``provider_event_id`` written by this op matches the one
+        from :func:`calendar_econ_fetch_fed` exactly (same closing-date
+        ISO anchor), so the target-range value upserts onto the
+        existing schedule row via the shared projector's merge CASE.
+        """
+        from datetime import date
+        from ingestion.calendar.fed_api import fetch_fed_statement_values
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_closings = arguments.get("closing_dates") or []
+        closing_dates: list[date] | None
+        if raw_closings:
+            closing_dates = [date.fromisoformat(str(d)) for d in raw_closings]
+        else:
+            closing_dates = None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_fed_statement_values(
+                connection,
+                dry_run=dry_run,
+                closing_dates=closing_dates,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "meetings_planned":   summary.meetings_planned,
+            "meetings_fetched":   summary.meetings_fetched,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     def _op_list_calendar_items(
         self, arguments: dict[str, Any],
     ) -> dict[str, Any]:

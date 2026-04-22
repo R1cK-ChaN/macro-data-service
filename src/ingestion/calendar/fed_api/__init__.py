@@ -1,45 +1,34 @@
-"""Federal Reserve calendar connector (issue #9 P4 + P4a).
+"""Federal Reserve calendar connector (issue #9 P4, P4a, P4b-values).
 
-Projects the FOMC meeting calendar (scraped from
-``federalreserve.gov/monetarypolicy/fomccalendars.htm``) and the
-Fed news-release schedule (``releasedates.htm``) into the
-``cal_econ_raw`` / ``cal_econ_event`` two-lane calendar schema.
+Projects the FOMC meeting calendar, the Fed news-release schedule,
+and FOMC statement values into ``cal_econ_raw`` / ``cal_econ_event``.
 
-Whitelist:
+Sources:
 
-- ``FOMC_RATE`` — every FOMC meeting publishes one rate-decision
-  event at 14:00 ET on the meeting's closing day (DST-aware). SEP
-  rides as a boolean on the FOMC event (``has_sep=True`` when the
-  meeting asterisk is present), not as a separate row.
-- ``BEIGE_BOOK`` — P4a, ~8 per year, 14:00 ET two weeks before each
-  FOMC meeting.
-- ``FED_H41`` — P4a, weekly Thursday 16:30 ET (Factors Affecting
-  Reserve Balances).
-- ``FED_H8`` — P4a, weekly Friday 16:15 ET (Assets and Liabilities
-  of Commercial Banks).
+- ``fomccalendars.htm`` — schedule-side: every FOMC meeting publishes
+  a ``FOMC_RATE`` event at 14:00 ET on the closing day (DST-aware).
+  SEP rides as a boolean on the FOMC row when the asterisk is present.
+- ``releasedates.htm`` — schedule-side: ``BEIGE_BOOK`` (~8/year,
+  14:00 ET), ``FED_H41`` (weekly Thursday 16:30 ET), ``FED_H8``
+  (weekly Friday 16:15 ET). SEP rows are explicitly excluded — SEP
+  already rides on the FOMC meeting row.
+- ``pressreleases/monetary<YYYYMMDD>a.htm`` — value-side: the FOMC
+  statement for a given closing date names the new target range for
+  the federal funds rate; :func:`fetch_fed_statement_values` fills
+  ``actual`` on existing schedule rows.
 
-Summary of Economic Projections (SEP) rows on ``releasedates.htm``
-are explicitly excluded to avoid duplicating the FOMC row. Scheduled
-Chair / Vice-Chair speeches and testimony belong in the news pipeline
-and are out of scope for this connector.
+Scheduled Chair / Vice-Chair speeches and testimony belong in the
+news pipeline and are out of scope for this connector.
 
 The Fed publishes no authenticated calendar API; this connector is
-HTML-scrape-only. Both fetchers reuse the same browser-UA header
+HTML-scrape-only. Every fetcher reuses the same browser-UA header
 bundle (the default ``python-requests`` UA receives 403s from
 ``federalreserve.gov``).
 
-Public surface:
-
-- :data:`INDICATOR_REGISTRY` — canonical indicator → metadata map.
-- :func:`parse_fomc_calendar_html` / :func:`parse_releasedates_html`
-  — fixture HTML → entry list.
-- :func:`meeting_entry_to_records` / :func:`release_entry_to_records`
-  — entry → (raw, event) tuple.
-- :func:`store_raw` / :func:`project_events` — idempotent writers.
-- :func:`fetch_fed_calendar` — orchestrates the FOMC calendar scrape.
-- :func:`fetch_fed_releasedates` — orchestrates the release-dates
-  scrape. Nothing auto-runs; tests feed fixture HTML via the
-  ``html_fetcher`` seam on both.
+Schedule-side writes route through
+:func:`project_schedule_events` so the value-side scrape's
+``actual`` isn't nulled out on a later schedule re-scrape; the
+statement-value writer uses the full :func:`project_events` upsert.
 """
 
 from __future__ import annotations
@@ -47,8 +36,10 @@ from __future__ import annotations
 from .fetcher import (
     FetchRunSummary,
     ReleasedatesRunSummary,
+    StatementValuesRunSummary,
     fetch_fed_calendar,
     fetch_fed_releasedates,
+    fetch_fed_statement_values,
 )
 from .indicators import FedIndicatorSpec, INDICATOR_REGISTRY
 from .parser import (
@@ -57,7 +48,7 @@ from .parser import (
     FomcMeetingEntry,
     meeting_entry_to_records,
 )
-from .projector import project_events, store_raw
+from .projector import project_events, project_schedule_events, store_raw
 from .releases import (
     FED_RELEASEDATES_URL,
     FedReleaseEntry,
@@ -72,10 +63,20 @@ from .scraper import (
     fetch_fomc_calendar_html,
     parse_fomc_calendar_html,
 )
+from .statements import (
+    FOMC_STATEMENT_URL_TEMPLATE,
+    FomcStatementParseError,
+    StatementValue,
+    build_statement_url,
+    fetch_statement_html,
+    parse_statement_html,
+    statement_value_to_records,
+)
 
 __all__ = [
     "FED_RELEASEDATES_URL",
     "FOMC_CALENDAR_URL",
+    "FOMC_STATEMENT_URL_TEMPLATE",
     "FedCalendarEventRecord",
     "FedCalendarRawRecord",
     "FedIndicatorSpec",
@@ -84,16 +85,25 @@ __all__ = [
     "FetchRunSummary",
     "FomcCalendarParseError",
     "FomcMeetingEntry",
+    "FomcStatementParseError",
     "INDICATOR_REGISTRY",
     "ReleasedatesRunSummary",
+    "StatementValue",
+    "StatementValuesRunSummary",
+    "build_statement_url",
     "fetch_fed_calendar",
     "fetch_fed_releasedates",
+    "fetch_fed_statement_values",
     "fetch_fomc_calendar_html",
     "fetch_releasedates_html",
+    "fetch_statement_html",
     "meeting_entry_to_records",
     "parse_fomc_calendar_html",
     "parse_releasedates_html",
+    "parse_statement_html",
     "project_events",
+    "project_schedule_events",
     "release_entry_to_records",
+    "statement_value_to_records",
     "store_raw",
 ]
