@@ -1,18 +1,29 @@
-"""Tests for the BEA release-schedule scraper (issue #9 P2a).
+"""Tests for the BEA release-schedule scraper (issue #9 P2a +
+P2b-schedule-drift).
 
 Fixture HTML lives in ``tests/fixtures/bea_schedule/news_schedule.html``
 — a plausible slice of bea.gov/news/schedule covering GDP (staged
-advance / second / third) + Personal Income + one non-whitelisted
-release (``Gross Domestic Product by Industry``) and one out-of-scope
-release (``State Personal Income``) that must be dropped.
+advance / second / third across two quarters) + Personal Income (six
+months) + multi-indicator rows that combine the GDP headline with
+regional / industry decompositions. Non-whitelisted titles (``GDP by
+Industry``, ``GDP by County``, regional rollups, ``Trade in Value
+Added``) must be dropped; multi-indicator rows where the headline is
+GDP must match even when the tail lists regional / state decompositions.
+
+The fixture mirrors the live 2026 DOM shape — single table with a
+``Year 2026`` column header, stacked ``<div class="release-date">``
+and ``<small class="text-muted">`` for date + time, and the reference
+period inline in the release-title cell after the first comma.
 
 No real HTTP.
 
 Covers:
 
-- Parser: rows extracted correctly; unmatched titles skipped; exclude
-  rule fires on "GDP by Industry"; release-stage extracted from the
-  title qualifier.
+- Parser: rows extracted correctly; unmatched titles skipped;
+  leading-segment exclude rule fires on ``"GDP by Industry"`` /
+  ``"GDP by County and Personal Income by County"`` without dropping
+  headline-GDP multi-indicator rows; release-stage extracted from the
+  title qualifier; TBA placeholders skipped.
 - Schedule entry → (raw, event) records: ``provider_event_id`` anchors
   on ``reference_date`` for Personal Income (unstaged) and on
   ``reference_date|stage`` for GDP (staged).
@@ -80,36 +91,67 @@ def test_parse_extracts_gdp_and_personal_income_rows() -> None:
 
 
 def test_parse_skips_gdp_by_industry() -> None:
-    """Exclude rule prevents 'Gross Domestic Product by Industry' from
-    substring-matching the headline GDP fragment and getting labelled
-    as the wrong indicator."""
+    """Leading-segment exclude rule prevents ``"GDP by Industry, ..."``
+    from substring-matching the headline GDP fragment and getting
+    labelled as the wrong indicator. The row-wide substring check
+    used to live here would now drop legitimate multi-indicator
+    rows — see ``test_parse_keeps_multi_indicator_gdp_rows``."""
     entries = parse_schedule_html(_fixture_html())
     titles = {e.release_title for e in entries}
-    assert not any("by industry" in t.lower() for t in titles)
+    assert not any(
+        t.lower().split(",", 1)[0].strip().endswith("by industry")
+        for t in titles
+    )
+
+
+def test_parse_keeps_multi_indicator_gdp_rows() -> None:
+    """The live DOM bundles headline GDP with industry / regional
+    decompositions on a single row — e.g.
+    ``"GDP (Third Estimate), Industries, Corporate Profits, State
+    GDP, and State Personal Income, 1st Quarter 2026"``. Leading-
+    segment scoping keeps these rows matched as the headline GDP
+    release because ``State GDP`` and ``State Personal Income`` live
+    past the first comma. A row-wide substring check (the old
+    behaviour) would drop every such row under the regional excludes."""
+    entries = parse_schedule_html(_fixture_html())
+    # Both Q4-2025 and Q1-2026 "Third Estimate" rows in the fixture
+    # are multi-indicator; both should land as GDP third-estimate
+    # entries.
+    third_estimate_entries = [
+        e for e in entries
+        if e.series_id == "BEA_NIPA_T10101_1" and e.release_stage == "third"
+    ]
+    assert len(third_estimate_entries) == 2
 
 
 def test_parse_skips_out_of_whitelist_releases() -> None:
-    """'State Personal Income' is outside the P2a whitelist — the
-    scraper silently drops it rather than synthesising a bogus id."""
+    """``"GDP by County and Personal Income by County"`` is outside
+    the P2a whitelist — the scraper silently drops it rather than
+    synthesising a bogus id. The tail ``"Personal Income by County"``
+    substring is irrelevant under leading-segment scoping; the veto
+    fires on ``"by county"`` in the leading segment itself."""
     entries = parse_schedule_html(_fixture_html())
     titles = {e.release_title for e in entries}
-    assert "State Personal Income" not in titles
+    assert not any(
+        t.lower().split(",", 1)[0].strip().startswith("gdp by county")
+        for t in titles
+    )
 
 
 @pytest.mark.parametrize(
     "regional_title",
     [
-        "Gross Domestic Product by State",
-        "Personal Income by State",
-        "Personal Income by County",
+        "GDP by Industry, 1st Quarter 2026",
+        "GDP by County and Personal Income by County, 2025",
+        "Real Personal Consumption Expenditures by State and Real Personal Income by State, 2024",
     ],
 )
 def test_parse_skips_regional_decompositions(regional_title: str) -> None:
     """Codex P2a R1 — regional BEA releases (``by State`` / ``by
-    County`` / ``by Metropolitan Area``) share a substring with the
-    headline GDP and Personal Income fragments. Without the regional
-    excludes they would be mis-labelled as the headline indicator
-    and land in cal_econ_event under the wrong provider_event_id."""
+    County`` / ``by Industry``) share a substring with the headline
+    GDP and Personal Income fragments. Without the leading-segment
+    excludes they would be mis-labelled as the headline indicator and
+    land in cal_econ_event under the wrong provider_event_id."""
     entries = parse_schedule_html(_fixture_html())
     titles = {e.release_title for e in entries}
     assert regional_title not in titles
@@ -137,9 +179,12 @@ def test_parse_leaves_personal_income_stage_empty() -> None:
 
 def test_parse_gdp_reference_date_is_end_of_quarter() -> None:
     entries = parse_schedule_html(_fixture_html())
-    q4 = next(e for e in entries if e.release_title.startswith(
-        "Gross Domestic Product (Advance"
-    ) and e.reference_label == "4th Quarter 2025")
+    q4 = next(
+        e for e in entries
+        if e.series_id == "BEA_NIPA_T10101_1"
+        and e.release_stage == "advance"
+        and e.reference_label == "4th Quarter 2025"
+    )
     assert q4.reference_date == "2025-12-31"
 
 
@@ -177,24 +222,71 @@ def test_parse_raises_when_no_table_found() -> None:
 
 def test_parse_surfaces_row_issues_for_matched_but_unparseable_reference() -> None:
     """Codex P2a R2 — when a whitelisted title matches but the
-    reference cell has a format the parser doesn't yet handle (BEA
+    reference period has a format the parser doesn't yet handle (BEA
     occasionally uses ``"4th Quarter and Year 2025"``), the row is
     captured in ``row_issues`` instead of silently dropped. Operator
     sees the drift and can extend the parser."""
     html = (
-        "<table>"
-        "<tr><th>Release Date</th><th>Release</th><th>Reference Period</th></tr>"
-        "<tr><td>January 30, 2026</td>"
-        "<td>Gross Domestic Product (Advance Estimate)</td>"
-        "<td>4th Quarter and Year 2025</td></tr>"
-        "</table>"
+        '<table id="release-schedule-table">'
+        '<thead><tr><th>Year 2026</th><th></th><th>Release</th></tr></thead>'
+        '<tbody><tr>'
+        '<td class="scheduled-date"><div class="release-date">January 30</div>'
+        '<small class="text-muted">8:30 AM</small></td>'
+        '<td></td>'
+        '<td class="release-title">GDP (Advance Estimate), 4th Quarter and Year 2025</td>'
+        "</tr></tbody></table>"
     )
     issues: list[str] = []
     entries = parse_schedule_html(html, row_issues=issues)
     assert entries == []
     assert len(issues) == 1
-    assert "Gross Domestic Product" in issues[0]
+    assert "GDP" in issues[0]
     assert "4th Quarter and Year 2025" in issues[0]
+
+
+def test_parse_surfaces_row_issues_when_reference_period_absent() -> None:
+    """BEA's new DOM carries the reference period inline after the
+    first comma. If a whitelisted title drops the comma altogether
+    (``"GDP (Advance Estimate)"`` with no reference tail), the row
+    must land in ``row_issues`` rather than silently disappearing —
+    that's exactly the kind of upstream drift we want operators to
+    notice."""
+    html = (
+        '<table id="release-schedule-table">'
+        '<thead><tr><th>Year 2026</th><th></th><th>Release</th></tr></thead>'
+        '<tbody><tr>'
+        '<td class="scheduled-date"><div class="release-date">January 30</div>'
+        '<small class="text-muted">8:30 AM</small></td>'
+        '<td></td>'
+        '<td class="release-title">GDP (Advance Estimate)</td>'
+        "</tr></tbody></table>"
+    )
+    issues: list[str] = []
+    entries = parse_schedule_html(html, row_issues=issues)
+    assert entries == []
+    assert len(issues) == 1
+    assert "no reference period" in issues[0]
+
+
+def test_parse_skips_to_be_announced_rows() -> None:
+    """The live page emits ``"To Be Announced"`` rows without a
+    ``release-date`` div — they're placeholders and shouldn't land
+    as scheduleable events or as row_issues."""
+    html = (
+        '<table id="release-schedule-table">'
+        '<thead><tr><th>Year 2026</th><th></th><th>Release</th></tr></thead>'
+        '<tbody><tr>'
+        '<td class="scheduled-date">'
+        '<small class="text-muted">To Be Announced<br/>Spring 2026</small>'
+        "</td>"
+        '<td></td>'
+        '<td class="release-title">GDP (Advance Estimate), 1st Quarter 2026</td>'
+        "</tr></tbody></table>"
+    )
+    issues: list[str] = []
+    entries = parse_schedule_html(html, row_issues=issues)
+    assert entries == []
+    assert issues == []
 
 
 def test_parse_silently_drops_unmatched_titles() -> None:
@@ -202,17 +294,75 @@ def test_parse_silently_drops_unmatched_titles() -> None:
     dropped without issue — we don't track every BEA release, only
     the whitelisted ones. Silence here is the right behaviour."""
     html = (
-        "<table>"
-        "<tr><th>Release Date</th><th>Release</th><th>Reference Period</th></tr>"
-        "<tr><td>January 30, 2026</td>"
-        "<td>U.S. International Trade in Goods and Services</td>"
-        "<td>December 2025</td></tr>"
-        "</table>"
+        '<table id="release-schedule-table">'
+        '<thead><tr><th>Year 2026</th><th></th><th>Release</th></tr></thead>'
+        '<tbody><tr>'
+        '<td class="scheduled-date"><div class="release-date">January 30</div>'
+        '<small class="text-muted">8:30 AM</small></td>'
+        '<td></td>'
+        '<td class="release-title">U.S. International Trade in Goods and Services, December 2025</td>'
+        "</tr></tbody></table>"
     )
     issues: list[str] = []
     entries = parse_schedule_html(html, row_issues=issues)
     assert entries == []
     assert issues == []
+
+
+def test_parse_accepts_short_form_quarter_inline_reference() -> None:
+    """Codex P2 on 2026-04-22 — ``_parse_reference_period`` accepts
+    BEA's documented ``"Q4 2025"`` short-form quarter, but the inline
+    extraction regex previously required the word ``"quarter"`` after
+    the ``Q4`` token. With the 2026 DOM the inline path is the *only*
+    reference-period path, so short-form quarters on any matched row
+    would silently drop. Lock the round-trip down here."""
+    html = (
+        '<table id="release-schedule-table">'
+        '<thead><tr><th>Year 2026</th><th></th><th>Release</th></tr></thead>'
+        '<tbody><tr>'
+        '<td class="scheduled-date"><div class="release-date">January 30</div>'
+        '<small class="text-muted">8:30 AM</small></td>'
+        '<td></td>'
+        '<td class="release-title">GDP (Advance Estimate), Q4 2025</td>'
+        "</tr></tbody></table>"
+    )
+    entries = parse_schedule_html(html)
+    assert len(entries) == 1
+    assert entries[0].series_id == "BEA_NIPA_T10101_1"
+    assert entries[0].release_stage == "advance"
+    assert entries[0].reference_label == "Q4 2025"
+    assert entries[0].reference_date == "2025-12-31"
+
+
+def test_parse_accepts_both_gdp_phrasings() -> None:
+    """BEA switched from ``"Gross Domestic Product (Advance)"`` to
+    ``"GDP (Advance Estimate)"`` in the 2026 DOM refactor. The match
+    table covers both so a rewrite in either direction keeps landing
+    rows — tested with distinct dates so the IDs don't collide."""
+    html = (
+        '<table id="release-schedule-table">'
+        '<thead><tr><th>Year 2026</th><th></th><th>Release</th></tr></thead>'
+        '<tbody>'
+        '<tr>'
+        '<td class="scheduled-date"><div class="release-date">January 30</div>'
+        '<small class="text-muted">8:30 AM</small></td>'
+        '<td></td>'
+        '<td class="release-title">GDP (Advance Estimate), 4th Quarter 2025</td>'
+        "</tr>"
+        '<tr>'
+        '<td class="scheduled-date"><div class="release-date">April 29</div>'
+        '<small class="text-muted">8:30 AM</small></td>'
+        '<td></td>'
+        '<td class="release-title">Gross Domestic Product (Advance Estimate), 1st Quarter 2026</td>'
+        "</tr>"
+        "</tbody></table>"
+    )
+    entries = parse_schedule_html(html)
+    assert {e.series_id for e in entries} == {"BEA_NIPA_T10101_1"}
+    assert {e.release_stage for e in entries} == {"advance"}
+    assert {e.reference_label for e in entries} == {
+        "4th Quarter 2025", "1st Quarter 2026",
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -475,18 +625,21 @@ def test_schedule_run_updates_audit_fields_for_gdp_revisions(
 
     def fetcher_factory(entry):
         ref_label = entry.reference_label
-        date_text = {
-            "2026-01-30": "January 30, 2026",
+        month_day = {
+            "2026-01-30": "January 30",
         }[entry.release_date]
+        year = entry.release_date[:4]
         html = (
-            "<table>"
-            "<tr><th>Release Date</th><th>Release Time</th>"
-            "<th>Release</th><th>Reference Period</th></tr>"
-            f"<tr><td>{date_text}</td>"
-            f"<td>{entry.release_time_local}</td>"
-            f"<td>{entry.release_title}</td>"
-            f"<td>{ref_label}</td></tr>"
-            "</table>"
+            f'<table id="release-schedule-table">'
+            f'<thead><tr><th>Year {year}</th><th></th><th>Release</th></tr></thead>'
+            f'<tbody><tr>'
+            f'<td class="scheduled-date">'
+            f'<div class="release-date">{month_day}</div>'
+            f'<small class="text-muted">{entry.release_time_local}</small>'
+            f"</td>"
+            f'<td></td>'
+            f'<td class="release-title">{entry.release_title}, {ref_label}</td>'
+            f"</tr></tbody></table>"
         )
         def fake(*, session=None):
             return html
