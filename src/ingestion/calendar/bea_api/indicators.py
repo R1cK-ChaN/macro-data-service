@@ -5,15 +5,25 @@ shape the projector writes into ``cal_econ_event``: the canonical
 indicator token, country code, display title, unit, and trader-impact
 importance.
 
-P2 ships two anchors — **Real GDP** (quarterly, NIPA ``T10101`` line 1,
-the advance / second / third release headline) and **Personal Income**
-(monthly, NIPA ``T20600`` line 1, the Personal Income and Outlays
-release headline). PCE lands on the same release but at a different
-``(table, line)`` coordinate and is deferred to P2a behind the live
-BEA probe — shipping a guess at PCE's line number risks labelling a
-tax or income subcomponent as PCE. Trade Balance and Corporate Profits
-land behind later slices once the probe has also confirmed their
-payload shape (ITA uses a different parameter surface than NIPA).
+P2 shipped two anchors — Real GDP (NIPA ``T10101`` L1) and Personal
+Income (NIPA ``T20600`` L1). P2b-live adds two:
+
+- **PCE Price Index** — NIPA ``T20804`` L1 (monthly), the headline
+  inflation metric published on the Personal Income and Outlays
+  release. L1 verified via the 2026-04-22 live probe.
+- **Corporate Profits** — NIPA ``T11200`` L13 "Corporate profits
+  with IVA and CCAdj" (quarterly), published on the GDP second /
+  third estimate releases. L13 verified via the 2026-04-22 probe.
+
+Trade Balance is deferred. The issue-body hint called for the ITA
+dataset (``BalGdsServ``); ITA exposes only ``A`` / ``QSA`` / ``QNSA``
+frequencies at BEA's REST API and uses a different parameter surface
+(``Indicator`` + ``AreaOrCountry``, no ``LineNumber``), so shipping
+it needs a client extension. The NIPA near-equivalent ``T10105``
+L15 "Net exports of goods and services" is quarterly *annualized*
+from the GDP accounting — wrong semantics and scale for the monthly
+"U.S. International Trade in Goods and Services" release traders
+watch. Deferred to a separate slice that adds ITA support properly.
 
 The shape mirrors :mod:`ingestion.calendar.bls_api.indicators` — each
 entry is the minimum metadata needed so the parser can project an
@@ -91,5 +101,44 @@ INDICATOR_REGISTRY: dict[str, BEAIndicatorSpec] = {
         unit="billions_usd",
         importance="high",
         category="Income",
+    ),
+    # PCE Price Index — NIPA Table 2.8.4 (Price Indexes for Personal
+    # Consumption Expenditures by Major Type of Product, Monthly) line
+    # 1 is the headline PCE price-index level that the monthly Personal
+    # Income and Outlays release publishes. Market-moving as the Fed's
+    # favoured inflation gauge. Verified via 2026-04-22 live probe:
+    # line 1 label ``"Personal consumption expenditures (PCE)"``, value
+    # 125.417 at 2025-01.
+    "BEA_NIPA_T20804_1": BEAIndicatorSpec(
+        series_id="BEA_NIPA_T20804_1",
+        dataset="NIPA",
+        table="T20804",
+        line_number="1",
+        frequency="M",
+        indicator="PCE",
+        country_code="US",
+        title="PCE Price Index",
+        unit="index",
+        importance="high",
+        category="Prices",
+    ),
+    # Corporate Profits — NIPA Table 1.12 (National Income by Type of
+    # Income, Quarterly) line 13 "Corporate profits with IVA and
+    # CCAdj" is the headline quarterly corporate-profits figure the
+    # GDP second / third estimate releases publish. Verified via the
+    # 2026-04-22 live probe: line 13 label ``"Corporate profits with
+    # IVA and CCAdj"``, value 3,922,871 at 2025-Q1.
+    "BEA_NIPA_T11200_13": BEAIndicatorSpec(
+        series_id="BEA_NIPA_T11200_13",
+        dataset="NIPA",
+        table="T11200",
+        line_number="13",
+        frequency="Q",
+        indicator="CORPORATE_PROFITS",
+        country_code="US",
+        title="Corporate Profits",
+        unit="millions_usd",
+        importance="medium",
+        category="Business",
     ),
 }
