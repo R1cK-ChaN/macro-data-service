@@ -159,6 +159,31 @@ def test_parse_raises_on_malformed_date() -> None:
         parse_fomc_calendar_html(html)
 
 
+def test_parse_skips_notation_vote_row() -> None:
+    # Observed on the live FOMC calendar for August 2025 via the
+    # 2026-04-22 P4b-live probe: a row with date cell "22 (notation
+    # vote)". Notation votes are inter-meeting email votes on
+    # procedural matters, not rate-decision meetings — skip rather
+    # than raise. The sibling real meeting row still lands.
+    html = """
+    <div class="panel panel-default">
+      <div class="panel-heading"><h4>2025 FOMC Meetings</h4></div>
+      <div class="row fomc-meeting">
+        <div class="fomc-meeting__month"><strong>August</strong></div>
+        <div class="fomc-meeting__date">22 (notation vote)</div>
+      </div>
+      <div class="row fomc-meeting">
+        <div class="fomc-meeting__month"><strong>September</strong></div>
+        <div class="fomc-meeting__date">16-17*</div>
+      </div>
+    </div>
+    """
+    entries = parse_fomc_calendar_html(html)
+    assert len(entries) == 1
+    assert entries[0].month_name == "September"
+    assert entries[0].closing_date == date(2025, 9, 17)
+
+
 def test_parse_cross_month_meeting_resolves_to_second_month() -> None:
     # Real Fed history carries Jan/Feb and Oct/Nov pairs (e.g. the
     # Jan 31 - Feb 1 2023 meeting). The closing day belongs to the

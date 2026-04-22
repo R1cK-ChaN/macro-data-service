@@ -754,16 +754,35 @@ def render_report(
     any_missing = any(r.field_diff and r.field_diff.missing_expected for r in results if r.field_diff)
     any_type = any(r.field_diff and r.field_diff.type_warnings for r in results if r.field_diff)
     any_parse_err = any(r.parse_successes < r.parse_attempts for r in results)
+    # Probes that http-errored or were skipped for missing auth never
+    # populate ``field_diff`` / ``parse_attempts``, so the field-diff
+    # counters alone can't tell the acquisition-layer-clean story. Without
+    # this guard the summary claims "No scaffold changes required" on
+    # runs where every probe 404'd (observed on the 2026-04-22 P4b-live
+    # Fed run). Split the signal: good-run iff every probe returned ``ok``.
+    failed_probes = [r for r in results if r.status != "ok"]
     lines.append(f"- Unknown-observed fields: {'⚠️ found' if any_unknown else '✓ none'}")
     lines.append(f"- Missing-expected fields: {'⚠️ found' if any_missing else '✓ none'}")
     lines.append(f"- Type mismatches: {'⚠️ found' if any_type else '✓ none'}")
     lines.append(f"- Parse failures in sample: {'⚠️ found' if any_parse_err else '✓ none'}")
+    lines.append(
+        f"- Probe-level failures: "
+        f"{'⚠️ ' + str(len(failed_probes)) + ' of ' + str(len(results)) if failed_probes else '✓ none'}"
+    )
     lines.append("")
     lines.append("### Action items")
     lines.append("")
-    if not (any_unknown or any_missing or any_type or any_parse_err):
+    if not (any_unknown or any_missing or any_type or any_parse_err or failed_probes):
         lines.append("- Acquisition layer matches parser expectations. No scaffold changes required.")
     else:
+        if failed_probes:
+            lines.append(
+                f"- {len(failed_probes)} probe(s) failed outright "
+                f"(status ≠ ``ok``). Each probe's Note lines carry the "
+                f"error — upstream drift (URL / DOM / payload shape) is "
+                f"the most common cause. Resolve before treating the "
+                f"remaining field-diff signal as authoritative."
+            )
         if any_unknown:
             lines.append("- Review UNKNOWN_OBSERVED fields per probe — may be new TE columns "
                          "worth reading or ignoring explicitly.")

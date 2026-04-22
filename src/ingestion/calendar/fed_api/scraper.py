@@ -187,6 +187,13 @@ def parse_fomc_calendar_html(html: str) -> list[FomcMeetingEntry]:
     non-meeting panels such as "FOMC Search"); meeting rows with a
     malformed date cell raise :class:`FomcCalendarParseError` so DOM
     drift surfaces loudly.
+
+    Date cells carrying a ``"(notation vote)"`` annotation are skipped
+    — notation votes are inter-meeting email votes on procedural
+    matters, not rate-decision meetings, so they don't belong on the
+    FOMC rate-decision calendar. The annotation first appeared on the
+    live page for August 2025 (surfaced via the 2026-04-22 P4b-live
+    probe).
     """
     soup = BeautifulSoup(html, "html.parser")
     entries: list[FomcMeetingEntry] = []
@@ -205,9 +212,12 @@ def parse_fomc_calendar_html(html: str) -> list[FomcMeetingEntry]:
                 # same container but lack the meeting sub-classes.
                 continue
             month_text = month_el.get_text(" ", strip=True)
+            date_text = date_el.get_text(" ", strip=True)
+            if "notation vote" in date_text.lower():
+                continue
             first_month, second_month = _resolve_month_label(month_text)
             closing_date, normalized_cell, has_sep = _parse_date_cell(
-                date_el.get_text(" ", strip=True),
+                date_text,
                 year=year,
                 first_month=first_month,
                 second_month=second_month,
