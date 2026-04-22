@@ -17,7 +17,7 @@ Storage and downstream API are under our control and may be adjusted once upstre
 - Expected shape: `list[BEAObservation] after client parse`
 - Request path: `GET https://apps.bea.gov/api/data?DatasetName=NIPA&TableName=T10101&Frequency=Q&Year=2025,2026 (filter LineNumber=1)`
 - Status: **ok**
-- HTTP elapsed: 1394 ms
+- HTTP elapsed: 1266 ms
 - Row count: 4
 
 #### Field diff (first row)
@@ -59,7 +59,7 @@ Storage and downstream API are under our control and may be adjusted once upstre
 - Expected shape: `list[BEAObservation] after client parse`
 - Request path: `GET https://apps.bea.gov/api/data?DatasetName=NIPA&TableName=T20600&Frequency=M&Year=2025,2026 (filter LineNumber=1)`
 - Status: **ok**
-- HTTP elapsed: 810 ms
+- HTTP elapsed: 1655 ms
 - Row count: 14
 
 #### Field diff (first row)
@@ -101,7 +101,7 @@ Storage and downstream API are under our control and may be adjusted once upstre
 - Expected shape: `list[BEAObservation] after client parse`
 - Request path: `GET https://apps.bea.gov/api/data?DatasetName=NIPA&TableName=T20804&Frequency=M&Year=2025,2026 (filter LineNumber=1)`
 - Status: **ok**
-- HTTP elapsed: 377 ms
+- HTTP elapsed: 355 ms
 - Row count: 14
 
 #### Field diff (first row)
@@ -143,7 +143,7 @@ Storage and downstream API are under our control and may be adjusted once upstre
 - Expected shape: `list[BEAObservation] after client parse`
 - Request path: `GET https://apps.bea.gov/api/data?DatasetName=NIPA&TableName=T11200&Frequency=Q&Year=2025,2026 (filter LineNumber=13)`
 - Status: **ok**
-- HTTP elapsed: 567 ms
+- HTTP elapsed: 587 ms
 - Row count: 4
 
 #### Field diff (first row)
@@ -185,6 +185,7 @@ Storage and downstream API are under our control and may be adjusted once upstre
 - Missing-expected fields: ✓ none
 - Type mismatches: ✓ none
 - Parse failures in sample: ✓ none
+- Probe-level failures: ✓ none
 
 ### Action items
 
