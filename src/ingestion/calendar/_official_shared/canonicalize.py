@@ -98,19 +98,26 @@ _ALIASES: dict[str, str] = {
     "producer price index for final demand": "PPI",
     "core ppi": "CORE_PPI",
     "ppi less food and energy": "CORE_PPI",
+    # BLS long-form Core PPI title (after dash → space normalization)
+    "producer price index final demand less foods, energy, and trade services": "CORE_PPI",
     # ── US labour ────────────────────────────────────────────────
     "employment situation": "NFP",
     "nonfarm payrolls": "NFP",
     "nonfarm payroll employment": "NFP",
     "non-farm payrolls": "NFP",
+    "non farm payrolls": "NFP",           # TE title
     "nfp": "NFP",
     "unemployment rate": "UNEMPLOYMENT_RATE",
     "average hourly earnings": "AHE",
+    "average hourly earnings total private": "AHE",   # BLS long-form title
     "average weekly hours": "AWH",
+    "average weekly hours total private": "AWH",      # BLS long-form title
     "jolts": "JOLTS",
     "job openings": "JOLTS",
     "job openings and labor turnover survey": "JOLTS",
     "employment cost index": "ECI",
+    # BLS long-form ECI title (parens stripped before lookup)
+    "employment cost index all civilian workers, total compensation": "ECI",
     "productivity": "PRODUCTIVITY",
     "productivity and costs": "PRODUCTIVITY",
     "initial jobless claims": "JOBLESS_CLAIMS",
@@ -136,9 +143,11 @@ _ALIASES: dict[str, str] = {
     "fomc rate decision": "FOMC_RATE",
     "federal funds target rate": "FOMC_RATE",
     "interest rate decision": "FOMC_RATE",
+    "fed interest rate decision": "FOMC_RATE",        # TE title for FOMC
     "mro rate": "ECB_MRO",
     "main refinancing operations rate": "ECB_MRO",
     "ecb main refinancing operations rate": "ECB_MRO",
+    "ecb interest rate decision": "ECB_MP_DECISION",   # TE title for ECB decision event (not rate value)
     "ecb_mro": "ECB_MRO",
     "deposit facility rate": "ECB_DFR",
     "ecb deposit facility rate": "ECB_DFR",
@@ -146,6 +155,7 @@ _ALIASES: dict[str, str] = {
     "ecb_dfr": "ECB_DFR",
     "marginal lending facility rate": "ECB_MLF",
     "ecb marginal lending facility rate": "ECB_MLF",
+    "marginal lending rate": "ECB_MLF",               # TE title for ECB MLF
     "mlf": "ECB_MLF",
     "ecb_mlf": "ECB_MLF",
     "ecb economic bulletin": "ECB_BULLETIN",

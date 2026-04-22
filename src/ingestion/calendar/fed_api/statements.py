@@ -224,7 +224,10 @@ def fetch_statement_html(
     try:
         response = s.get(url, headers=_FED_BROWSER_HEADERS, timeout=timeout)
         response.raise_for_status()
-        return response.text
+        # Content-Type carries no charset; requests defaults to ISO-8859-1
+        # which mis-decodes the UTF-8 non-breaking hyphens in mixed-number
+        # rate strings (e.g. "3\xe2\x80\x911/2" → "3â€˜1/2").
+        return response.content.decode("utf-8")
     finally:
         if owned_session:
             s.close()
