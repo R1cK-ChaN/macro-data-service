@@ -2347,6 +2347,25 @@ class SQLiteEngineStore:
                 )
                 """
             )
+            # Per-connector circuit-breaker state for the calendar
+            # scheduler (issue #9 P-sched-3). Keyed by scheduler-level
+            # connector name (``"bls"`` / ``"bea"`` / ``"ecb"`` /
+            # ``"fed-fomc"`` / ``"fed-releases"`` / ``"fed-values"`` /
+            # ``"nbs"``) rather than provider-id, because the scheduler
+            # distinguishes Fed's three surfaces while ``cal_provider``
+            # carries a single ``federal-reserve`` row.
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS calendar_connector_state (
+                    connector             TEXT NOT NULL PRIMARY KEY,
+                    consecutive_failures  INTEGER NOT NULL DEFAULT 0,
+                    last_error            TEXT,
+                    last_failure_at_ms    INTEGER,
+                    cooling_until_ms      INTEGER,
+                    updated_at            TEXT NOT NULL
+                )
+                """
+            )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS cal_econ_raw (

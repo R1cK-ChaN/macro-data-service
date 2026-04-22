@@ -57,6 +57,12 @@ from .fed_api import (
     fetch_fed_statement_values,
 )
 from .nbs_api import fetch_nbs_calendar
+from .scheduler_state import (
+    get_connector_state,
+    is_cooling,
+    mark_connector_failure,
+    mark_connector_success,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +182,64 @@ def _summary_to_dict(summary: Any) -> dict[str, Any]:
     return out
 
 
+def _summary_is_total_outage(summary: Any) -> bool:
+    """True when the summary looks like a connector-wide failure.
+
+    Partial failures (one BLS series out of nine, one FOMC statement
+    URL out of eight, one ECB page of two) produce a non-None
+    ``_summary_failure_reason`` so the operator sees ``ok=False`` on
+    the card, but they should **not** trip the circuit breaker — the
+    other items were written and the next sweep should still try the
+    working subset.
+
+    Full-outage signals (treat as breaker-relevant):
+
+    - ``fetch_error`` singular string (BEA / Fed-releasedates) —
+      set only when the connector's single HTTP surface is down.
+    - ``fetch_errors`` dict (ECB press calendar + bulletin) **with
+      zero ``entries_parsed`` / ``events_upserted``** — some pages
+      failed and none delivered rows. If any page parsed entries,
+      partial.
+    - BLS ``series_failed`` covering every planned series (no
+      ``series_ok``).
+    - Fed-values ``meetings_fetched == 0`` when the plan had
+      meetings — the op auto-discovers past FOMC rows; a planned
+      run that failed on every URL is a statement-page outage.
+
+    Returns False when no markers are present (clean run) or when
+    the markers look partial.
+    """
+    if summary is None:
+        return False
+    if getattr(summary, "fetch_error", None):
+        return True
+    fetch_errors = getattr(summary, "fetch_errors", None)
+    if fetch_errors:
+        entries_parsed = getattr(summary, "entries_parsed", None)
+        events_upserted = getattr(summary, "events_upserted", None)
+        parsed_something = (
+            (entries_parsed is not None and entries_parsed > 0)
+            or (events_upserted is not None and events_upserted > 0)
+        )
+        if not parsed_something:
+            return True
+    series_planned = getattr(summary, "series_planned", None)
+    series_failed = getattr(summary, "series_failed", None)
+    series_ok = getattr(summary, "series_ok", None)
+    if series_failed and series_planned is not None:
+        if not series_ok and len(series_failed) >= len(series_planned):
+            return True
+    meetings_planned = getattr(summary, "meetings_planned", None)
+    meetings_fetched = getattr(summary, "meetings_fetched", None)
+    if (
+        meetings_planned is not None
+        and meetings_fetched == 0
+        and meetings_planned > 0
+    ):
+        return True
+    return False
+
+
 def _summary_failure_reason(summary: Any) -> str | None:
     """Detect connector-level fetch failures stashed inside the summary.
 
@@ -223,6 +287,119 @@ def _summary_failure_reason(summary: Any) -> str | None:
         first = parse_failures[0]
         return f"{count} parse failures (e.g. {first})"
     return None
+
+
+def _run_connector_with_breaker(
+    name: ConnectorName,
+    fn: _ConnectorFn,
+    *,
+    connection_factory: Callable[[], sqlite3.Connection],
+    state_conn: sqlite3.Connection,
+    dry_run: bool,
+    log_prefix: str,
+) -> ConnectorResult:
+    """Run one connector with the P-sched-3 circuit breaker applied.
+
+    Lifecycle per connector:
+
+    1. Read persisted state. If ``cooling_until_ms`` is still in the
+       future, skip the connector and return ``ok=False`` carrying the
+       cooling-window reason. No data connection is opened.
+    2. Otherwise open a data connection, invoke ``fn``, commit on
+       success / rollback on exception (mirroring the pre-breaker
+       semantics).
+    3. In execute mode, persist the updated state (reset on success,
+       increment on failure). Dry-run checks state but never mutates.
+
+    The helper uses a caller-supplied ``state_conn`` — separate from
+    the per-connector data connection — so a data-side rollback can't
+    unwind the circuit-breaker counter.
+    """
+    connector_started = time.monotonic()
+    # ``start_ms`` answers "is the breaker cooling right now?" at the
+    # point the driver decided whether to skip. ``failure_ms`` is
+    # resolved fresh at mark time (below) because a slow connector
+    # can consume minutes between start and the failure signal, and
+    # using the stale start timestamp for ``cooling_until_ms``
+    # computation would shorten the effective cool-down window.
+    start_ms = int(time.time() * 1000)
+
+    state = get_connector_state(state_conn, name)
+    if is_cooling(state, start_ms):
+        cooling_until_iso = datetime.fromtimestamp(
+            (state.cooling_until_ms or 0) / 1000, tz=timezone.utc,
+        ).isoformat()
+        reason = (
+            f"circuit breaker cooling until {cooling_until_iso} "
+            f"({state.consecutive_failures} consecutive failures; "
+            f"last: {state.last_error or '-'})"
+        )
+        return ConnectorResult(
+            connector=name,
+            ok=False,
+            error=reason,
+            wall_seconds=round(time.monotonic() - connector_started, 3),
+        )
+
+    data_conn = connection_factory()
+    try:
+        summary = fn(data_conn, dry_run)
+        if not dry_run:
+            data_conn.commit()
+    except Exception as exc:
+        try:
+            data_conn.rollback()
+        except Exception:
+            pass
+        logger.warning(
+            "calendar %s failed for %s: %s", log_prefix, name, exc,
+        )
+        if not dry_run:
+            # Fresh timestamp so ``cooling_until_ms`` is anchored on
+            # the actual failure moment, not the start of a slow run.
+            mark_connector_failure(
+                state_conn, name, error=str(exc),
+                now_ms=int(time.time() * 1000),
+            )
+            state_conn.commit()
+        return ConnectorResult(
+            connector=name,
+            ok=False,
+            error=str(exc),
+            wall_seconds=round(time.monotonic() - connector_started, 3),
+        )
+    finally:
+        try:
+            data_conn.close()
+        except Exception:
+            pass
+
+    failure_reason = _summary_failure_reason(summary)
+    if not dry_run:
+        # Partial failures (one BLS series, one FOMC URL) land as
+        # ``ok=False`` on the card but must not trip the breaker —
+        # only a connector-wide outage does. ``_summary_is_total_outage``
+        # distinguishes the two.
+        if failure_reason is not None and _summary_is_total_outage(summary):
+            mark_connector_failure(
+                state_conn, name, error=failure_reason,
+                now_ms=int(time.time() * 1000),
+            )
+        else:
+            # Reset on clean run OR on partial failure — the breaker
+            # is about "is this source reachable at all?", not "did
+            # every item land?". A partial run proves reachability
+            # and resets the consecutive counter.
+            mark_connector_success(state_conn, name)
+        state_conn.commit()
+
+    return ConnectorResult(
+        connector=name,
+        ok=failure_reason is None,
+        error=failure_reason,
+        summary=_summary_to_dict(summary),
+        wall_seconds=round(time.monotonic() - connector_started, 3),
+    )
 
 
 def refresh_all_schedules(
@@ -281,46 +458,21 @@ def refresh_all_schedules(
         unknown_connectors=unknown_connectors,
     )
 
-    for name, fn in plan:
-        connector_started = time.monotonic()
-        connection = connection_factory()
+    state_conn = connection_factory()
+    try:
+        for name, fn in plan:
+            run_summary.results.append(_run_connector_with_breaker(
+                name, fn,
+                connection_factory=connection_factory,
+                state_conn=state_conn,
+                dry_run=dry_run,
+                log_prefix="schedule refresh",
+            ))
+    finally:
         try:
-            summary = fn(connection, dry_run)
-            if not dry_run:
-                connection.commit()
-        except Exception as exc:
-            try:
-                connection.rollback()
-            except Exception:
-                pass
-            logger.warning(
-                "calendar schedule refresh failed for %s: %s", name, exc,
-            )
-            run_summary.results.append(
-                ConnectorResult(
-                    connector=name,
-                    ok=False,
-                    error=str(exc),
-                    wall_seconds=round(time.monotonic() - connector_started, 3),
-                )
-            )
-            continue
-        finally:
-            try:
-                connection.close()
-            except Exception:
-                pass
-
-        failure_reason = _summary_failure_reason(summary)
-        run_summary.results.append(
-            ConnectorResult(
-                connector=name,
-                ok=failure_reason is None,
-                error=failure_reason,
-                summary=_summary_to_dict(summary),
-                wall_seconds=round(time.monotonic() - connector_started, 3),
-            )
-        )
+            state_conn.close()
+        except Exception:
+            pass
 
     run_summary.wall_seconds = time.monotonic() - started
     return run_summary
@@ -459,46 +611,21 @@ def sweep_value_side(
         unknown_connectors=unknown_connectors,
     )
 
-    for name, fn in plan:
-        connector_started = time.monotonic()
-        connection = connection_factory()
+    state_conn = connection_factory()
+    try:
+        for name, fn in plan:
+            run_summary.results.append(_run_connector_with_breaker(
+                name, fn,
+                connection_factory=connection_factory,
+                state_conn=state_conn,
+                dry_run=dry_run,
+                log_prefix="value-side sweep",
+            ))
+    finally:
         try:
-            summary = fn(connection, dry_run)
-            if not dry_run:
-                connection.commit()
-        except Exception as exc:
-            try:
-                connection.rollback()
-            except Exception:
-                pass
-            logger.warning(
-                "calendar value-side sweep failed for %s: %s", name, exc,
-            )
-            run_summary.results.append(
-                ConnectorResult(
-                    connector=name,
-                    ok=False,
-                    error=str(exc),
-                    wall_seconds=round(time.monotonic() - connector_started, 3),
-                )
-            )
-            continue
-        finally:
-            try:
-                connection.close()
-            except Exception:
-                pass
-
-        failure_reason = _summary_failure_reason(summary)
-        run_summary.results.append(
-            ConnectorResult(
-                connector=name,
-                ok=failure_reason is None,
-                error=failure_reason,
-                summary=_summary_to_dict(summary),
-                wall_seconds=round(time.monotonic() - connector_started, 3),
-            )
-        )
+            state_conn.close()
+        except Exception:
+            pass
 
     run_summary.wall_seconds = time.monotonic() - started
     return run_summary
