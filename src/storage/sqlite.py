@@ -2354,6 +2354,11 @@ class SQLiteEngineStore:
             # ``"nbs"``) rather than provider-id, because the scheduler
             # distinguishes Fed's three surfaces while ``cal_provider``
             # carries a single ``federal-reserve`` row.
+            #
+            # ``requests_today`` + ``requests_day_utc`` (added in
+            # P-sched-3-budget) persist a per-connector daily request
+            # counter across cron-invocation processes so the scheduler
+            # can skip a connector once its upstream cap is exhausted.
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS calendar_connector_state (
@@ -2362,9 +2367,19 @@ class SQLiteEngineStore:
                     last_error            TEXT,
                     last_failure_at_ms    INTEGER,
                     cooling_until_ms      INTEGER,
+                    requests_today        INTEGER NOT NULL DEFAULT 0,
+                    requests_day_utc      TEXT,
                     updated_at            TEXT NOT NULL
                 )
                 """
+            )
+            self._ensure_table_columns(
+                connection,
+                table_name="calendar_connector_state",
+                columns={
+                    "requests_today":   "INTEGER NOT NULL DEFAULT 0",
+                    "requests_day_utc": "TEXT",
+                },
             )
             connection.execute(
                 """

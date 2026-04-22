@@ -19,6 +19,18 @@ State rows live in the ``calendar_connector_state`` table, keyed by
 connector name. The scheduler uses a separate connection for state
 reads/writes so a connector's data-side rollback doesn't unwind the
 failure counter.
+
+**Budget tracking (P-sched-3-budget).** BLS caps its API at
+500 queries/day; a frequent value-side cron that keeps calling after
+exhaustion burns log noise and triggers 429s on the next day's first
+attempt. ``requests_today`` / ``requests_day_utc`` persist a UTC-day
+counter scoped to the same ``calendar_connector_state`` row; the
+counter rolls over when ``requests_day_utc`` differs from today.
+:data:`DAILY_BUDGET_CAPS` holds per-connector caps — connectors
+missing from the dict are treated as uncapped. Orthogonal to the
+consecutive-failure breaker: the budget stays exhausted even after a
+``mark_connector_success`` because exhaustion is a same-day
+volume-based skip, not a flakiness signal.
 """
 
 from __future__ import annotations
@@ -39,6 +51,15 @@ FAILURE_THRESHOLD = 3
 # access.
 COOLDOWN_SECONDS = 900
 
+# Per-connector daily request caps. Only connectors whose upstream
+# publishes a hard daily limit live here; omitted connectors are
+# treated as uncapped. BLS's API ceiling is 500/day per registered
+# key — we match the in-memory soft-cap in ``BLSClient`` (490) so the
+# scheduler stops before the upstream starts 429ing.
+DAILY_BUDGET_CAPS: dict[str, int] = {
+    "bls": 490,
+}
+
 
 @dataclass(frozen=True)
 class ConnectorState:
@@ -49,10 +70,17 @@ class ConnectorState:
     last_error: str | None = None
     last_failure_at_ms: int | None = None
     cooling_until_ms: int | None = None
+    requests_today: int = 0
+    requests_day_utc: str | None = None
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def today_utc_iso() -> str:
+    """UTC calendar day as ``"YYYY-MM-DD"`` — the budget rollover key."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def get_connector_state(
@@ -62,7 +90,8 @@ def get_connector_state(
     row = connection.execute(
         """
         SELECT consecutive_failures, last_error,
-               last_failure_at_ms, cooling_until_ms
+               last_failure_at_ms, cooling_until_ms,
+               requests_today, requests_day_utc
         FROM calendar_connector_state
         WHERE connector = ?
         """,
@@ -70,7 +99,10 @@ def get_connector_state(
     ).fetchone()
     if row is None:
         return ConnectorState(connector=connector)
-    failures, last_error, last_failure, cooling_until = row
+    (
+        failures, last_error, last_failure, cooling_until,
+        requests_today, requests_day_utc,
+    ) = row
     return ConnectorState(
         connector=connector,
         consecutive_failures=int(failures or 0),
@@ -81,6 +113,8 @@ def get_connector_state(
         cooling_until_ms=(
             int(cooling_until) if cooling_until is not None else None
         ),
+        requests_today=int(requests_today or 0),
+        requests_day_utc=requests_day_utc,
     )
 
 
@@ -91,6 +125,26 @@ def is_cooling(state: ConnectorState, now_ms: int) -> bool:
     return now_ms < state.cooling_until_ms
 
 
+def is_budget_exhausted(
+    state: ConnectorState,
+    cap: int | None,
+    *,
+    today_iso: str,
+) -> bool:
+    """True when the connector's same-day request count has hit ``cap``.
+
+    Returns False when ``cap`` is ``None`` (uncapped connector) or when
+    ``state.requests_day_utc`` is a different UTC day — the stored
+    count belongs to yesterday and will be rolled over on the next
+    :func:`record_connector_requests` call.
+    """
+    if cap is None:
+        return False
+    if state.requests_day_utc != today_iso:
+        return False
+    return state.requests_today >= cap
+
+
 def mark_connector_success(
     connection: sqlite3.Connection, connector: str,
 ) -> None:
@@ -98,15 +152,19 @@ def mark_connector_success(
 
     Idempotent — running twice has the same effect. ``INSERT OR REPLACE``
     on the PK keeps the state row fresh whether or not a row already
-    exists.
+    exists. Budget columns (``requests_today`` / ``requests_day_utc``)
+    are left untouched — they roll over on UTC day change, not on
+    success/failure. A successful run that doesn't consume requests
+    shouldn't zero out the running count for today.
     """
     connection.execute(
         """
         INSERT INTO calendar_connector_state (
             connector, consecutive_failures,
             last_error, last_failure_at_ms, cooling_until_ms,
+            requests_today, requests_day_utc,
             updated_at
-        ) VALUES (?, 0, NULL, NULL, NULL, ?)
+        ) VALUES (?, 0, NULL, NULL, NULL, 0, NULL, ?)
         ON CONFLICT(connector) DO UPDATE SET
             consecutive_failures = 0,
             last_error           = NULL,
@@ -134,6 +192,8 @@ def mark_connector_failure(
     ``consecutive_failures`` reaches ``threshold``, ``cooling_until_ms``
     is set to ``now_ms + cooldown_seconds * 1000`` — the next sweep
     will see :func:`is_cooling` return ``True`` and skip the connector.
+    Budget columns (``requests_today`` / ``requests_day_utc``) are left
+    untouched for the same reason as in :func:`mark_connector_success`.
     """
     prior = get_connector_state(connection, connector)
     new_failures = prior.consecutive_failures + 1
@@ -144,8 +204,9 @@ def mark_connector_failure(
         INSERT INTO calendar_connector_state (
             connector, consecutive_failures,
             last_error, last_failure_at_ms, cooling_until_ms,
+            requests_today, requests_day_utc,
             updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, 0, NULL, ?)
         ON CONFLICT(connector) DO UPDATE SET
             consecutive_failures = excluded.consecutive_failures,
             last_error           = excluded.last_error,
@@ -164,4 +225,68 @@ def mark_connector_failure(
         last_error=error,
         last_failure_at_ms=now_ms,
         cooling_until_ms=cooling_until,
+        requests_today=prior.requests_today,
+        requests_day_utc=prior.requests_day_utc,
+    )
+
+
+def record_connector_requests(
+    connection: sqlite3.Connection,
+    connector: str,
+    requests_made: int,
+    *,
+    today_iso: str,
+) -> ConnectorState:
+    """Accumulate ``requests_made`` into today's counter; roll over on new day.
+
+    The counter rolls over when the stored ``requests_day_utc``
+    differs from ``today_iso`` — the new day starts at exactly
+    ``requests_made``, not ``prior + requests_made``. This mirrors how
+    the in-memory ``BLSClient._check_daily_budget`` resets at UTC day
+    change so the two agree on the same calendar day.
+
+    A zero ``requests_made`` is still worth recording once per day
+    because it writes ``requests_day_utc`` — next call on the same day
+    can then increment from zero without creating a brand-new row, and
+    a bare call on a new UTC day resets the prior-day counter.
+    Callers that know the connector consumed no upstream requests
+    (dry-run, all-cached) can skip the record call entirely.
+    """
+    prior = get_connector_state(connection, connector)
+    if prior.requests_day_utc == today_iso:
+        new_total = prior.requests_today + max(0, requests_made)
+    else:
+        new_total = max(0, requests_made)
+    connection.execute(
+        """
+        INSERT INTO calendar_connector_state (
+            connector, consecutive_failures,
+            last_error, last_failure_at_ms, cooling_until_ms,
+            requests_today, requests_day_utc,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(connector) DO UPDATE SET
+            requests_today   = excluded.requests_today,
+            requests_day_utc = excluded.requests_day_utc,
+            updated_at       = excluded.updated_at
+        """,
+        (
+            connector,
+            prior.consecutive_failures,
+            prior.last_error,
+            prior.last_failure_at_ms,
+            prior.cooling_until_ms,
+            new_total,
+            today_iso,
+            _now_iso(),
+        ),
+    )
+    return ConnectorState(
+        connector=connector,
+        consecutive_failures=prior.consecutive_failures,
+        last_error=prior.last_error,
+        last_failure_at_ms=prior.last_failure_at_ms,
+        cooling_until_ms=prior.cooling_until_ms,
+        requests_today=new_total,
+        requests_day_utc=today_iso,
     )

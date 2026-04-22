@@ -58,10 +58,14 @@ from .fed_api import (
 )
 from .nbs_api import fetch_nbs_calendar
 from .scheduler_state import (
+    DAILY_BUDGET_CAPS,
     get_connector_state,
+    is_budget_exhausted,
     is_cooling,
     mark_connector_failure,
     mark_connector_success,
+    record_connector_requests,
+    today_utc_iso,
 )
 
 logger = logging.getLogger(__name__)
@@ -297,19 +301,33 @@ def _run_connector_with_breaker(
     state_conn: sqlite3.Connection,
     dry_run: bool,
     log_prefix: str,
+    budget_cap: int | None = None,
 ) -> ConnectorResult:
     """Run one connector with the P-sched-3 circuit breaker applied.
 
     Lifecycle per connector:
 
     1. Read persisted state. If ``cooling_until_ms`` is still in the
-       future, skip the connector and return ``ok=False`` carrying the
-       cooling-window reason. No data connection is opened.
+       future — or the connector's daily request budget is exhausted
+       at ``budget_cap`` — skip and return ``ok=False`` carrying the
+       skip reason. No data connection is opened for either skip path.
     2. Otherwise open a data connection, invoke ``fn``, commit on
        success / rollback on exception (mirroring the pre-breaker
        semantics).
     3. In execute mode, persist the updated state (reset on success,
-       increment on failure). Dry-run checks state but never mutates.
+       increment on failure) and accumulate any ``requests_made``
+       surfaced by the connector summary (or attached to an exception)
+       into today's budget. Dry-run checks state but never mutates.
+
+    ``budget_cap`` is None by default because only the value-side
+    sweep driver hits the API surface that carries a cap (BLS
+    ``api.bls.gov``, 500 queries / key / UTC day). Schedule-side
+    refresh scrapes HTML (``bls.gov/schedule/…``) which has no
+    documented cap, so a same-connector exhausted-cap state must not
+    freeze the forward schedule for the rest of the day. The
+    success/failure/request-recording path still runs on both sides
+    so the breaker state and the budget counter stay coherent
+    regardless of which driver triggered the run.
 
     The helper uses a caller-supplied ``state_conn`` — separate from
     the per-connector data connection — so a data-side rollback can't
@@ -341,6 +359,23 @@ def _run_connector_with_breaker(
             wall_seconds=round(time.monotonic() - connector_started, 3),
         )
 
+    # Budget-aware skip. Schedule-side refresh passes
+    # ``budget_cap=None`` because its BLS path scrapes HTML (uncapped);
+    # value-side sweep passes ``DAILY_BUDGET_CAPS.get(name)`` so only
+    # capped connectors (BLS today) can short-circuit on exhaustion.
+    skip_check_today_iso = today_utc_iso()
+    if is_budget_exhausted(state, budget_cap, today_iso=skip_check_today_iso):
+        reason = (
+            f"daily request budget exhausted "
+            f"({state.requests_today}/{budget_cap} on {skip_check_today_iso})"
+        )
+        return ConnectorResult(
+            connector=name,
+            ok=False,
+            error=reason,
+            wall_seconds=round(time.monotonic() - connector_started, 3),
+        )
+
     data_conn = connection_factory()
     try:
         summary = fn(data_conn, dry_run)
@@ -361,6 +396,18 @@ def _run_connector_with_breaker(
                 state_conn, name, error=str(exc),
                 now_ms=int(time.time() * 1000),
             )
+            # Record requests consumed before the exception so a
+            # partial-then-fail BLS run (chunk 1 succeeded, chunk 2
+            # 500'd) still ticks the persisted counter. The
+            # connector shim attaches ``exc.requests_made`` before
+            # re-raising; absent attribute means the connector
+            # consumed zero capped requests (or doesn't track).
+            exc_requests_made = getattr(exc, "requests_made", None)
+            if isinstance(exc_requests_made, int) and exc_requests_made > 0:
+                record_connector_requests(
+                    state_conn, name, exc_requests_made,
+                    today_iso=today_utc_iso(),
+                )
             state_conn.commit()
         return ConnectorResult(
             connector=name,
@@ -391,6 +438,22 @@ def _run_connector_with_breaker(
             # every item land?". A partial run proves reachability
             # and resets the consecutive counter.
             mark_connector_success(state_conn, name)
+
+        # Accumulate any requests the connector surfaced into today's
+        # budget. Summaries without ``requests_made`` (BEA / ECB / Fed
+        # / NBS today) leave the counter untouched. ``today_iso`` is
+        # resolved at record time — a value-side sweep that crossed
+        # UTC midnight attributes consumption to the current day. The
+        # client counter resets internally at midnight, so the
+        # observable delta already reflects post-midnight requests
+        # only; attributing them to the new day keeps the persisted
+        # counter aligned with the client's reset semantics.
+        requests_made = getattr(summary, "requests_made", None)
+        if isinstance(requests_made, int) and requests_made > 0:
+            record_connector_requests(
+                state_conn, name, requests_made,
+                today_iso=today_utc_iso(),
+            )
         state_conn.commit()
 
     return ConnectorResult(
@@ -467,6 +530,7 @@ def refresh_all_schedules(
                 state_conn=state_conn,
                 dry_run=dry_run,
                 log_prefix="schedule refresh",
+                budget_cap=None,
             ))
     finally:
         try:
@@ -549,12 +613,24 @@ def sweep_value_side(
         client = BLSClient()
         if not dry_run and not client.api_key:
             raise RuntimeError("BLS_API_KEY not set")
-        return fetch_bls_calendar(
-            conn, client,
-            start_year=resolved_start_year,
-            end_year=resolved_end_year,
-            dry_run=dry_run,
-        )
+        # Snapshot the client's daily counter so the driver can still
+        # attribute consumed requests to the budget when ``get_series``
+        # raises mid-call (chunk N succeeded, chunk N+1 500'd). Without
+        # this the persisted counter would undershoot actual BLS API
+        # usage and the breaker's budget skip could be defeated.
+        requests_before = client.daily_query_count
+        try:
+            return fetch_bls_calendar(
+                conn, client,
+                start_year=resolved_start_year,
+                end_year=resolved_end_year,
+                dry_run=dry_run,
+            )
+        except Exception as exc:
+            consumed = max(0, client.daily_query_count - requests_before)
+            if consumed > 0:
+                exc.requests_made = consumed  # read by scheduler.py
+            raise
 
     def _bea_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         from ingestion.timeseries.scrapers.bea import BEAClient
@@ -620,6 +696,7 @@ def sweep_value_side(
                 state_conn=state_conn,
                 dry_run=dry_run,
                 log_prefix="value-side sweep",
+                budget_cap=DAILY_BUDGET_CAPS.get(name),
             ))
     finally:
         try:

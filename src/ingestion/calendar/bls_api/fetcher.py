@@ -59,6 +59,9 @@ class FetchRunSummary:
     series_ok: list[str] = field(default_factory=list)
     series_empty: list[str] = field(default_factory=list)
     series_unknown: list[str] = field(default_factory=list)
+    # BLS API calls this run consumed (delta of ``client.daily_query_count``);
+    # feeds the scheduler's per-day budget tracker.
+    requests_made: int = 0
     wall_seconds: float = 0.0
 
 
@@ -143,9 +146,12 @@ def fetch_bls_calendar(
         datetime.now(timezone.utc).timestamp() * 1000
     )
 
+    requests_before = getattr(client, "daily_query_count", 0)
     series_to_obs = client.get_series(
         known, start_year=start_year, end_year=end_year,
     )
+    requests_after = getattr(client, "daily_query_count", 0)
+    summary.requests_made = max(0, requests_after - requests_before)
 
     raw_records: list[BLSCalendarRawRecord] = []
     event_records: list[BLSCalendarEventRecord] = []

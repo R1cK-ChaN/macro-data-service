@@ -81,6 +81,16 @@ class BLSClient:
         self._daily_query_count = 0
         self._query_date = ""
 
+    @property
+    def daily_query_count(self) -> int:
+        """Queries made against the BLS API since the last UTC-day reset.
+
+        Read-only view onto the in-memory counter so the calendar
+        scheduler's P-sched-3-budget tracker can attribute consumption
+        to the ``bls`` connector without poking at private state.
+        """
+        return self._daily_query_count
+
     # -- Public methods ------------------------------------------------------
 
     def get_series(
