@@ -554,27 +554,17 @@ def test_schedule_run_writes_distinct_rows_per_empsit_indicator(
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Schedule-only audit-freshness (BLS P1c Productivity follow-up)
+# Schedule-side audit-freshness
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def test_schedule_rescrape_refreshes_productivity_observed_at(
+def test_schedule_rescrape_preserves_productivity_observed_at(
     store: SQLiteEngineStore,
 ) -> None:
-    """Productivity is ``api_fetch=False`` — there's no API side to
-    protect, so schedule re-scrapes must refresh the audit field
-    (``observed_at_epoch_ms``) the same way ``project_events`` does.
-
-    The pre-fix path routed every schedule row through
-    ``project_schedule_events``, which deliberately does *not* touch
-    ``observed_at_epoch_ms`` on conflict — a value-side freshness
-    guard designed for API-merged indicators. Schedule-only
-    Productivity rows therefore froze their audit field on the first
-    scrape and every subsequent re-scrape was invisible in the audit
-    trail. The partition-by-``api_fetch`` fix (matching BEA P2a)
-    routes schedule-only rows through ``project_events`` instead so
-    the audit reflects the latest scrape time.
-    """
+    """Once the P1c follow-up enabled the API side for Productivity,
+    schedule re-scrapes behave like every other BLS indicator:
+    ``project_schedule_events`` leaves ``observed_at_epoch_ms``
+    alone so a later value-side fetch owns the freshness gate."""
     fake_fetcher = _p1c_fake_fetcher()
 
     first_snapshot = 1_700_000_000_000
@@ -605,17 +595,16 @@ def test_schedule_rescrape_refreshes_productivity_observed_at(
                 "WHERE provider='bls' AND title LIKE 'Nonfarm Business%'"
             ).fetchall()
         }
-    assert observed_values == {second_snapshot}
+    assert observed_values == {first_snapshot}
 
 
 def test_schedule_rescrape_preserves_cpi_observed_at(
     store: SQLiteEngineStore,
 ) -> None:
-    """Conjugate to the Productivity test: CPI is ``api_fetch=True``,
-    so its rows still flow through ``project_schedule_events`` and
-    the audit field stays at the first-write value — otherwise a
-    later schedule re-scrape could let a stale API value overwrite a
-    fresher one by bumping the freshness gate."""
+    """CPI rows flow through ``project_schedule_events`` so the audit
+    field stays at the first-write value — otherwise a later schedule
+    re-scrape could let a stale API value overwrite a fresher one by
+    bumping the freshness gate."""
     fake_fetcher = _p1c_fake_fetcher()
 
     first_snapshot = 1_700_000_000_000

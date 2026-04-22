@@ -8,6 +8,7 @@ op), using a duck-typed fake client wherever the fetcher needs one.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -126,20 +127,34 @@ def test_registry_p1c_additions_have_expected_shape(
     assert spec.title  # non-empty
 
 
-def test_registry_productivity_opts_out_of_default_api_fetch() -> None:
-    """Codex P1c round 2 — Productivity has staged preliminary /
-    revised releases; until their schedule/API merge alignment is
-    designed, the API path is opt-in rather than on by default."""
+def test_registry_productivity_flags_staged_schedule() -> None:
+    """P1c follow-up — Productivity's preliminary/revised schedule
+    is rebased against the API's single bare-date observation via
+    ``staged_schedule=True``; the indicator is back in the default
+    API-fetch plan."""
     spec = INDICATOR_REGISTRY["PRS85006092"]
-    assert spec.api_fetch is False
+    assert spec.api_fetch is True
+    assert spec.staged_schedule is True
 
 
-def test_registry_non_productivity_specs_opt_in_to_default_api_fetch() -> None:
-    """Every other P1c indicator still defaults to API-fetched."""
+def test_registry_all_specs_currently_opt_in_to_default_api_fetch() -> None:
+    """Post P1c follow-up: no indicator opts out of the default
+    API fetch. The ``api_fetch`` switch stays on the spec as a
+    quarantine lever for future problem indicators."""
     for series_id, spec in INDICATOR_REGISTRY.items():
-        if series_id == "PRS85006092":
-            continue
         assert spec.api_fetch is True, f"{series_id} should default to api_fetch=True"
+
+
+def test_registry_only_productivity_marks_staged_schedule() -> None:
+    """Productivity is the only BLS series with multi-stage releases
+    today. Any other indicator marked ``staged_schedule=True`` without
+    a corresponding schedule-scraper update would write staged rows
+    under an anchor the bare-date API observation can't rebase onto."""
+    staged = {
+        sid for sid, spec in INDICATOR_REGISTRY.items()
+        if spec.staged_schedule
+    }
+    assert staged == {"PRS85006092"}
 
 
 def test_registry_indicators_canonicalize_to_distinct_tokens() -> None:
@@ -378,13 +393,12 @@ def test_fetch_dry_run_returns_plan_without_calling_client(
     assert client.calls == []  # no HTTP call attempted
 
 
-def test_fetch_default_plan_excludes_api_fetch_false_series(
+def test_fetch_default_plan_includes_productivity_after_staged_merge_landed(
     store: SQLiteEngineStore,
 ) -> None:
-    """Codex P1c round 2 — series with ``api_fetch=False`` (currently
-    Productivity) are excluded from the default-full-registry API
-    fetch because their staged schedule has no clean anchor alignment
-    with the bare-date API observation."""
+    """P1c follow-up — Productivity is now rebased against its
+    schedule row via ``staged_schedule=True`` and takes the default
+    API-fetch plan alongside CPI / NFP / etc."""
     client = _FakeBLSClient({})
     with store._connection(commit=False) as conn:
         summary = fetch_bls_calendar(
@@ -392,33 +406,27 @@ def test_fetch_default_plan_excludes_api_fetch_false_series(
             start_year=2024, end_year=2024,
             dry_run=True,
         )
+    assert "PRS85006092" in summary.series_planned
+
+
+def test_fetch_plan_honors_api_fetch_opt_out_if_any_spec_has_it(
+    store: SQLiteEngineStore,
+) -> None:
+    """Quarantine switch regression test: no registry entry sets
+    ``api_fetch=False`` today, but the fetcher must still exclude any
+    such spec from the default plan so the lever remains usable."""
     opted_out = {
         sid for sid, spec in INDICATOR_REGISTRY.items() if not spec.api_fetch
     }
-    assert opted_out, "expected at least one api_fetch=False spec"
-    assert not (set(summary.series_planned) & opted_out)
-
-
-def test_fetch_honors_explicit_api_fetch_false_series(
-    store: SQLiteEngineStore,
-) -> None:
-    """Explicit ``series_ids=`` override the default filter: callers
-    who know what they're doing can still exercise the API path for
-    an ``api_fetch=False`` series (e.g. ad-hoc backfill)."""
+    assert opted_out == set(), "adjust the expectation when a spec opts out"
     client = _FakeBLSClient({})
-    opted_out = [
-        sid for sid, spec in INDICATOR_REGISTRY.items() if not spec.api_fetch
-    ]
-    assert opted_out
     with store._connection(commit=False) as conn:
         summary = fetch_bls_calendar(
             conn, client,
             start_year=2024, end_year=2024,
-            series_ids=opted_out,
             dry_run=True,
         )
-    assert set(summary.series_planned) == set(opted_out)
-    assert summary.series_unknown == []
+    assert not (set(summary.series_planned) & opted_out)
 
 
 def test_fetch_writes_rows_and_reports_counts(
@@ -477,6 +485,335 @@ def test_fetch_reports_empty_series_separately(
         )
     assert "CES0000000001" in summary.series_empty
     assert "CUUR0000SA0" in summary.series_ok
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Staged-schedule rebase (P1c follow-up — Productivity)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _prod_obs(value: float = 115.2, date: str = "2025-09-30") -> BLSObservation:
+    """Synthetic Productivity observation. BLSClient normalises the
+    quarterly period to the end-of-quarter date — match that shape so
+    the staged-rebase lookup key equals the schedule row's anchor."""
+    return BLSObservation(
+        series_id="PRS85006092",
+        date=date,
+        value=value,
+        period="Q03",
+    )
+
+
+def _seed_productivity_schedule_row(
+    conn,
+    *,
+    reference_date: str,
+    stage: str,
+    release_date_utc: str,
+    observed_at_epoch_ms: int,
+) -> str:
+    """Write one Productivity schedule row under a stage-qualified
+    anchor and return its ``provider_event_id`` for assertions."""
+    from ingestion.calendar._official_shared import (
+        canonicalize_indicator,
+        synthesize_event_id,
+    )
+
+    spec = INDICATOR_REGISTRY["PRS85006092"]
+    event_id = synthesize_event_id(
+        PROVIDER,
+        spec.country_code,
+        canonicalize_indicator(spec.indicator),
+        f"{reference_date}|{stage}",
+    )
+    conn.execute(
+        """
+        INSERT INTO cal_econ_event (
+            provider, provider_event_id, event_time_utc, event_time_precision,
+            reference_date, reference_label, country_code, indicator_id,
+            category, title, importance, currency, unit,
+            actual, previous, revised, forecast, consensus_forecast,
+            ticker, source, source_url, content_hash,
+            last_update_epoch_ms, observed_at_epoch_ms,
+            created_at, updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            PROVIDER, event_id, release_date_utc, "datetime",
+            reference_date, f"3rd Quarter {reference_date[:4]} ({stage})",
+            spec.country_code, None,
+            spec.category, spec.title, spec.importance, "", spec.unit,
+            None, None, None, None, None,
+            "", "BLS",
+            "https://www.bls.gov/schedule/news_release/prod2.htm",
+            f"schedule:{stage}",
+            None, observed_at_epoch_ms,
+            "2025-01-01T00:00:00+00:00", "2025-01-01T00:00:00+00:00",
+        ),
+    )
+    return event_id
+
+
+def test_staged_fetch_rebases_onto_preliminary_before_revised_releases(
+    store: SQLiteEngineStore,
+) -> None:
+    """The API observation is fetched after the preliminary release
+    but before the revised release — the value lands on the
+    preliminary schedule row's id, keeping the two stages distinct.
+
+    Also verifies the schedule row's ``reference_label`` survives
+    the merge: ``project_events`` always writes
+    ``excluded.reference_label``, so the fetcher must inject the
+    stored label (``"3rd Quarter 2025 (Preliminary)"``) into the
+    rebased event record or the parser's bare ``"Q03"`` label would
+    overwrite the stage marker."""
+    preliminary_released_ms = 1_700_000_000_000  # e.g. "2023-11-14T13:30Z"
+    revised_release_ms     = 1_702_000_000_000   # ~a month later
+    snapshot_between       = 1_701_000_000_000   # between the two
+
+    with store._connection(commit=True) as conn:
+        prelim_id = _seed_productivity_schedule_row(
+            conn,
+            reference_date="2025-09-30",
+            stage="preliminary",
+            release_date_utc=datetime.fromtimestamp(
+                preliminary_released_ms / 1000, tz=timezone.utc,
+            ).isoformat(),
+            observed_at_epoch_ms=preliminary_released_ms,
+        )
+        revised_id = _seed_productivity_schedule_row(
+            conn,
+            reference_date="2025-09-30",
+            stage="revised",
+            release_date_utc=datetime.fromtimestamp(
+                revised_release_ms / 1000, tz=timezone.utc,
+            ).isoformat(),
+            observed_at_epoch_ms=preliminary_released_ms,
+        )
+
+    client = _FakeBLSClient({"PRS85006092": [_prod_obs(value=115.2)]})
+    with store._connection(commit=True) as conn:
+        summary = fetch_bls_calendar(
+            conn, client,
+            start_year=2025, end_year=2025,
+            series_ids=["PRS85006092"],
+            dry_run=False,
+            snapshot_epoch_ms=snapshot_between,
+        )
+
+    assert summary.events_upserted == 1
+    assert summary.staged_skipped == 0
+    with store._connection(commit=False) as conn:
+        prelim_row = conn.execute(
+            "SELECT actual, event_time_precision, reference_label "
+            "FROM cal_econ_event WHERE provider_event_id = ?",
+            (prelim_id,),
+        ).fetchone()
+        revised_row = conn.execute(
+            "SELECT actual, reference_label FROM cal_econ_event "
+            "WHERE provider_event_id = ?",
+            (revised_id,),
+        ).fetchone()
+
+    # API value merged onto the preliminary row, and the schedule's
+    # datetime precision + stage label both survived the merge.
+    assert prelim_row[0] == "115.2"
+    assert prelim_row[1] == "datetime"
+    assert prelim_row[2] == "3rd Quarter 2025 (preliminary)"
+    # Revised row untouched — still has actual=NULL and its own label.
+    assert revised_row[0] is None
+    assert revised_row[1] == "3rd Quarter 2025 (revised)"
+
+
+def test_staged_fetch_rebases_onto_revised_after_both_releases(
+    store: SQLiteEngineStore,
+) -> None:
+    """Once both schedule rows' release times are in the past, the API
+    observation represents the revised value and merges onto the
+    revised row — with the revised stage label surviving the merge."""
+    preliminary_released_ms = 1_700_000_000_000
+    revised_release_ms     = 1_702_000_000_000
+    snapshot_after_revised = 1_703_000_000_000
+
+    with store._connection(commit=True) as conn:
+        prelim_id = _seed_productivity_schedule_row(
+            conn,
+            reference_date="2025-09-30",
+            stage="preliminary",
+            release_date_utc=datetime.fromtimestamp(
+                preliminary_released_ms / 1000, tz=timezone.utc,
+            ).isoformat(),
+            observed_at_epoch_ms=preliminary_released_ms,
+        )
+        revised_id = _seed_productivity_schedule_row(
+            conn,
+            reference_date="2025-09-30",
+            stage="revised",
+            release_date_utc=datetime.fromtimestamp(
+                revised_release_ms / 1000, tz=timezone.utc,
+            ).isoformat(),
+            observed_at_epoch_ms=preliminary_released_ms,
+        )
+
+    client = _FakeBLSClient({"PRS85006092": [_prod_obs(value=116.8)]})
+    with store._connection(commit=True) as conn:
+        summary = fetch_bls_calendar(
+            conn, client,
+            start_year=2025, end_year=2025,
+            series_ids=["PRS85006092"],
+            dry_run=False,
+            snapshot_epoch_ms=snapshot_after_revised,
+        )
+
+    assert summary.events_upserted == 1
+    assert summary.staged_skipped == 0
+    with store._connection(commit=False) as conn:
+        prelim_actual, prelim_label = conn.execute(
+            "SELECT actual, reference_label FROM cal_econ_event "
+            "WHERE provider_event_id = ?",
+            (prelim_id,),
+        ).fetchone()
+        revised_actual, revised_label = conn.execute(
+            "SELECT actual, reference_label FROM cal_econ_event "
+            "WHERE provider_event_id = ?",
+            (revised_id,),
+        ).fetchone()
+
+    assert revised_actual == "116.8"
+    assert revised_label == "3rd Quarter 2025 (revised)"
+    assert prelim_actual is None
+    assert prelim_label == "3rd Quarter 2025 (preliminary)"
+
+
+def test_staged_fetch_skips_and_warns_when_no_schedule_row(
+    store: SQLiteEngineStore,
+    caplog,
+) -> None:
+    """Cold start: schedule hasn't been scraped yet, no stage-qualified
+    rows exist. The observation is skipped rather than written under a
+    bare-date anchor — otherwise a later schedule scrape would land a
+    stage-qualified row under a different id, orphaning the bare-date
+    row. Operator learns via the warning + ``staged_skipped`` counter."""
+    import logging
+
+    snapshot_ms = 1_703_000_000_000
+    client = _FakeBLSClient({"PRS85006092": [_prod_obs(value=117.4)]})
+
+    with caplog.at_level(logging.WARNING, logger="ingestion.calendar.bls_api.fetcher"):
+        with store._connection(commit=True) as conn:
+            summary = fetch_bls_calendar(
+                conn, client,
+                start_year=2025, end_year=2025,
+                series_ids=["PRS85006092"],
+                dry_run=False,
+                snapshot_epoch_ms=snapshot_ms,
+            )
+
+    assert summary.events_upserted == 0
+    assert summary.rows_raw_inserted == 0
+    assert summary.staged_skipped == 1
+    assert any(
+        "no eligible schedule row" in rec.getMessage()
+        and "skipping" in rec.getMessage()
+        and "PRS85006092" in rec.getMessage()
+        for rec in caplog.records
+    ), f"expected a staged-skip warning, got: {[r.getMessage() for r in caplog.records]}"
+
+    with store._connection(commit=False) as conn:
+        (count,) = conn.execute(
+            "SELECT COUNT(*) FROM cal_econ_event WHERE provider='bls'"
+        ).fetchone()
+    assert count == 0
+
+
+def test_staged_fetch_skips_when_schedule_rows_are_all_future(
+    store: SQLiteEngineStore,
+    caplog,
+) -> None:
+    """Both schedule rows exist but neither has released yet (release
+    time > snapshot) — the API observation can't belong to a stage
+    that hasn't been published. Skip rather than rebase onto a future
+    stage."""
+    import logging
+
+    preliminary_future = 1_800_000_000_000
+    revised_future    = 1_810_000_000_000
+    snapshot_before_any = 1_700_000_000_000
+
+    with store._connection(commit=True) as conn:
+        _seed_productivity_schedule_row(
+            conn,
+            reference_date="2025-09-30",
+            stage="preliminary",
+            release_date_utc=datetime.fromtimestamp(
+                preliminary_future / 1000, tz=timezone.utc,
+            ).isoformat(),
+            observed_at_epoch_ms=snapshot_before_any,
+        )
+        _seed_productivity_schedule_row(
+            conn,
+            reference_date="2025-09-30",
+            stage="revised",
+            release_date_utc=datetime.fromtimestamp(
+                revised_future / 1000, tz=timezone.utc,
+            ).isoformat(),
+            observed_at_epoch_ms=snapshot_before_any,
+        )
+
+    client = _FakeBLSClient({"PRS85006092": [_prod_obs(value=118.5)]})
+    with caplog.at_level(logging.WARNING, logger="ingestion.calendar.bls_api.fetcher"):
+        with store._connection(commit=True) as conn:
+            summary = fetch_bls_calendar(
+                conn, client,
+                start_year=2025, end_year=2025,
+                series_ids=["PRS85006092"],
+                dry_run=False,
+                snapshot_epoch_ms=snapshot_before_any,
+            )
+
+    assert summary.staged_skipped == 1
+    # Schedule rows still have actual=NULL; no bare-date orphan row.
+    with store._connection(commit=False) as conn:
+        (value_rows,) = conn.execute(
+            "SELECT COUNT(*) FROM cal_econ_event "
+            "WHERE provider='bls' AND actual IS NOT NULL"
+        ).fetchone()
+    assert value_rows == 0
+
+
+def test_non_staged_indicator_never_triggers_staged_lookup(
+    store: SQLiteEngineStore,
+) -> None:
+    """CPI has ``staged_schedule=False`` — the fetcher must not enter
+    the staged rebase path for it. This keeps the per-observation
+    DB lookup cost scoped to the single indicator that actually
+    needs it (Productivity today)."""
+    from ingestion.calendar._official_shared import (
+        canonicalize_indicator,
+        synthesize_event_id,
+    )
+
+    client = _FakeBLSClient({"CUUR0000SA0": [_cpi_obs(value=312.5, period="M09")]})
+    with store._connection(commit=True) as conn:
+        fetch_bls_calendar(
+            conn, client,
+            start_year=2024, end_year=2024,
+            series_ids=["CUUR0000SA0"],
+            dry_run=False,
+        )
+
+    # CPI's id is bare-date per parser.parse_observation.
+    cpi_id = synthesize_event_id(
+        "bls", "US",
+        canonicalize_indicator("CPI"),
+        "2024-09-01",
+    )
+    with store._connection(commit=False) as conn:
+        (actual,) = conn.execute(
+            "SELECT actual FROM cal_econ_event WHERE provider_event_id = ?",
+            (cpi_id,),
+        ).fetchone()
+    assert actual == "312.5"
 
 
 # ──────────────────────────────────────────────────────────────────────────

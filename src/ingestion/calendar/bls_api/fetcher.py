@@ -13,6 +13,7 @@ the planned series × year chunks without issuing any HTTP request.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import sqlite3
 import time
@@ -22,10 +23,15 @@ from typing import Iterable
 
 import requests
 
+from ingestion.calendar._official_shared import (
+    canonicalize_indicator,
+    synthesize_event_id,
+)
 from ingestion.timeseries.scrapers.bls import BLSClient
 
-from .indicators import INDICATOR_REGISTRY
+from .indicators import BLSIndicatorSpec, INDICATOR_REGISTRY
 from .parser import (
+    PROVIDER,
     BLSCalendarEventRecord,
     BLSCalendarRawRecord,
     parse_observation,
@@ -44,6 +50,14 @@ from .schedule import (
 
 logger = logging.getLogger(__name__)
 
+# Release-stage qualifiers that may ride on a BLS schedule row's
+# ``provider_event_id`` (see ``schedule._QUARTER_QUALIFIER_RE``). When
+# the fetcher rebases a staged observation it enumerates these to
+# build candidate ids without a LIKE match on the hash bytes.
+_STAGED_ANCHORS: tuple[str, ...] = (
+    "preliminary", "prelim", "revised", "advance", "final",
+)
+
 
 @dataclass
 class FetchRunSummary:
@@ -59,6 +73,12 @@ class FetchRunSummary:
     series_ok: list[str] = field(default_factory=list)
     series_empty: list[str] = field(default_factory=list)
     series_unknown: list[str] = field(default_factory=list)
+    # Count of staged-schedule observations skipped because no
+    # eligible schedule row existed at snapshot time. Writing them
+    # under a bare-date anchor would leave an orphan row that a
+    # later schedule scrape can't merge with — the scrape would
+    # create stage-qualified rows under different ids.
+    staged_skipped: int = 0
     # BLS API calls this run consumed (delta of ``client.daily_query_count``);
     # feeds the scheduler's per-day budget tracker.
     requests_made: int = 0
@@ -71,10 +91,10 @@ def _resolve_series(
     """Split caller-supplied ids into known + unknown against the registry.
 
     When ``series_ids is None`` (default-full-registry path), entries
-    flagged ``api_fetch=False`` are excluded — currently Productivity,
-    whose staged schedule (preliminary + revised) has no clean anchor
-    alignment with the bare-date API observation. Still callable with
-    explicit ``series_ids=["PRS85006092"]``."""
+    flagged ``api_fetch=False`` are excluded — currently no registry
+    entry, but the switch stays available as a quarantine lever if a
+    future indicator needs it. Still callable with explicit
+    ``series_ids=[...]``."""
     if series_ids is None:
         return (
             [
@@ -91,6 +111,104 @@ def _resolve_series(
         else:
             unknown.append(sid)
     return known, unknown
+
+
+def _resolve_staged_event_id(
+    connection: sqlite3.Connection,
+    *,
+    spec: BLSIndicatorSpec,
+    reference_date: str,
+    snapshot_epoch_ms: int,
+) -> tuple[str, str] | None:
+    """Find the schedule-row anchor a staged API observation should merge onto.
+
+    For indicators with ``staged_schedule=True`` (Productivity today)
+    the BLS Public Data API returns one bare-date observation per
+    ``(year, period)`` that represents whichever stage is currently
+    published — preliminary up to the revised release date, revised
+    thereafter. The schedule-side scrape has already written one row
+    per stage under a ``|<stage>``-qualified id with a label like
+    ``"3rd Quarter 2025 (Preliminary)"``. We pick the schedule row
+    whose ``event_time_utc`` is the latest among those at or before
+    ``snapshot_epoch_ms`` so the API value lands on the stage it
+    actually represents.
+
+    Returns ``(provider_event_id, reference_label)`` from that
+    schedule row, or ``None`` when no eligible row exists (cold
+    start, or the observation is for a future quarter whose releases
+    haven't happened yet). Callers skip the observation rather than
+    writing a bare-date row that a later schedule scrape would
+    duplicate under a stage-qualified id.
+    """
+    indicator_canonical = canonicalize_indicator(spec.indicator)
+    candidate_ids = [
+        synthesize_event_id(
+            PROVIDER,
+            spec.country_code,
+            indicator_canonical,
+            f"{reference_date}|{stage}",
+        )
+        for stage in _STAGED_ANCHORS
+    ]
+    placeholders = ",".join(["?"] * len(candidate_ids))
+    cursor = connection.execute(
+        f"""
+        SELECT provider_event_id, event_time_utc, reference_label
+        FROM cal_econ_event
+        WHERE provider = ?
+          AND event_time_precision = 'datetime'
+          AND provider_event_id IN ({placeholders})
+        """,
+        (PROVIDER, *candidate_ids),
+    )
+    best_id: str | None = None
+    best_label: str = ""
+    best_ms: int = -1
+    for pid, event_time_utc, reference_label in cursor.fetchall():
+        try:
+            released_ms = int(
+                datetime.fromisoformat(event_time_utc).timestamp() * 1000
+            )
+        except (TypeError, ValueError):
+            # A non-ISO ``event_time_utc`` shouldn't happen — schedule
+            # rows always write aware UTC. Skip the row rather than
+            # failing the whole fetch if an upstream DOM change ever
+            # drifts the column.
+            continue
+        if released_ms <= snapshot_epoch_ms and released_ms > best_ms:
+            best_ms = released_ms
+            best_id = pid
+            best_label = reference_label or ""
+    if best_id is None:
+        return None
+    return best_id, best_label
+
+
+def _rebase_records_onto(
+    raw: BLSCalendarRawRecord,
+    event: BLSCalendarEventRecord,
+    new_event_id: str,
+    new_reference_label: str,
+) -> tuple[BLSCalendarRawRecord, BLSCalendarEventRecord]:
+    """Return (raw, event) with ``provider_event_id`` + ``reference_label``
+    replaced by the schedule row's values.
+
+    Carrying the schedule row's label through keeps the stage marker
+    (``"(Preliminary)"`` / ``"(Revised)"``) visible after the API
+    merge — the projector's upsert rule always writes
+    ``excluded.reference_label``, so without this the schedule-side
+    label is clobbered by the parser's bare ``"Q03"`` string and the
+    two staged Productivity events collapse to identical labels in
+    the event table.
+    """
+    return (
+        dataclasses.replace(raw, provider_event_id=new_event_id),
+        dataclasses.replace(
+            event,
+            provider_event_id=new_event_id,
+            reference_label=new_reference_label,
+        ),
+    )
 
 
 def fetch_bls_calendar(
@@ -168,6 +286,30 @@ def fetch_bls_calendar(
                 snapshot_epoch_ms=snapshot,
                 spec=spec,
             )
+            if spec.staged_schedule:
+                resolved = _resolve_staged_event_id(
+                    connection,
+                    spec=spec,
+                    reference_date=obs.date,
+                    snapshot_epoch_ms=snapshot,
+                )
+                if resolved is None:
+                    # Skip rather than fall back to the bare-date
+                    # anchor — a later schedule scrape would land a
+                    # stage-qualified row under a different id,
+                    # orphaning the bare-date row we'd have written.
+                    logger.warning(
+                        "BLS staged observation for %s ref=%s has no "
+                        "eligible schedule row; skipping",
+                        sid, obs.date,
+                    )
+                    summary.staged_skipped += 1
+                    continue
+                new_event_id, new_reference_label = resolved
+                raw_rec, event_rec = _rebase_records_onto(
+                    raw_rec, event_rec,
+                    new_event_id, new_reference_label,
+                )
             raw_records.append(raw_rec)
             event_records.append(event_rec)
 
@@ -250,18 +392,7 @@ def schedule_bls_calendar(
     )
 
     raw_records: list[BLSCalendarRawRecord] = []
-    # Partition by ``spec.api_fetch`` — same shape as BEA P2a's
-    # scheduler. Rationale: ``project_schedule_events`` preserves
-    # ``content_hash`` and ``observed_at_epoch_ms`` on conflict so an
-    # API-merged row isn't clobbered by a later schedule re-scrape.
-    # That's correct for API-merged indicators (CPI / NFP / etc.),
-    # but wrong for schedule-only indicators (Productivity,
-    # ``api_fetch=False``) — there's no API side to protect, so
-    # schedule re-scrapes must refresh the audit fields. Routing
-    # schedule-only rows through ``project_events`` (full writer)
-    # fixes the audit-freshness gap carried over from P1c.
-    schedule_merge_records: list[BLSCalendarEventRecord] = []
-    schedule_only_records: list[BLSCalendarEventRecord] = []
+    event_records: list[BLSCalendarEventRecord] = []
     # Per-run slug → HTML cache. Four CES/CPS series share empsit.htm
     # under P1c; without the cache each run re-downloads the same page
     # four times. Politeness to bls.gov and a small bandwidth win.
@@ -288,18 +419,18 @@ def schedule_bls_calendar(
                 entry, snapshot_epoch_ms=snapshot, spec=spec,
             )
             raw_records.append(raw_rec)
-            if spec.api_fetch:
-                schedule_merge_records.append(event_rec)
-            else:
-                schedule_only_records.append(event_rec)
+            event_records.append(event_rec)
 
-    summary.entries_parsed = (
-        len(schedule_merge_records) + len(schedule_only_records)
-    )
+    summary.entries_parsed = len(event_records)
     summary.rows_raw_inserted = store_raw(connection, raw_records)
-    summary.events_upserted = (
-        project_schedule_events(connection, schedule_merge_records)
-        + project_events(connection, schedule_only_records)
+    # ``project_schedule_events`` preserves ``content_hash`` and
+    # ``observed_at_epoch_ms`` on conflict so an API-merged row isn't
+    # clobbered by a later schedule re-scrape. Every BLS indicator
+    # now has an API side (Productivity routes through the staged
+    # rebase in :func:`fetch_bls_calendar`), so no schedule-only
+    # branch remains.
+    summary.events_upserted = project_schedule_events(
+        connection, event_records,
     )
     summary.wall_seconds = time.monotonic() - started
     return summary

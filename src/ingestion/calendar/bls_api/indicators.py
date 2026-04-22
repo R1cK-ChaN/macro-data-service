@@ -37,16 +37,21 @@ class BLSIndicatorSpec:
     unit: str
     importance: str          # low / medium / high
     category: str            # free-text, mirrors TE's Category
-    # ``False`` for indicators whose schedule page publishes multiple
-    # release stages per reference period (preliminary then revised —
-    # Productivity today). Those don't have a clean single
-    # ``provider_event_id`` that aligns schedule-side staged rows with
-    # an API-side bare-date observation, so the default
-    # ``fetch_bls_calendar`` iteration excludes them until the
-    # schedule/API merge semantics for staged releases is designed
-    # (follow-up slice). Still callable by passing ``series_ids=``
-    # explicitly.
+    # Include in the default ``fetch_bls_calendar`` iteration. Kept as
+    # a switch so a future problem indicator can be quarantined out of
+    # the recurring run without dropping it from the registry.
     api_fetch: bool = True
+    # ``True`` for indicators whose BLS schedule page publishes more
+    # than one release row per reference period (preliminary then
+    # revised — Productivity and Costs today). The schedule-side rows
+    # synthesise ``provider_event_id`` with a ``|<stage>`` suffix to
+    # keep the two versions from colliding in ``cal_econ_event``. The
+    # API returns a single bare-date observation per (year, period)
+    # representing whichever stage is currently published, so the
+    # fetcher rebases each staged observation onto the latest
+    # already-released schedule row instead of writing under a
+    # bare-date anchor that would orphan.
+    staged_schedule: bool = False
 
 
 INDICATOR_REGISTRY: dict[str, BLSIndicatorSpec] = {
@@ -154,9 +159,10 @@ INDICATOR_REGISTRY: dict[str, BLSIndicatorSpec] = {
     ),
     # ── US productivity ──────────────────────────────────────────
     # Quarterly, with preliminary + revised releases per quarter —
-    # ``api_fetch=False`` until the schedule/API merge semantics for
-    # staged releases is designed (follow-up slice). Schedule scraping
-    # is unaffected.
+    # ``staged_schedule=True`` drives the fetcher to rebase each API
+    # observation onto the latest already-released schedule row so
+    # the value lands on a stage-qualified id instead of an orphan
+    # bare-date anchor. Schedule scraping unaffected.
     "PRS85006092": BLSIndicatorSpec(
         series_id="PRS85006092",
         indicator="Productivity",
@@ -165,6 +171,6 @@ INDICATOR_REGISTRY: dict[str, BLSIndicatorSpec] = {
         unit="index",
         importance="low",
         category="Productivity",
-        api_fetch=False,
+        staged_schedule=True,
     ),
 }

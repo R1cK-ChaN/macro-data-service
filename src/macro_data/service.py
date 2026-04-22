@@ -591,6 +591,7 @@ class LocalMacroDataService:
             "observations_seen":  summary.observations_seen,
             "rows_raw_inserted":  summary.rows_raw_inserted,
             "events_upserted":    summary.events_upserted,
+            "staged_skipped":     summary.staged_skipped,
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
