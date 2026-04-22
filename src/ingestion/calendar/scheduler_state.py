@@ -83,20 +83,7 @@ def today_utc_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-def get_connector_state(
-    connection: sqlite3.Connection, connector: str,
-) -> ConnectorState:
-    """Read state for ``connector``; return a fresh default when absent."""
-    row = connection.execute(
-        """
-        SELECT consecutive_failures, last_error,
-               last_failure_at_ms, cooling_until_ms,
-               requests_today, requests_day_utc
-        FROM calendar_connector_state
-        WHERE connector = ?
-        """,
-        (connector,),
-    ).fetchone()
+def _row_to_state(connector: str, row: tuple | None) -> ConnectorState:
     if row is None:
         return ConnectorState(connector=connector)
     (
@@ -116,6 +103,46 @@ def get_connector_state(
         requests_today=int(requests_today or 0),
         requests_day_utc=requests_day_utc,
     )
+
+
+def get_connector_state(
+    connection: sqlite3.Connection, connector: str,
+) -> ConnectorState:
+    """Read state for ``connector``; return a fresh default when absent."""
+    row = connection.execute(
+        """
+        SELECT consecutive_failures, last_error,
+               last_failure_at_ms, cooling_until_ms,
+               requests_today, requests_day_utc
+        FROM calendar_connector_state
+        WHERE connector = ?
+        """,
+        (connector,),
+    ).fetchone()
+    return _row_to_state(connector, row)
+
+
+def list_connector_states(
+    connection: sqlite3.Connection,
+) -> list[ConnectorState]:
+    """Return every persisted connector state row.
+
+    Used by the health dashboard (P-sched-4) to surface cooling /
+    budget-exhausted connectors in ``/health``. Connectors that have
+    never run (no row) are not returned — callers that want a full
+    roster pair this with :data:`ingestion.calendar.scheduler.ALL_CONNECTORS`
+    and synthesize defaults for absent names.
+    """
+    rows = connection.execute(
+        """
+        SELECT connector, consecutive_failures, last_error,
+               last_failure_at_ms, cooling_until_ms,
+               requests_today, requests_day_utc
+        FROM calendar_connector_state
+        ORDER BY connector
+        """,
+    ).fetchall()
+    return [_row_to_state(row[0], row[1:]) for row in rows]
 
 
 def is_cooling(state: ConnectorState, now_ms: int) -> bool:
