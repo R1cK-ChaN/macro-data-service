@@ -57,7 +57,20 @@ _MODIFIER_SUFFIXES: tuple[str, ...] = (
     " final",
     " flash",
     " revised",
+    # Fed FOMC rows stored with ``has_sep=True`` carry the
+    # "+ SEP" marker on ``title``; strip it before alias lookup so
+    # quarterly projection-materials meetings still resolve to
+    # ``FOMC_RATE``.
+    " + sep",
 )
+
+# Dash characters that appear in provider titles but must not affect
+# alias matching. Em-dash (U+2014) and en-dash (U+2013) show up in BLS
+# report titles ("Consumer Price Index — All Items Less Food and
+# Energy") and in some Fed labels; non-breaking hyphen (U+2011) shows
+# up where providers protect phrases from line-breaks. Normalized to a
+# plain space so whitespace collapse yields a predictable form.
+_DASH_CHARS = ("—", "–", "‑", " - ")
 
 # Alias → canonical token. Keys are the post-step-1/2 normalized string
 # (lowercase, whitespace-collapsed, modifier-stripped). Values are the
@@ -73,11 +86,15 @@ _ALIASES: dict[str, str] = {
     "consumer price index": "CPI",
     "consumer price index for all urban consumers": "CPI",
     "cpi-u": "CPI",
+    "inflation rate": "CPI",
     "core cpi": "CORE_CPI",
+    "consumer price index all items less food and energy": "CORE_CPI",
     "cpi less food and energy": "CORE_CPI",
     "cpi ex food and energy": "CORE_CPI",
+    "core inflation rate": "CORE_CPI",
     "ppi": "PPI",
     "producer price index": "PPI",
+    "producer price index final demand": "PPI",
     "producer price index for final demand": "PPI",
     "core ppi": "CORE_PPI",
     "ppi less food and energy": "CORE_PPI",
@@ -102,6 +119,9 @@ _ALIASES: dict[str, str] = {
     # ── US growth / BEA ─────────────────────────────────────────
     "gdp": "GDP",
     "gross domestic product": "GDP",
+    "gdp growth rate": "GDP",
+    "real gdp": "GDP",
+    "real gross domestic product": "GDP",
     "personal income and outlays": "PERSONAL_INCOME",
     "personal income": "PERSONAL_INCOME",
     "personal consumption expenditures": "PCE",
@@ -172,7 +192,12 @@ def canonicalize_indicator(label: str) -> str:
     if not label:
         return ""
     text = _PARENS_RE.sub("", label).strip().lower()
-    text = _WHITESPACE_RE.sub(" ", text)
+    # Replace em-dash / en-dash / non-breaking hyphen with a space so
+    # the whitespace collapse below yields a predictable surface for
+    # alias lookup regardless of which dash glyph the upstream used.
+    for dash in _DASH_CHARS:
+        text = text.replace(dash, " ")
+    text = _WHITESPACE_RE.sub(" ", text).strip()
 
     # Strip modifier suffixes iteratively — "CPI YoY SA" → "CPI".
     changed = True

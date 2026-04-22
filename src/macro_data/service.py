@@ -1293,6 +1293,134 @@ class LocalMacroDataService:
             "wall_seconds":        round(summary.wall_seconds, 3),
         }
 
+    def _op_calendar_econ_parity(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Compare TE and official-source rows in ``cal_econ_event``.
+
+        Shipped with issue #9 P6. Buckets rows by
+        ``(country, canonicalize_indicator(title), reference_date)``
+        inside the caller's ``(from_date, to_date)`` window and
+        reports per-indicator match coverage against the TE provider.
+        TE-only gaps are actionable (scheduler missed a release);
+        official-only rows are TE blind spots (documented but not a
+        regression — see the issue #9 P6 NBS caveat).
+
+        Arguments:
+          from_date   — required ISO date / datetime, inclusive lower
+                        bound on ``event_time_utc``.
+          to_date     — required ISO date / datetime, inclusive upper.
+          indicators  — optional list of canonical tokens
+                        (``["CPI", "NFP"]``). Omit to cover everything
+                        in-window that canonicalizes to a non-empty
+                        token.
+          write_report — optional bool. When True the markdown report
+                        is also written to
+                        ``docs/validation/calendar_parity_<YYYY-MM-DD>.md``.
+                        Default False — the op returns the report
+                        string so the caller can decide where to
+                        persist.
+
+        Returns a JSON-serializable envelope carrying totals,
+        per-indicator breakdown, the TE-only / official-only lists
+        (truncated-neutral — full lists, no cap at the service
+        boundary), and the rendered markdown report.
+        """
+        from ingestion.calendar.parity import (
+            OFFICIAL_PROVIDERS,
+            TE_PROVIDER,
+            calendar_econ_parity,
+            format_parity_report,
+        )
+
+        from_date = str(arguments.get("from_date") or "").strip()
+        to_date = str(arguments.get("to_date") or "").strip()
+        if not from_date or not to_date:
+            return {"error": "from_date and to_date are required"}
+
+        raw_indicators = arguments.get("indicators")
+        indicators: list[str] | None
+        if raw_indicators is None:
+            indicators = None
+        elif isinstance(raw_indicators, list):
+            indicators = [str(ind) for ind in raw_indicators]
+        else:
+            indicators = None
+
+        write_report = bool(arguments.get("write_report", False))
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        # Use ``contextlib.closing`` so the connection is released on
+        # the usual service-op cadence — Connection.__exit__ commits
+        # but does not close, and this op runs on operator demand, so
+        # leaving handles open across invocations would compound.
+        from contextlib import closing
+        with closing(get_conn()) as connection:
+            summary = calendar_econ_parity(
+                connection,
+                from_date=from_date,
+                to_date=to_date,
+                indicators=indicators,
+            )
+
+        report_markdown = format_parity_report(summary)
+        report_path: str | None = None
+        if write_report:
+            from pathlib import Path
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            docs_dir = Path("docs/validation")
+            docs_dir.mkdir(parents=True, exist_ok=True)
+            target = docs_dir / f"calendar_parity_{today}.md"
+            target.write_text(report_markdown, encoding="utf-8")
+            report_path = str(target)
+
+        return {
+            "from_date":            summary.from_date,
+            "to_date":              summary.to_date,
+            "te_provider":          TE_PROVIDER,
+            "official_providers":   list(OFFICIAL_PROVIDERS),
+            "total_events":         summary.total_events,
+            "matched":              summary.matched,
+            "te_only_count":        summary.te_only_count,
+            "official_only_count":  summary.official_only_count,
+            "match_percentage":     summary.match_percentage,
+            "indicators": [
+                {
+                    "country":              ind.country_code,
+                    "canonical_indicator":  ind.canonical_indicator,
+                    "total_events":         ind.total_events,
+                    "matched":              ind.matched,
+                    "te_only":              ind.te_only,
+                    "official_only":        ind.official_only,
+                    "match_percentage":     ind.match_percentage,
+                }
+                for ind in summary.indicators
+            ],
+            "te_only_events": [
+                self._parity_event_dict(e) for e in summary.te_only_events
+            ],
+            "official_only_events": [
+                self._parity_event_dict(e) for e in summary.official_only_events
+            ],
+            "report_markdown":  report_markdown,
+            "report_path":      report_path,
+        }
+
+    @staticmethod
+    def _parity_event_dict(event: Any) -> dict[str, Any]:
+        return {
+            "provider":             event.provider,
+            "provider_event_id":    event.provider_event_id,
+            "country_code":         event.country_code,
+            "canonical_indicator":  event.canonical_indicator,
+            "reference_date":       event.reference_date,
+            "title":                event.title,
+            "event_time_utc":       event.event_time_utc,
+        }
+
     def _op_list_calendar_items(
         self, arguments: dict[str, Any],
     ) -> dict[str, Any]:
