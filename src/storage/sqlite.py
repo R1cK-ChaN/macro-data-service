@@ -2322,6 +2322,303 @@ class SQLiteEngineStore:
                 "CREATE INDEX IF NOT EXISTS idx_calendar_events_indicator_id "
                 "ON calendar_events(indicator_id)"
             )
+
+            # ── Unified calendar (issue #8) ────────────────────────────
+            # Two physical lanes sharing a revision pattern:
+            #   economic  — macro releases (TE now, BLS/ECB/Fed/NBS later)
+            #   corporate — earnings/IPOs/splits/dividends (EODHD now)
+            # Downstream reads the v_calendar_item VIEW for a unified shape.
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cal_provider (
+                    provider_id   TEXT NOT NULL,
+                    provider_type TEXT NOT NULL
+                        CHECK (provider_type IN (
+                            'data_aggregator','government_agency','central_bank',
+                            'exchange','market_data'
+                        )),
+                    domain        TEXT NOT NULL
+                        CHECK (domain IN ('economic','corporate')),
+                    precedence    INTEGER NOT NULL DEFAULT 10,
+                    is_active     INTEGER NOT NULL DEFAULT 1,
+                    created_at    TEXT NOT NULL,
+                    updated_at    TEXT NOT NULL,
+                    PRIMARY KEY (provider_id, domain)
+                )
+                """
+            )
+            # Per-connector circuit-breaker state for the calendar
+            # scheduler (issue #9 P-sched-3). Keyed by scheduler-level
+            # connector name (``"bls"`` / ``"bea"`` / ``"ecb"`` /
+            # ``"fed-fomc"`` / ``"fed-releases"`` / ``"fed-values"`` /
+            # ``"nbs"``) rather than provider-id, because the scheduler
+            # distinguishes Fed's three surfaces while ``cal_provider``
+            # carries a single ``federal-reserve`` row.
+            #
+            # ``requests_today`` + ``requests_day_utc`` (added in
+            # P-sched-3-budget) persist a per-connector daily request
+            # counter across cron-invocation processes so the scheduler
+            # can skip a connector once its upstream cap is exhausted.
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS calendar_connector_state (
+                    connector             TEXT NOT NULL PRIMARY KEY,
+                    consecutive_failures  INTEGER NOT NULL DEFAULT 0,
+                    last_error            TEXT,
+                    last_failure_at_ms    INTEGER,
+                    cooling_until_ms      INTEGER,
+                    requests_today        INTEGER NOT NULL DEFAULT 0,
+                    requests_day_utc      TEXT,
+                    updated_at            TEXT NOT NULL
+                )
+                """
+            )
+            self._ensure_table_columns(
+                connection,
+                table_name="calendar_connector_state",
+                columns={
+                    "requests_today":   "INTEGER NOT NULL DEFAULT 0",
+                    "requests_day_utc": "TEXT",
+                },
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cal_econ_raw (
+                    provider           TEXT NOT NULL,
+                    provider_event_id  TEXT NOT NULL,
+                    snapshot_epoch_ms  INTEGER NOT NULL,
+                    content_hash       TEXT NOT NULL,
+                    payload_json       TEXT NOT NULL,
+                    fetched_at         TEXT NOT NULL,
+                    PRIMARY KEY (provider, provider_event_id, content_hash)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_econ_raw_latest "
+                "ON cal_econ_raw(provider, provider_event_id, snapshot_epoch_ms DESC)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cal_econ_event (
+                    provider               TEXT NOT NULL,
+                    provider_event_id      TEXT NOT NULL,
+                    event_time_utc         TEXT NOT NULL,
+                    event_time_precision   TEXT NOT NULL DEFAULT 'datetime'
+                        CHECK (event_time_precision IN ('datetime','date','approximate')),
+                    reference_date         TEXT,
+                    reference_label        TEXT NOT NULL DEFAULT '',
+                    country_code           TEXT NOT NULL,
+                    indicator_id           TEXT,
+                    category               TEXT NOT NULL DEFAULT '',
+                    title                  TEXT NOT NULL,
+                    importance             TEXT
+                        CHECK (importance IS NULL OR importance IN ('low','medium','high')),
+                    currency               TEXT NOT NULL DEFAULT '',
+                    unit                   TEXT NOT NULL DEFAULT '',
+                    actual                 TEXT,
+                    previous               TEXT,
+                    revised                TEXT,
+                    forecast               TEXT,
+                    consensus_forecast     TEXT,
+                    ticker                 TEXT NOT NULL DEFAULT '',
+                    source                 TEXT NOT NULL DEFAULT '',
+                    source_url             TEXT NOT NULL DEFAULT '',
+                    content_hash           TEXT NOT NULL,
+                    last_update_epoch_ms   INTEGER,
+                    observed_at_epoch_ms   INTEGER NOT NULL,
+                    created_at             TEXT NOT NULL,
+                    updated_at             TEXT NOT NULL,
+                    PRIMARY KEY (provider, provider_event_id),
+                    FOREIGN KEY (indicator_id) REFERENCES calendar_indicator(indicator_id)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_econ_event_country_time "
+                "ON cal_econ_event(country_code, event_time_utc)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_econ_event_indicator_time "
+                "ON cal_econ_event(indicator_id, event_time_utc)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_econ_event_time "
+                "ON cal_econ_event(event_time_utc)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cal_econ_drops (
+                    provider           TEXT NOT NULL,
+                    provider_event_id  TEXT NOT NULL,
+                    first_dropped_at   TEXT NOT NULL,
+                    last_seen_at       TEXT NOT NULL DEFAULT '',
+                    reason             TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (provider, provider_event_id)
+                )
+                """
+            )
+
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cal_corp_raw (
+                    provider           TEXT NOT NULL,
+                    provider_event_id  TEXT NOT NULL,
+                    snapshot_epoch_ms  INTEGER NOT NULL,
+                    content_hash       TEXT NOT NULL,
+                    payload_json       TEXT NOT NULL,
+                    fetched_at         TEXT NOT NULL,
+                    PRIMARY KEY (provider, provider_event_id, content_hash)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_corp_raw_latest "
+                "ON cal_corp_raw(provider, provider_event_id, snapshot_epoch_ms DESC)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cal_corp_event (
+                    provider               TEXT NOT NULL,
+                    provider_event_id      TEXT NOT NULL,
+                    event_subtype          TEXT NOT NULL
+                        CHECK (event_subtype IN (
+                            'earnings','ipo','split','dividend','earnings_trend'
+                        )),
+                    event_time_utc         TEXT NOT NULL,
+                    event_time_precision   TEXT NOT NULL DEFAULT 'date'
+                        CHECK (event_time_precision IN ('datetime','date','approximate')),
+                    ticker                 TEXT NOT NULL,
+                    exchange               TEXT NOT NULL DEFAULT '',
+                    currency               TEXT NOT NULL DEFAULT '',
+                    currency_reporting     TEXT NOT NULL DEFAULT '',
+                    title                  TEXT NOT NULL DEFAULT '',
+                    reference_date         TEXT,
+                    source_url             TEXT NOT NULL DEFAULT '',
+                    content_hash           TEXT NOT NULL,
+                    payload_json           TEXT NOT NULL DEFAULT '{}',
+                    observed_at_epoch_ms   INTEGER NOT NULL,
+                    created_at             TEXT NOT NULL,
+                    updated_at             TEXT NOT NULL,
+                    PRIMARY KEY (provider, provider_event_id)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_corp_event_ticker_time "
+                "ON cal_corp_event(ticker, event_time_utc)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_corp_event_subtype_time "
+                "ON cal_corp_event(event_subtype, event_time_utc)"
+            )
+
+            # Unified read view — UNION ALL over both lanes, projected into
+            # the CalendarItem contract shape. Storage stays split; consumers
+            # see one target.
+            connection.execute("DROP VIEW IF EXISTS v_calendar_item")
+            connection.execute(
+                """
+                CREATE VIEW v_calendar_item AS
+                SELECT
+                    provider || ':' || provider_event_id AS event_id,
+                    'economic'                           AS domain,
+                    'release'                            AS subtype,
+                    provider                             AS provider,
+                    provider_event_id                    AS provider_event_id,
+                    event_time_utc                       AS event_time_utc,
+                    event_time_precision                 AS event_time_precision,
+                    title                                AS title,
+                    country_code                         AS country,
+                    NULL                                 AS ticker,
+                    NULL                                 AS exchange,
+                    currency                             AS currency,
+                    importance                           AS importance,
+                    indicator_id                         AS indicator_id,
+                    reference_date                       AS reference_date,
+                    actual                               AS actual,
+                    previous                             AS previous,
+                    forecast                             AS forecast,
+                    consensus_forecast                   AS consensus_forecast,
+                    source_url                           AS source_url,
+                    last_update_epoch_ms                 AS last_update_epoch_ms,
+                    observed_at_epoch_ms                 AS observed_at_epoch_ms,
+                    NULL                                 AS payload_json
+                FROM cal_econ_event
+                UNION ALL
+                SELECT
+                    provider || ':' || provider_event_id AS event_id,
+                    'corporate'                          AS domain,
+                    event_subtype                        AS subtype,
+                    provider                             AS provider,
+                    provider_event_id                    AS provider_event_id,
+                    event_time_utc                       AS event_time_utc,
+                    event_time_precision                 AS event_time_precision,
+                    title                                AS title,
+                    NULL                                 AS country,
+                    ticker                               AS ticker,
+                    exchange                             AS exchange,
+                    currency                             AS currency,
+                    NULL                                 AS importance,
+                    NULL                                 AS indicator_id,
+                    reference_date                       AS reference_date,
+                    NULL                                 AS actual,
+                    NULL                                 AS previous,
+                    NULL                                 AS forecast,
+                    NULL                                 AS consensus_forecast,
+                    source_url                           AS source_url,
+                    NULL                                 AS last_update_epoch_ms,
+                    observed_at_epoch_ms                 AS observed_at_epoch_ms,
+                    payload_json                         AS payload_json
+                FROM cal_corp_event
+                """
+            )
+
+            # Backfill cursor — per (provider, phase) resumability for the
+            # economic-lane API fetcher. `phase` lets us drive the recent /
+            # mid / early sweeps independently so a mid-phase budget breach
+            # doesn't reset the others.
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cal_backfill_cursor (
+                    provider         TEXT NOT NULL,
+                    phase            TEXT NOT NULL,
+                    cursor_date      TEXT NOT NULL,
+                    window_end_date  TEXT NOT NULL,
+                    rows_ingested    INTEGER NOT NULL DEFAULT 0,
+                    requests_spent   INTEGER NOT NULL DEFAULT 0,
+                    last_run_at      TEXT NOT NULL DEFAULT '',
+                    is_complete      INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (provider, phase)
+                )
+                """
+            )
+
+            # Seed provider dim. INSERT OR IGNORE = idempotent on repeated
+            # init_schema calls. Official-tier providers (precedence=100)
+            # rank above the TE aggregator (precedence=10); the current
+            # v_calendar_item VIEW is a plain UNION ALL and does not yet
+            # apply precedence — the parity harness (issue #9 P6) is the
+            # first caller that resolves conflicts on this column.
+            _now_iso = datetime.now(timezone.utc).isoformat()
+            connection.executemany(
+                """
+                INSERT OR IGNORE INTO cal_provider (
+                    provider_id, provider_type, domain, precedence,
+                    is_active, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, 1, ?, ?)
+                """,
+                [
+                    ("tradingeconomics", "data_aggregator",   "economic",  10,  _now_iso, _now_iso),
+                    ("eodhd",            "data_aggregator",   "corporate", 10,  _now_iso, _now_iso),
+                    ("bls",              "government_agency", "economic",  100, _now_iso, _now_iso),
+                    ("bea",              "government_agency", "economic",  100, _now_iso, _now_iso),
+                    ("federal-reserve",  "central_bank",      "economic",  100, _now_iso, _now_iso),
+                    ("ecb",              "central_bank",      "economic",  100, _now_iso, _now_iso),
+                    ("nbs",              "government_agency", "economic",  100, _now_iso, _now_iso),
+                ],
+            )
+
             # ── Observation enrichment sidecar ─────────────────────────
             # Stores derived labels / computed tags alongside an observation
             # family + date without polluting the indicators schema. Used
@@ -7595,6 +7892,150 @@ class SQLiteEngineStore:
         if row is None:
             return None
         return self._row_to_calendar_indicator(row)
+
+    def list_calendar_items(
+        self,
+        *,
+        domain: str | None = None,
+        country: str | None = None,
+        ticker: str | None = None,
+        subtype: str | None = None,
+        provider: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Filtered read of ``v_calendar_item`` with offset pagination.
+
+        Returns ``(items, total_count)``. ``items`` is the current
+        page as a list of dicts shaped to the ``CalendarItem`` DTO
+        contract; ``total_count`` is the number of rows matching the
+        filter set (before offset/limit are applied) so HTTP callers
+        can compute ``links.next`` themselves.
+
+        Filter semantics — every non-``None`` argument collapses to an
+        equality clause on the view column:
+
+        - ``domain``   → ``'economic'`` / ``'corporate'``
+        - ``country``  → ISO-3166 alpha-2 (economic lane only; corporate
+                         rows have ``NULL`` and won't match any value).
+        - ``ticker``   → corporate lane only (economic rows are ``NULL``).
+        - ``subtype``  → ``'release'`` for econ, ``dividend`` / ``earnings``
+                         / ``earnings_trend`` / ``ipo`` / ``split`` for
+                         corp.
+        - ``provider`` → ``cal_provider.provider_id`` value.
+
+        ``offset`` is clamped to ``>= 0``; ``limit`` to ``[1, 500]``.
+        Rows are ordered by ``event_time_utc`` ascending then
+        ``event_id`` for stable pagination.
+        """
+        conditions: list[str] = []
+        params: list[Any] = []
+        if domain:
+            conditions.append("domain = ?")
+            params.append(domain)
+        if country:
+            conditions.append("country = ?")
+            params.append(country)
+        if ticker:
+            conditions.append("ticker = ?")
+            params.append(ticker)
+        if subtype:
+            conditions.append("subtype = ?")
+            params.append(subtype)
+        if provider:
+            conditions.append("provider = ?")
+            params.append(provider)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        safe_offset = max(0, int(offset))
+        safe_limit = max(1, min(500, int(limit)))
+
+        with self._connection(commit=False) as connection:
+            total_row = connection.execute(
+                f"SELECT COUNT(*) FROM v_calendar_item {where}",
+                params,
+            ).fetchone()
+            total_count = int(total_row[0]) if total_row else 0
+            rows = connection.execute(
+                f"""
+                SELECT event_id, domain, subtype, provider, provider_event_id,
+                       event_time_utc, event_time_precision, title, country,
+                       ticker, exchange, currency, importance, indicator_id,
+                       reference_date, actual, previous, forecast,
+                       consensus_forecast, source_url, last_update_epoch_ms,
+                       observed_at_epoch_ms, payload_json
+                FROM v_calendar_item
+                {where}
+                ORDER BY event_time_utc ASC, event_id ASC
+                LIMIT ? OFFSET ?
+                """,
+                [*params, safe_limit, safe_offset],
+            ).fetchall()
+
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            (
+                event_id, domain_val, subtype_val, provider_val, _peid,
+                event_time_utc, precision, title, country_val,
+                ticker_val, exchange_val, currency_val, importance_val,
+                indicator_id, reference_date, actual, previous, forecast,
+                consensus_forecast, source_url, last_update_epoch_ms,
+                _observed_at, payload_raw,
+            ) = row
+            values: dict[str, Any] = {}
+            if actual is not None:
+                values["actual"] = actual
+            if previous is not None:
+                values["previous"] = previous
+            if forecast is not None:
+                values["forecast"] = forecast
+            if consensus_forecast is not None:
+                values["consensus_forecast"] = consensus_forecast
+            # Corporate lane: the value-bearing fields (eps_actual,
+            # dividend_amount, split_ratio, ipo_price, …) live in
+            # ``cal_corp_event.payload_json`` — the economic-column
+            # slots are NULL in the view. Flatten scalar keys from the
+            # payload into ``values`` so the unified DTO carries the
+            # subtype-specific data HTTP clients need. Nested objects
+            # / arrays are skipped here because the CalendarItem
+            # contract declares ``values: dict[str, str | None]``.
+            if payload_raw and domain_val == "corporate":
+                try:
+                    payload = json.loads(payload_raw)
+                except (TypeError, ValueError):
+                    payload = None
+                if isinstance(payload, dict):
+                    for key, val in payload.items():
+                        if val is None:
+                            continue
+                        if isinstance(val, (str, int, float, bool)):
+                            values.setdefault(str(key), str(val))
+            items.append(
+                {
+                    "event_id": event_id,
+                    "release_time": event_time_utc,
+                    "release_time_precision": precision,
+                    "indicator": indicator_id or "",
+                    "country": country_val or "",
+                    "importance": importance_val or "medium",
+                    "domain": domain_val,
+                    "subtype": subtype_val,
+                    "provider": provider_val,
+                    "title": title or "",
+                    "ticker": ticker_val,
+                    "exchange": exchange_val,
+                    "currency": currency_val,
+                    "reference_date": reference_date,
+                    "expected": forecast,
+                    "previous": previous,
+                    "values": values,
+                    "last_update_epoch_ms": last_update_epoch_ms,
+                    "source_url": source_url or "",
+                    "references": [],
+                    "notes": "",
+                    "tags": [],
+                }
+            )
+        return items, total_count
 
     def list_calendar_indicators(
         self,

@@ -39,7 +39,51 @@ class MacroDataRequestHandler(BaseHTTPRequestHandler):
                 return
             self._write_json(HTTPStatus.OK, payload)
             return
+        if parsed.path == "/v1/calendar":
+            self._handle_calendar_list(parsed.query)
+            return
         self._write_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
+
+    def _handle_calendar_list(self, query: str) -> None:
+        """GET /v1/calendar — JSON:API-shaped list over ``v_calendar_item``.
+
+        Query params:
+
+        - ``domain`` / ``country`` / ``ticker`` / ``subtype`` / ``provider``
+          — equality filters; see :meth:`LocalMacroDataService._op_list_calendar_items`.
+        - ``page[offset]`` (default 0), ``page[limit]`` (default 100,
+          max 500) — JSON:API pagination.
+
+        Issue #9 P7 — replaces the need for downstream consumers to
+        reach into ``engine.db`` or import from ``src/``.
+        """
+        params = parse_qs(query, keep_blank_values=False)
+        def _first(key: str) -> str:
+            values = params.get(key) or []
+            return values[0] if values else ""
+        arguments: dict[str, Any] = {
+            "domain":      _first("domain"),
+            "country":     _first("country"),
+            "ticker":      _first("ticker"),
+            "subtype":     _first("subtype"),
+            "provider":    _first("provider"),
+            "page_offset": _first("page[offset]"),
+            "page_limit":  _first("page[limit]"),
+        }
+        service = self.server.service  # type: ignore[attr-defined]
+        try:
+            result = service.invoke("list_calendar_items", arguments)
+        except Exception as exc:
+            logger.exception("GET /v1/calendar failed")
+            self._write_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"error": str(exc)},
+            )
+            return
+        if isinstance(result, dict) and "error" in result:
+            self._write_json(HTTPStatus.BAD_REQUEST, result)
+            return
+        self._write_json(HTTPStatus.OK, result)
 
     def do_POST(self) -> None:  # noqa: N802
         if not self.path.startswith("/v1/ops/"):

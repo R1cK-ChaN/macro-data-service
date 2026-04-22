@@ -34,6 +34,13 @@ class BLSObservation:
     date: str       # YYYY-MM-DD (normalized from BLS year+period)
     value: float
     period: str     # original BLS period code: M01..M13, Q01..Q05, S01, S02, A01
+    raw: dict = field(default_factory=dict)
+    """Original upstream dict (``year``/``period``/``value``/``footnotes``/
+    ``periodName``/``latest``/…). Calendar-lane callers hash on this
+    so footnote-only revisions land as new raw audit rows. Populated
+    by :meth:`BLSClient._parse_observation`; empty-dict default keeps
+    test fixtures and external callers that construct ``BLSObservation``
+    manually unaffected."""
 
 
 @dataclass(frozen=True)
@@ -73,6 +80,16 @@ class BLSClient:
         self.session = requests.Session()
         self._daily_query_count = 0
         self._query_date = ""
+
+    @property
+    def daily_query_count(self) -> int:
+        """Queries made against the BLS API since the last UTC-day reset.
+
+        Read-only view onto the in-memory counter so the calendar
+        scheduler's P-sched-3-budget tracker can attribute consumption
+        to the ``bls`` connector without poking at private state.
+        """
+        return self._daily_query_count
 
     # -- Public methods ------------------------------------------------------
 
@@ -394,4 +411,5 @@ class BLSClient:
             date=date,
             value=value,
             period=period,
+            raw=dict(obs),
         )

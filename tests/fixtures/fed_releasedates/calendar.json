@@ -1,0 +1,15 @@
+{"events":[
+  {"title":"Beige Book","time":"2:00 p.m.","month":"2026-01","days":"21","type":"Beige"},
+  {"title":"Beige Book","time":"2:00 p.m.","month":"2026-03","days":"4","type":"Beige"},
+  {"title":"H.4.1 - Factors Affecting Reserve Balances","time":"4:30 p.m.","month":"2026-01","days":"15, 22, 28","type":"Stat"},
+  {"title":"H.4.1 - Factors Affecting Reserve Balances","time":"4:30 p.m.","month":"2026-02","days":"4, 11","type":"Stat"},
+  {"title":"H.8 - Assets and Liabilities of Commercial Banks in the U.S.","time":"4:15 p.m.","month":"2026-01","days":"16, 23, 29","type":"Stat"},
+  {"title":"H.8 - Assets and Liabilities of Commercial Banks in the U.S.","time":"4:15 p.m.","month":"2026-02","days":"5, 12","type":"Stat"},
+  {"title":"Summary of Economic Projections (SEP)","time":"2:00 p.m.","month":"2026-01","days":"28","type":"FOMC"},
+  {"title":"Consumer Credit - G.19","time":"3:00 p.m.","month":"2026-01","days":"7","type":"Stat"},
+  {"title":"Selected Interest Rates - H.15","time":"2:30 p.m.","month":"2026-01","days":"15","type":"Stat"},
+  {"title":"Speech -- Governor Christopher J. Waller","time":"2:30 p.m.","month":"2026-01","days":"9","type":"Speeches"},
+  {"title":"FOMC Meeting","time":"2:00 p.m.","month":"2026-01","days":"28","type":"FOMC"},
+  {"title":"Beige Book","time":"2:00 p.m.","month":"","days":"4","type":"events"},
+  {"title":"H.4.1 - Factors Affecting Reserve Balances","time":"4:30 p.m.","month":"","days":"3, 10, 17","type":"events"}
+]}

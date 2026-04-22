@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import time
@@ -395,6 +396,20 @@ class SourceCapabilityManager:
 
         items.sort(key=lambda item: item["source_id"])
         overall = "healthy" if degraded == 0 else ("degraded" if healthy > 0 else "unhealthy")
+
+        calendar_block = self._calendar_connectors_block()
+        if (
+            overall == "healthy"
+            and (calendar_block["cooling"] or calendar_block["budget_exhausted"])
+        ):
+            # A tripped breaker or exhausted budget leaves forward
+            # calendar rows stale until the next successful sweep.
+            # Promote healthy→degraded so ``/health`` consumers notice
+            # without having to parse the nested calendar block. Never
+            # demote an already-unhealthy source rollup to degraded —
+            # calendar telemetry is additive, not a substitute signal.
+            overall = "degraded"
+
         return {
             "status": overall,
             "summary": {
@@ -402,8 +417,91 @@ class SourceCapabilityManager:
                 "degraded": degraded,
                 "other": empty,
                 "visible_sources": len(items),
+                "calendar_cooling": calendar_block["cooling"],
+                "calendar_budget_exhausted": calendar_block["budget_exhausted"],
+                "calendar_failing": calendar_block["failing"],
             },
             "sources": items,
+            "calendar_connectors": calendar_block["connectors"],
+        }
+
+    def _calendar_connectors_block(self) -> dict[str, Any]:
+        """Read calendar-scheduler state and classify each connector.
+
+        Only rows that exist in ``calendar_connector_state`` are
+        returned — a connector that has never run is absent from the
+        block. The summary counters (cooling / budget_exhausted /
+        failing) cover the returned connectors.
+        """
+        from ingestion.calendar.scheduler_state import (
+            DAILY_BUDGET_CAPS,
+            is_budget_exhausted,
+            is_cooling,
+            list_connector_states,
+            today_utc_iso,
+        )
+
+        now_ms = int(time.time() * 1000)
+        today_iso = today_utc_iso()
+        try:
+            # ``sqlite3.Connection.__exit__`` commits / rolls back but
+            # does NOT close the handle; ``/health`` polled every few
+            # seconds by a long-lived worker would leak connections
+            # until GC finalizes them. ``contextlib.closing`` ensures
+            # deterministic closure on every call.
+            with closing(self._store.get_connection()) as conn:
+                states = list_connector_states(conn)
+        except Exception:
+            # Fresh DB / missing migration — the health endpoint should
+            # never 500 on a secondary telemetry section. Return an
+            # empty block and let the main source summary still render.
+            return {
+                "connectors": [],
+                "cooling": 0,
+                "budget_exhausted": 0,
+                "failing": 0,
+            }
+
+        cooling = 0
+        budget_exhausted = 0
+        failing = 0
+        connectors: list[dict[str, Any]] = []
+        for state in states:
+            cap = DAILY_BUDGET_CAPS.get(state.connector)
+            if is_cooling(state, now_ms):
+                status = "cooling"
+                cooling += 1
+            elif is_budget_exhausted(state, cap, today_iso=today_iso):
+                status = "budget_exhausted"
+                budget_exhausted += 1
+            elif state.consecutive_failures > 0:
+                status = "failing"
+                failing += 1
+            else:
+                status = "ok"
+
+            cooling_until_iso = None
+            if state.cooling_until_ms is not None:
+                cooling_until_iso = datetime.fromtimestamp(
+                    state.cooling_until_ms / 1000, tz=UTC,
+                ).isoformat()
+
+            connectors.append({
+                "connector": state.connector,
+                "status": status,
+                "consecutive_failures": state.consecutive_failures,
+                "last_error": state.last_error,
+                "cooling_until": cooling_until_iso,
+                "budget_cap": cap,
+                "requests_today": state.requests_today,
+                "requests_day_utc": state.requests_day_utc,
+            })
+
+        return {
+            "connectors": connectors,
+            "cooling": cooling,
+            "budget_exhausted": budget_exhausted,
+            "failing": failing,
         }
 
     def _require_adapter(self, source_id: str) -> SourceCapabilityAdapter:

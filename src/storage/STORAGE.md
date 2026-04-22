@@ -455,6 +455,125 @@ capability/catalog state describes what a source *can* expose, while
 | `portfolio_holdings` / `portfolio_vol_snapshots` / `portfolio_alerts` | Portfolio management |
 | `subagent_runs` | Sub-agent task tracking |
 
+---
+
+## Unified calendar (issue #8)
+
+Two physical lanes, one downstream contract. Storage is split because
+mandatory fields diverge (country+indicator vs ticker+subtype) and revision
+semantics differ (TE exposes `LastUpdate`; EODHD does not). Consumers read
+`v_calendar_item`, which `UNION ALL`s both lanes into the `CalendarItem`
+contract shape.
+
+### Shared dim
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `provider_id` | TEXT PK | e.g. `tradingeconomics`, `eodhd`, later `bls`, `ecb` |
+| `domain` | TEXT PK | CHECK: `economic`, `corporate` |
+| `provider_type` | TEXT | CHECK: `data_aggregator`, `government_agency`, `central_bank`, `exchange`, `market_data` |
+| `precedence` | INTEGER | Higher wins when multiple providers cover the same event; official sources land above aggregators |
+| `is_active` | INTEGER | 1/0 |
+
+PK is `(provider_id, domain)` so one provider can serve both lanes (e.g.
+EODHD could later expose economic-events alongside corporate).
+
+Seeded on `init_schema` (issue #8 + issue #9 P0):
+
+| provider_id       | provider_type     | domain    | precedence |
+|-------------------|-------------------|-----------|------------|
+| `tradingeconomics`| `data_aggregator` | economic  | 10         |
+| `eodhd`           | `data_aggregator` | corporate | 10         |
+| `bls`             | `government_agency` | economic | 100       |
+| `bea`             | `government_agency` | economic | 100       |
+| `federal-reserve` | `central_bank`    | economic  | 100        |
+| `ecb`             | `central_bank`    | economic  | 100        |
+| `nbs`             | `government_agency` | economic | 100       |
+
+Precedence is a ranking signal, not a view-level filter. The current
+`v_calendar_item` VIEW is a plain `UNION ALL` across both lanes and
+surfaces every provider row. Conflict resolution on
+`(country_code, event_time_utc, canonical_indicator)` is issue #9 P6's
+parity-harness responsibility — that's the first caller that actually
+reads the `precedence` column.
+
+### Economic lane
+
+```
+cal_econ_raw     Append-only JSON snapshots (one row per revision)
+  |
+  └── content_hash = SHA256 over mutable fields
+        (Actual, Previous, Revised, Forecast, TEForecast, LastUpdate)
+
+cal_econ_event   PIT projection — one row per upstream event, typed columns
+
+cal_econ_drops   Audit stream for upstream-retired IDs
+```
+
+`cal_econ_event` key columns: `provider`, `provider_event_id`,
+`event_time_utc`, `event_time_precision`, `country_code NOT NULL`,
+`indicator_id FK→calendar_indicator`, `importance`, `currency`, `unit`,
+`actual`, `previous`, `revised`, `forecast`, `consensus_forecast`,
+`source_url`, `last_update_epoch_ms`, `content_hash`. Numeric value fields
+stay TEXT (TE returns them as strings, possibly empty); coerce at query
+layer.
+
+### Corporate lane
+
+```
+cal_corp_raw     Append-only JSON snapshots (content_hash = only revision signal)
+
+cal_corp_event   PIT projection — typed columns + payload_json overflow
+```
+
+`cal_corp_event` key columns: `provider`, `provider_event_id`,
+`event_subtype CHECK IN ('earnings','ipo','split','dividend','earnings_trend')`,
+`event_time_utc`, `event_time_precision`, `ticker NOT NULL`, `exchange`,
+`currency`, `currency_reporting`, `title`, `source_url`, `content_hash`,
+`payload_json`. Subtype-specific fields (price_from/to/offer, old/new shares,
+actual/estimate EPS, `deal_type` lifecycle) live in `payload_json` — the raw
+layer already holds the full upstream row. Promote a field to a typed
+column only when three concrete queries need SQL-level access.
+
+### Backfill cursor (issue #8 slice 2)
+
+`cal_backfill_cursor` — per-`(provider, phase)` resumability for the
+economic-lane API fetcher. One row per phase keeps the recent / mid /
+early sweeps independent so a mid-sweep budget breach only rewinds its
+own phase.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `provider` | TEXT PK | e.g. `tradingeconomics` |
+| `phase` | TEXT PK | `p1_recent`, `p2_mid`, `p3_early` |
+| `cursor_date` | TEXT | Next `window_start` to execute (ISO date) |
+| `window_end_date` | TEXT | End date of the last completed window |
+| `rows_ingested` | INTEGER | Cumulative across resumes |
+| `requests_spent` | INTEGER | Cumulative across resumes |
+| `last_run_at` | TEXT | ISO timestamp of the last executed window |
+| `is_complete` | INTEGER | 1 when the phase's `window_end_date` ≥ phase end |
+
+Budget accounting also reads from this table (sum `requests_spent` across
+phases for the current month) — no separate `cal_budget` table.
+
+### Unified read view
+
+`v_calendar_item` projects both tables into the `CalendarItem` column set:
+`event_id` (as `provider:provider_event_id`), `domain`, `subtype`,
+`provider`, `event_time_utc`, `title`, `country`, `ticker`, `exchange`,
+`currency`, `importance`, `indicator_id`, `reference_date`, `actual`,
+`previous`, `forecast`, `consensus_forecast`, `source_url`,
+`last_update_epoch_ms`, `observed_at_epoch_ms`.
+
+Future HTTP surface: `GET /calendar?domain=economic&country=US&from=…` or
+`?domain=corporate&ticker=AAPL&subtype=earnings` reads this view.
+
+### Relationship to legacy `calendar_events`
+
+`calendar_events` (HTML-scraped via `scrapers/tradingeconomics.py`) is
+untouched in this slice. Retirement happens in slice 2 after the TE API
+fetcher writes through `cal_econ_*` with parity.
+
 ## Running Tests
 
 ```bash

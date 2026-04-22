@@ -138,6 +138,1456 @@ class LocalMacroDataService:
             return {"error": "calendar refresh unavailable"}
         return dict(self._ingestion.refresh_calendar())
 
+    # ── Economic calendar API backfill (issue #8 slice 2) ──────────────
+
+    def _op_calendar_econ_backfill(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Plan or run a TE Calendar API backfill window.
+
+        Arguments:
+          from           — ISO date ``YYYY-MM-DD``. Default 2023-01-01.
+          to             — ISO date. Default today (UTC).
+          phases         — optional list of phase names
+                           (``p1_recent`` / ``p2_mid`` / ``p3_early``);
+                           omit to cover whichever phases the date range
+                           overlaps.
+          dry_run        — default True. Returns the plan + cursor state
+                           without issuing any HTTP request.
+          max_requests   — default 50. Caps how many windows a single
+                           invocation will fetch.
+
+        Dry-run returns ``{windows_planned, windows: [...], cursor_state}``
+        with no HTTP traffic. Execute mode returns the same plus
+        ``{requests_spent, rows_raw_inserted, events_upserted,
+           truncated_windows, stopped_reason}``.
+        """
+        from datetime import date as _date, datetime as _dt, timezone as _tz
+
+        from ingestion.calendar.te_api import BackfillRunner, TEAPIClient, plan_windows
+
+        dry_run = bool(arguments.get("dry_run", True))
+        try:
+            max_requests = max(1, int(arguments.get("max_requests") or 50))
+        except (TypeError, ValueError):
+            max_requests = 50
+
+        default_start = _date(2023, 1, 1)
+        default_end = _dt.now(_tz.utc).date()
+        try:
+            start = _date.fromisoformat(str(arguments.get("from") or default_start.isoformat()))
+        except ValueError:
+            start = default_start
+        try:
+            end = _date.fromisoformat(str(arguments.get("to") or default_end.isoformat()))
+        except ValueError:
+            end = default_end
+        raw_phases = arguments.get("phases")
+        phases = None
+        if isinstance(raw_phases, list) and raw_phases:
+            phases = [str(p) for p in raw_phases]
+
+        windows = plan_windows(start=start, end=end, phases=phases)
+        base_payload: dict[str, Any] = {
+            "dry_run": dry_run,
+            "from": start.isoformat(),
+            "to": end.isoformat(),
+            "phases_planned": sorted({w.phase for w in windows}),
+            "windows_planned": len(windows),
+            "windows": [
+                {"phase": w.phase, "start": w.start.isoformat(), "end": w.end.isoformat()}
+                for w in windows[:10]  # preview only; full list on-demand via a later op
+            ],
+        }
+
+        if dry_run:
+            base_payload["stopped_reason"] = "dry_run"
+            return base_payload
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        with TEAPIClient() as client:
+            connection = get_conn()
+            try:
+                runner = BackfillRunner(
+                    connection=connection,
+                    client=client,
+                    max_requests=max_requests,
+                )
+                summary = runner.run(
+                    start=start, end=end, phases=phases, dry_run=False,
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+        base_payload.update({
+            "requests_spent":    summary.requests_spent,
+            "rows_raw_inserted": summary.rows_raw_inserted,
+            "events_upserted":   summary.events_upserted,
+            "windows_fetched":   summary.windows_fetched,
+            "truncated_windows": summary.truncated_windows,
+            "budget_halt":       summary.budget_halt,
+            "stopped_reason":    summary.stopped_reason,
+            "cursor_state":      summary.cursor_state,
+        })
+        return base_payload
+
+    # ── Corporate calendar API fetch (issue #8 slice 3) ─────────────────
+
+    def _op_calendar_corp_fetch(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Fetch one EODHD corporate calendar subtype into ``cal_corp_*``.
+
+        Arguments:
+          subtype         — one of ``earnings``, ``ipo``, ``split``,
+                            ``dividend``, ``earnings_trend``.
+          from            — ISO date ``YYYY-MM-DD``. Default today (UTC).
+          to              — ISO date. Default today + 7 days.
+          symbols         — optional list / comma string of EODHD tickers
+                            (e.g. ``["AAPL.US", "MSFT.US"]``). Required
+                            for ``earnings_trend`` which has no date
+                            scoping upstream.
+          dry_run         — default True. Returns the window plan without
+                            issuing any HTTP request.
+          max_requests    — default 20. Caps windows fetched per call.
+          window_days     — default 7. Window slice width in days.
+
+        Execute mode returns request / row / insert counts and the stop
+        reason.
+        """
+        from datetime import date as _date, datetime as _dt, timezone as _tz
+
+        from ingestion.calendar.eodhd_api import CorpCalendarFetcher, EODHDAPIClient
+
+        subtype = (arguments.get("subtype") or "").strip()
+        if not subtype:
+            return {"error": "subtype is required"}
+
+        dry_run = bool(arguments.get("dry_run", True))
+        try:
+            max_requests = max(1, int(arguments.get("max_requests") or 20))
+        except (TypeError, ValueError):
+            max_requests = 20
+        try:
+            window_days = max(1, int(arguments.get("window_days") or 7))
+        except (TypeError, ValueError):
+            window_days = 7
+
+        today = _dt.now(_tz.utc).date()
+        default_end = today + timedelta(days=7)
+        try:
+            start = _date.fromisoformat(str(arguments.get("from") or today.isoformat()))
+        except ValueError:
+            start = today
+        try:
+            end = _date.fromisoformat(str(arguments.get("to") or default_end.isoformat()))
+        except ValueError:
+            end = default_end
+
+        raw_symbols = arguments.get("symbols")
+        symbols: list[str]
+        if isinstance(raw_symbols, list):
+            symbols = [str(s).strip() for s in raw_symbols if str(s).strip()]
+        elif isinstance(raw_symbols, str) and raw_symbols.strip():
+            symbols = [s.strip() for s in raw_symbols.split(",") if s.strip()]
+        else:
+            symbols = []
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        with EODHDAPIClient() as client:
+            connection = get_conn()
+            try:
+                fetcher = CorpCalendarFetcher(
+                    connection=connection,
+                    client=client,
+                    max_requests=max_requests,
+                    window_days=window_days,
+                )
+                summary = fetcher.fetch(
+                    subtype=subtype,
+                    start=start,
+                    end=end,
+                    symbols=symbols or None,
+                    dry_run=dry_run,
+                )
+                connection.commit()
+            except ValueError as exc:
+                connection.rollback()
+                return {"error": str(exc)}
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+        return {
+            "subtype":           summary.subtype,
+            "dry_run":           summary.dry_run,
+            "from":              start.isoformat(),
+            "to":                end.isoformat(),
+            "windows_planned":   summary.windows_planned,
+            "windows":           summary.windows,
+            "requests_spent":    summary.requests_spent,
+            "rows_parsed":       summary.rows_parsed,
+            "rows_raw_inserted": summary.rows_raw_inserted,
+            "events_upserted":   summary.events_upserted,
+            "parse_errors":      summary.parse_errors,
+            "stopped_reason":    summary.stopped_reason,
+        }
+
+    def _op_calendar_corp_fetch_dividend_details(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Enrich discovered dividends via ``/api/div/{TICKER}.{EXCHANGE}``.
+
+        The ``/calendar/dividends`` discovery feed returns only
+        ``(symbol, ex_date)``; this op fetches the per-ticker feed that
+        carries ``value``, ``currency``, and declaration / record /
+        payment dates. Rows upsert the same ``cal_corp_event`` row the
+        discovery parser created (identity is shared).
+
+        Arguments:
+          symbols      — list or comma string of EODHD codes
+                         (``AAPL.US``, ``MSFT.US``). Required.
+          from         — ISO date. Optional; when set, narrows the
+                         per-ticker response to that window.
+          to           — ISO date. Optional; pairs with ``from``.
+          dry_run      — default True. Returns the symbol plan without
+                         issuing any HTTP request.
+          max_requests — default 20. Caps symbols fetched per call
+                         (1 request per symbol).
+        """
+        from datetime import date as _date
+
+        from ingestion.calendar.eodhd_api import EODHDAPIClient, fetch_dividend_details
+
+        dry_run = bool(arguments.get("dry_run", True))
+        try:
+            max_requests = max(1, int(arguments.get("max_requests") or 20))
+        except (TypeError, ValueError):
+            max_requests = 20
+
+        raw_symbols = arguments.get("symbols")
+        symbols: list[str]
+        if isinstance(raw_symbols, list):
+            symbols = [str(s).strip() for s in raw_symbols if str(s).strip()]
+        elif isinstance(raw_symbols, str) and raw_symbols.strip():
+            symbols = [s.strip() for s in raw_symbols.split(",") if s.strip()]
+        else:
+            symbols = []
+        if not symbols:
+            return {"error": "symbols is required"}
+
+        # Missing field → None (unbounded — caller wants full history).
+        # Malformed field → return an error instead of silently dropping
+        # the bound, which would otherwise turn a typo into an unbounded
+        # /api/div/{symbol} sweep burning API budget on every symbol.
+        def _parse_iso(v: Any) -> tuple[_date | None, str | None]:
+            if v is None or v == "":
+                return None, None
+            try:
+                return _date.fromisoformat(str(v)), None
+            except ValueError:
+                return None, str(v)
+
+        start, bad_start = _parse_iso(arguments.get("from"))
+        end, bad_end = _parse_iso(arguments.get("to"))
+        if bad_start is not None:
+            return {"error": f"invalid 'from' date: {bad_start!r} (expected YYYY-MM-DD)"}
+        if bad_end is not None:
+            return {"error": f"invalid 'to' date: {bad_end!r} (expected YYYY-MM-DD)"}
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        with EODHDAPIClient() as client:
+            connection = get_conn()
+            try:
+                summary = fetch_dividend_details(
+                    connection=connection,
+                    client=client,
+                    symbols=symbols,
+                    start=start,
+                    end=end,
+                    max_requests=max_requests,
+                    dry_run=dry_run,
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+        return {
+            "subtype":           summary.subtype,
+            "dry_run":           summary.dry_run,
+            "from":              start.isoformat() if start else None,
+            "to":                end.isoformat() if end else None,
+            "symbols_planned":   summary.windows_planned,
+            "symbols":           summary.windows,
+            "requests_spent":    summary.requests_spent,
+            "rows_parsed":       summary.rows_parsed,
+            "rows_raw_inserted": summary.rows_raw_inserted,
+            "events_upserted":   summary.events_upserted,
+            "parse_errors":      summary.parse_errors,
+            "stopped_reason":    summary.stopped_reason,
+        }
+
+    def _op_calendar_econ_sync_updates(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Run the ``/calendar/updates`` → ``/calendarid`` reconciliation loop.
+
+        Arguments:
+          dry_run         — default True. Returns the plan shape without
+                            issuing any HTTP request.
+          batch_id_count  — default 30. Upper bound on ids per rehydrate
+                            batch; URL-length guard still applies.
+
+        Execute mode returns counts for updates fetched, ids rehydrated,
+        batches issued, raw rows inserted, events upserted, and drops
+        recorded.
+        """
+        from ingestion.calendar.te_api import TEAPIClient, UpdatesReconciler
+
+        dry_run = bool(arguments.get("dry_run", True))
+        try:
+            batch_id_count = max(1, int(arguments.get("batch_id_count") or 30))
+        except (TypeError, ValueError):
+            batch_id_count = 30
+
+        if dry_run:
+            return {
+                "dry_run": True,
+                "batch_id_count": batch_id_count,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        with TEAPIClient() as client:
+            connection = get_conn()
+            try:
+                reconciler = UpdatesReconciler(
+                    connection=connection,
+                    client=client,
+                    batch_id_count=batch_id_count,
+                )
+                summary = reconciler.sync(dry_run=False)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+        return {
+            "dry_run":             False,
+            "updates_fetched":     summary.updates_fetched,
+            "ids_to_rehydrate":    summary.ids_to_rehydrate,
+            "batches_planned":     summary.batches_planned,
+            "batches_fetched":     summary.batches_fetched,
+            "rows_raw_inserted":   summary.rows_raw_inserted,
+            "events_upserted":     summary.events_upserted,
+            "drops_recorded":      summary.drops_recorded,
+            "requests_spent":      summary.requests_spent,
+            "updates_truncated":   summary.updates_truncated,
+            "batch_preview":       summary.batch_preview,
+            "stopped_reason":      summary.stopped_reason,
+        }
+
+    # ── Economic calendar — BLS connector (issue #9 P1) ─────────────────
+
+    def _op_calendar_econ_fetch_bls(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch BLS Public Data API observations into the calendar.
+
+        Arguments:
+          start_year     — int. Default current year − 1.
+          end_year       — int. Default current year.
+          series_ids     — optional list of BLS series ids. Omit for the
+                           full P1 whitelist (CPI, NFP).
+          dry_run        — default True. No HTTP, no DB writes.
+
+        Dry-run returns the plan only. Execute mode returns counts for
+        observations seen, raw rows inserted, events upserted, plus
+        per-series success / empty / unknown lists.
+        """
+        from datetime import datetime as _dt, timezone as _tz
+
+        from ingestion.calendar.bls_api import fetch_bls_calendar
+        from ingestion.timeseries.scrapers.bls import BLSClient
+
+        dry_run = bool(arguments.get("dry_run", True))
+        now_year = _dt.now(_tz.utc).year
+        try:
+            start_year = int(arguments.get("start_year") or (now_year - 1))
+        except (TypeError, ValueError):
+            start_year = now_year - 1
+        try:
+            end_year = int(arguments.get("end_year") or now_year)
+        except (TypeError, ValueError):
+            end_year = now_year
+        if end_year < start_year:
+            start_year, end_year = end_year, start_year
+
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list) and raw_series:
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            # Run the same resolver the execute path uses so dry-run
+            # mirrors what would actually be fetched — callers must see
+            # unknown ids surfaced here, not after they've triggered HTTP.
+            from ingestion.calendar.bls_api.fetcher import _resolve_series
+            planned, unknown = _resolve_series(series_ids)
+            return {
+                "dry_run":        True,
+                "start_year":     start_year,
+                "end_year":       end_year,
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        client = BLSClient()
+        if not client.api_key:
+            return {"error": "BLS_API_KEY not set"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_bls_calendar(
+                connection, client,
+                start_year=start_year, end_year=end_year,
+                series_ids=series_ids, dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "start_year":         summary.start_year,
+            "end_year":           summary.end_year,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "series_unknown":     summary.series_unknown,
+            "observations_seen":  summary.observations_seen,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "staged_skipped":     summary.staged_skipped,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    # ── Economic calendar — BLS release schedule (issue #9 P1a) ────────
+
+    def _op_calendar_econ_schedule_bls(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape BLS release-schedule pages into ``cal_econ_event``.
+
+        Arguments:
+          series_ids     — optional list of BLS series ids. Omit for
+                           the full whitelist (CPI, NFP).
+          dry_run        — default True. No HTTP, no DB writes.
+
+        Schedule rows land with ``actual=NULL`` and
+        ``event_time_precision='datetime'``. The API-side
+        ``calendar_econ_fetch_bls`` op later merges value-bearing
+        rows onto the same ``provider_event_id`` without clobbering
+        the scheduled datetime (see ``project_events`` cross-source
+        merge rule).
+        """
+        from ingestion.calendar.bls_api import (
+            SCHEDULE_URL_SLUG,
+            schedule_bls_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list) and raw_series:
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            from ingestion.calendar.bls_api.fetcher import (
+                _resolve_schedule_series,
+            )
+            planned, unknown = _resolve_schedule_series(series_ids)
+            return {
+                "dry_run":        True,
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = schedule_bls_calendar(
+                connection, series_ids=series_ids, dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_unknown":     summary.series_unknown,
+            "series_failed":      summary.series_failed,
+            "entries_parsed":     summary.entries_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    # ── Economic calendar — BEA connector (issue #9 P2) ─────────────────
+
+    def _op_calendar_econ_fetch_bea(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch BEA REST API observations into the calendar.
+
+        Arguments:
+          start_year     — int. Default current year − 1.
+          end_year       — int. Default current year.
+          series_ids     — optional list of BEA series ids. Omit for the
+                           full P2 whitelist (Real GDP, PCE).
+          dry_run        — default True. No HTTP, no DB writes.
+
+        Dry-run returns the plan only. Execute mode returns counts for
+        observations seen, raw rows inserted, events upserted, plus
+        per-series success / empty / unknown lists.
+        """
+        from datetime import datetime as _dt, timezone as _tz
+
+        from ingestion.calendar.bea_api import fetch_bea_calendar
+        from ingestion.timeseries.scrapers.bea import BEAClient
+
+        dry_run = bool(arguments.get("dry_run", True))
+        now_year = _dt.now(_tz.utc).year
+        try:
+            start_year = int(arguments.get("start_year") or (now_year - 1))
+        except (TypeError, ValueError):
+            start_year = now_year - 1
+        try:
+            end_year = int(arguments.get("end_year") or now_year)
+        except (TypeError, ValueError):
+            end_year = now_year
+        if end_year < start_year:
+            start_year, end_year = end_year, start_year
+
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list) and raw_series:
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            # Run the same resolver the execute path uses so dry-run
+            # mirrors what would actually be fetched — callers must see
+            # unknown ids surfaced here, not after they've triggered HTTP.
+            from ingestion.calendar.bea_api.fetcher import _resolve_series
+            planned, unknown = _resolve_series(series_ids)
+            return {
+                "dry_run":        True,
+                "start_year":     start_year,
+                "end_year":       end_year,
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        client = BEAClient()
+        if not client.api_key:
+            return {"error": "BEA_API_KEY not set"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_bea_calendar(
+                connection, client,
+                start_year=start_year, end_year=end_year,
+                series_ids=series_ids, dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "start_year":         summary.start_year,
+            "end_year":           summary.end_year,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "series_unknown":     summary.series_unknown,
+            "observations_seen":  summary.observations_seen,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_schedule_bea(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape BEA's release calendar into ``cal_econ_event``.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+
+        Schedule rows land with ``actual=NULL`` and
+        ``event_time_precision='datetime'``. Personal Income rows
+        merge with the API-side ``calendar_econ_fetch_bea`` output
+        on the shared ``provider_event_id``. GDP rows stay
+        schedule-only — their ``release_stage`` folds into the id so
+        the three staged releases of a quarter surface as distinct
+        calendar events, which the bare-date API observation does
+        not merge into (see ``api_fetch=False`` on the GDP spec).
+        """
+        from ingestion.calendar.bea_api import schedule_bea_calendar
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":        True,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = schedule_bea_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "entries_parsed":     summary.entries_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "row_issues":         summary.row_issues,
+            "fetch_error":        summary.fetch_error,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    # ── Economic calendar — ECB connector (issue #9 P3) ─────────────────
+
+    def _op_calendar_econ_fetch_ecb(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch ECB Data Portal SDMX observations into the calendar.
+
+        Arguments:
+          start_period   — optional ISO date (``"YYYY-MM-DD"``) lower
+                           bound. Omit to fetch the full available history.
+          end_period     — optional ISO date upper bound.
+          series_ids     — optional list of ECB SDMX series ids. Omit
+                           for the full P3 whitelist (MRO / DFR / MLF).
+          dry_run        — default True. No HTTP, no DB writes.
+          limit          — optional ``lastNObservations`` cap. ``0``
+                           means uncapped (default).
+
+        Dry-run returns the plan only. Execute mode returns counts for
+        observations seen, raw rows inserted, events upserted, plus
+        per-series success / empty / unknown lists.
+        """
+        from ingestion.calendar.ecb_api import fetch_ecb_calendar
+        from ingestion.timeseries.sdmx.providers.ecb import ECBClient
+
+        dry_run = bool(arguments.get("dry_run", True))
+        start_period = arguments.get("start_period")
+        end_period = arguments.get("end_period")
+        start_period = str(start_period) if start_period else None
+        end_period = str(end_period) if end_period else None
+
+        try:
+            limit = int(arguments.get("limit") or 0)
+        except (TypeError, ValueError):
+            limit = 0
+        if limit < 0:
+            limit = 0
+
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list) and raw_series:
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            # Dry-run mirrors execute-path resolution so unknown ids
+            # surface here rather than after HTTP is triggered.
+            from ingestion.calendar.ecb_api.fetcher import _resolve_series
+            planned, unknown = _resolve_series(series_ids)
+            return {
+                "dry_run":        True,
+                "start_period":   start_period or "",
+                "end_period":     end_period or "",
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        client = ECBClient()
+        connection = get_conn()
+        try:
+            summary = fetch_ecb_calendar(
+                connection, client,
+                start_period=start_period, end_period=end_period,
+                series_ids=series_ids, dry_run=False, limit=limit,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":                   False,
+            "start_period":              summary.start_period,
+            "end_period":                summary.end_period,
+            "series_planned":            summary.series_planned,
+            "series_ok":                 summary.series_ok,
+            "series_empty":              summary.series_empty,
+            "series_unknown":            summary.series_unknown,
+            "observations_seen":         summary.observations_seen,
+            "rows_raw_inserted":         summary.rows_raw_inserted,
+            "events_upserted":           summary.events_upserted,
+            "decision_anchor_fallbacks": summary.decision_anchor_fallbacks,
+            "wall_seconds":              round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_schedule_ecb(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape ECB press-calendar pages into ``cal_econ_event``.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+
+        Scrapes two ECB calendar surfaces in one run:
+        Governing Council monetary-policy meetings and Economic
+        Bulletin publications. Each lands as a schedule-only
+        indicator (``ECB Monetary Policy Decision`` / ``ECB
+        Economic Bulletin``) — distinct from the SDMX rate-level
+        rows because the SDMX lane carries the rate's effective
+        date, not the decision date. Schedule rows land with
+        ``actual=NULL`` / ``event_time_precision='datetime'``.
+
+        ``fetch_errors`` on the return dict surfaces per-page
+        upstream failures — one page failing doesn't stop the
+        other from landing.
+        """
+        from ingestion.calendar.ecb_api import schedule_ecb_calendar
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":        True,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = schedule_ecb_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":              False,
+            "mp_decision_entries":  summary.mp_decision_entries,
+            "bulletin_entries":     summary.bulletin_entries,
+            "entries_parsed":       summary.entries_parsed,
+            "rows_raw_inserted":    summary.rows_raw_inserted,
+            "events_upserted":      summary.events_upserted,
+            "row_issues":           summary.row_issues,
+            "fetch_errors":         summary.fetch_errors,
+            "wall_seconds":         round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_fed(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape FOMC meeting calendar into the calendar schema.
+
+        Arguments:
+          dry_run        — default True. No HTTP, no DB writes.
+
+        Dry-run returns the indicator plan only. Execute mode fetches
+        ``federalreserve.gov/monetarypolicy/fomccalendars.htm`` once,
+        parses each ``<div class="row fomc-meeting">`` into a
+        FOMC_RATE event, and upserts via the shared merge-rule
+        projector. Returns counts for meetings parsed, raw rows
+        inserted, and events upserted.
+        """
+        from ingestion.calendar.fed_api import (
+            INDICATOR_REGISTRY,
+            fetch_fed_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": ["FOMC_RATE"],
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_fed_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "meetings_parsed":    summary.meetings_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_fed_releases(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Consume ``/json/calendar.json`` into the calendar schema.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+
+        Complements ``calendar_econ_fetch_fed`` (the FOMC meeting
+        scrape) with the Fed's news-release schedule — Beige Book,
+        H.4.1, H.8. SEP events are filtered out (they ride as a
+        boolean on the FOMC event). Scheduled speeches and testimony
+        are out of scope.
+        """
+        from ingestion.calendar.fed_api import fetch_fed_releasedates
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": [
+                    "BEIGE_BOOK", "FED_H41", "FED_H8",
+                ],
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_fed_releasedates(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":              False,
+            "indicators_planned":   summary.indicators_planned,
+            "entries_parsed":       summary.entries_parsed,
+            "entries_by_indicator": summary.entries_by_indicator,
+            "rows_raw_inserted":    summary.rows_raw_inserted,
+            "events_upserted":      summary.events_upserted,
+            "row_issues":           summary.row_issues,
+            "fetch_error":          summary.fetch_error,
+            "wall_seconds":         round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_fed_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape FOMC statement pages and fill ``actual`` on existing rows.
+
+        Arguments:
+          dry_run       — default True. No HTTP, no DB writes.
+          closing_dates — optional list of ISO closing dates
+                          (``["2025-01-29"]``). When omitted, the op
+                          auto-discovers past FOMC meetings from
+                          ``cal_econ_event`` whose ``actual`` is still
+                          NULL.
+
+        The ``provider_event_id`` written by this op matches the one
+        from :func:`calendar_econ_fetch_fed` exactly (same closing-date
+        ISO anchor), so the target-range value upserts onto the
+        existing schedule row via the shared projector's merge CASE.
+        """
+        from datetime import date
+        from ingestion.calendar.fed_api import fetch_fed_statement_values
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_closings = arguments.get("closing_dates") or []
+        closing_dates: list[date] | None
+        if raw_closings:
+            closing_dates = [date.fromisoformat(str(d)) for d in raw_closings]
+        else:
+            closing_dates = None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_fed_statement_values(
+                connection,
+                dry_run=dry_run,
+                closing_dates=closing_dates,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "meetings_planned":   summary.meetings_planned,
+            "meetings_fetched":   summary.meetings_fetched,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    # ── Cross-connector recurring refresh (issue #9 P-sched-1 / P-sched-2) ──
+
+    def _op_calendar_econ_sweep_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Invoke every value-side connector to fill ``actual`` on recent rows.
+
+        Frequent-cron candidate — paired with
+        :func:`calendar_econ_refresh_schedules` for the full P-sched
+        coverage. The schedule-side refresh runs once daily (cheap,
+        forward-looking); this sweep runs every few minutes so a
+        just-published release crosses into ``cal_econ_event`` with
+        ``actual`` populated within minutes of publication.
+
+        Arguments:
+          dry_run      — default True. No HTTP, no DB writes.
+          connectors   — optional list subset of
+                         ``["bls", "bea", "ecb", "fed-values"]``.
+          start_year   — optional int; default ``current_year − 1``.
+                         Applied to BLS / BEA only.
+          end_year     — optional int; default current year. BLS / BEA.
+          start_period — optional SDMX period string (ECB only).
+          end_period   — optional SDMX period string (ECB only).
+
+        NBS is not in the plan — the yearly calendar scraper is
+        schedule-only; per-release value scraping for NBS indicators
+        is a future slice.
+        """
+        from ingestion.calendar.scheduler import (
+            ALL_VALUE_SIDE_CONNECTORS,
+            sweep_value_side,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_connectors = arguments.get("connectors")
+        connectors: list[str] | None
+        if raw_connectors is None:
+            # Key absent → fall through to the full default plan.
+            connectors = None
+        elif isinstance(raw_connectors, list):
+            # Key present — preserve the list shape so an explicit
+            # empty ``[]`` means "run nothing" rather than being
+            # silently promoted to the full plan.
+            connectors = [str(c) for c in raw_connectors]
+        else:
+            connectors = None
+
+        def _opt_int(key: str) -> int | None:
+            raw = arguments.get(key)
+            if raw is None or raw == "":
+                return None
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return None
+
+        def _opt_str(key: str) -> str | None:
+            raw = arguments.get(key)
+            if raw is None:
+                return None
+            text = str(raw).strip()
+            return text or None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        summary = sweep_value_side(
+            get_conn,
+            dry_run=dry_run,
+            start_year=_opt_int("start_year"),
+            end_year=_opt_int("end_year"),
+            start_period=_opt_str("start_period"),
+            end_period=_opt_str("end_period"),
+            connectors=connectors,
+        )
+
+        return {
+            "dry_run":             summary.dry_run,
+            "connectors_planned":  summary.connectors_planned,
+            "connectors_all":      list(ALL_VALUE_SIDE_CONNECTORS),
+            "unknown_connectors":  summary.unknown_connectors,
+            "ok_count":            summary.ok_count,
+            "failed_count":        summary.failed_count,
+            "results": [
+                {
+                    "connector":    r.connector,
+                    "ok":           r.ok,
+                    "error":        r.error,
+                    "summary":      r.summary,
+                    "wall_seconds": r.wall_seconds,
+                }
+                for r in summary.results
+            ],
+            "stopped_reason":      "dry_run" if dry_run else None,
+            "wall_seconds":        round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_refresh_schedules(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Invoke every official-source connector's schedule scrape.
+
+        Daily-cron candidate for the recurring-fetch scheduler
+        (:mod:`ingestion.calendar.scheduler`). Iterates BLS + BEA +
+        ECB + Fed FOMC + Fed releasedates + NBS in order, isolating
+        per-connector exceptions so one upstream outage (ECB 502, NBS
+        timeout, …) doesn't roll back the rest. Each connector gets
+        its own connection / commit / rollback lifecycle.
+
+        Arguments:
+          dry_run    — default True. No HTTP, no DB writes.
+          connectors — optional list subset of
+                       ``["bls","bea","ecb","fed-fomc","fed-releases","nbs"]``;
+                       omit to run all six.
+
+        This slice ships only the schedule-side aggregator. The
+        value-side sweep (triggered after each expected release
+        crosses its scheduled time), budget guards / circuit breakers,
+        and health-telemetry wiring are follow-up slices under the
+        P-sched umbrella.
+        """
+        from ingestion.calendar.scheduler import (
+            ALL_CONNECTORS,
+            refresh_all_schedules,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_connectors = arguments.get("connectors")
+        connectors: list[str] | None
+        if raw_connectors is None:
+            # Key absent → fall through to the full default plan.
+            connectors = None
+        elif isinstance(raw_connectors, list):
+            # Key present — preserve the list shape so an explicit
+            # empty ``[]`` means "run nothing" rather than being
+            # silently promoted to the full plan.
+            connectors = [str(c) for c in raw_connectors]
+        else:
+            connectors = None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        summary = refresh_all_schedules(
+            get_conn,
+            dry_run=dry_run,
+            connectors=connectors,
+        )
+
+        return {
+            "dry_run":             summary.dry_run,
+            "connectors_planned":  summary.connectors_planned,
+            "connectors_all":      list(ALL_CONNECTORS),
+            "unknown_connectors":  summary.unknown_connectors,
+            "ok_count":            summary.ok_count,
+            "failed_count":        summary.failed_count,
+            "results": [
+                {
+                    "connector":    r.connector,
+                    "ok":           r.ok,
+                    "error":        r.error,
+                    "summary":      r.summary,
+                    "wall_seconds": r.wall_seconds,
+                }
+                for r in summary.results
+            ],
+            "stopped_reason":      "dry_run" if dry_run else None,
+            "wall_seconds":        round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_parity(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Compare TE and official-source rows in ``cal_econ_event``.
+
+        Shipped with issue #9 P6. Buckets rows by
+        ``(country, canonicalize_indicator(title), reference_date)``
+        inside the caller's ``(from_date, to_date)`` window and
+        reports per-indicator match coverage against the TE provider.
+        TE-only gaps are actionable (scheduler missed a release);
+        official-only rows are TE blind spots (documented but not a
+        regression — see the issue #9 P6 NBS caveat).
+
+        Arguments:
+          from_date   — required ISO date / datetime, inclusive lower
+                        bound on ``event_time_utc``.
+          to_date     — required ISO date / datetime, inclusive upper.
+          indicators  — optional list of canonical tokens
+                        (``["CPI", "NFP"]``). Omit to cover everything
+                        in-window that canonicalizes to a non-empty
+                        token.
+          write_report — optional bool. When True the markdown report
+                        is also written to
+                        ``docs/validation/calendar_parity_<YYYY-MM-DD>.md``.
+                        Default False — the op returns the report
+                        string so the caller can decide where to
+                        persist.
+
+        Returns a JSON-serializable envelope carrying totals,
+        per-indicator breakdown, the TE-only / official-only lists
+        (truncated-neutral — full lists, no cap at the service
+        boundary), and the rendered markdown report.
+        """
+        from ingestion.calendar.parity import (
+            OFFICIAL_PROVIDERS,
+            TE_PROVIDER,
+            calendar_econ_parity,
+            format_parity_report,
+        )
+
+        from_date = str(arguments.get("from_date") or "").strip()
+        to_date = str(arguments.get("to_date") or "").strip()
+        if not from_date or not to_date:
+            return {"error": "from_date and to_date are required"}
+
+        raw_indicators = arguments.get("indicators")
+        indicators: list[str] | None
+        if raw_indicators is None:
+            indicators = None
+        elif isinstance(raw_indicators, list):
+            indicators = [str(ind) for ind in raw_indicators]
+        else:
+            indicators = None
+
+        write_report = bool(arguments.get("write_report", False))
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        # Use ``contextlib.closing`` so the connection is released on
+        # the usual service-op cadence — Connection.__exit__ commits
+        # but does not close, and this op runs on operator demand, so
+        # leaving handles open across invocations would compound.
+        from contextlib import closing
+        with closing(get_conn()) as connection:
+            summary = calendar_econ_parity(
+                connection,
+                from_date=from_date,
+                to_date=to_date,
+                indicators=indicators,
+            )
+
+        report_markdown = format_parity_report(summary)
+        report_path: str | None = None
+        if write_report:
+            from pathlib import Path
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            docs_dir = Path("docs/validation")
+            docs_dir.mkdir(parents=True, exist_ok=True)
+            target = docs_dir / f"calendar_parity_{today}.md"
+            target.write_text(report_markdown, encoding="utf-8")
+            report_path = str(target)
+
+        return {
+            "from_date":            summary.from_date,
+            "to_date":              summary.to_date,
+            "te_provider":          TE_PROVIDER,
+            "official_providers":   list(OFFICIAL_PROVIDERS),
+            "total_events":         summary.total_events,
+            "matched":              summary.matched,
+            "te_only_count":        summary.te_only_count,
+            "official_only_count":  summary.official_only_count,
+            "match_percentage":     summary.match_percentage,
+            "indicators": [
+                {
+                    "country":              ind.country_code,
+                    "canonical_indicator":  ind.canonical_indicator,
+                    "total_events":         ind.total_events,
+                    "matched":              ind.matched,
+                    "te_only":              ind.te_only,
+                    "official_only":        ind.official_only,
+                    "match_percentage":     ind.match_percentage,
+                }
+                for ind in summary.indicators
+            ],
+            "te_only_events": [
+                self._parity_event_dict(e) for e in summary.te_only_events
+            ],
+            "official_only_events": [
+                self._parity_event_dict(e) for e in summary.official_only_events
+            ],
+            "report_markdown":  report_markdown,
+            "report_path":      report_path,
+        }
+
+    @staticmethod
+    def _parity_event_dict(event: Any) -> dict[str, Any]:
+        return {
+            "provider":             event.provider,
+            "provider_event_id":    event.provider_event_id,
+            "country_code":         event.country_code,
+            "canonical_indicator":  event.canonical_indicator,
+            "reference_date":       event.reference_date,
+            "title":                event.title,
+            "event_time_utc":       event.event_time_utc,
+        }
+
+    def _op_list_calendar_items(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """List calendar items from the unified ``v_calendar_item`` view.
+
+        Shipped with issue #9 P7 so downstream consumers can query the
+        calendar without importing from ``src/`` or reading
+        ``engine.db`` directly.
+
+        Arguments:
+          domain       — optional ``'economic'`` / ``'corporate'``.
+          country      — optional ISO-3166 alpha-2 (economic rows only).
+          ticker       — optional symbol (corporate rows only).
+          subtype      — optional ``'release'`` / ``'dividend'`` / … .
+          provider     — optional ``cal_provider.provider_id``.
+          page_offset  — default 0. Rows to skip before the first result.
+          page_limit   — default 100; capped at 500.
+
+        Returns a JSON:API-shaped envelope:
+
+            {"data": [...CalendarItem dicts...],
+             "meta": {"count": total, "offset": X, "limit": Y},
+             "links": {"next": {"page_offset": …, "page_limit": …} or null}}
+
+        ``links.next`` carries the cursor for the next page when more
+        rows match the filter; ``null`` otherwise. Cursor keys are
+        the same names this op reads (``page_offset`` / ``page_limit``)
+        so a client can spread the cursor back in as arguments and
+        the next call Just Works; they're also usable as query-string
+        pairs on ``GET /v1/calendar`` after the conventional
+        ``page[offset]`` → ``page_offset`` mapping the HTTP handler
+        performs.
+        """
+        domain = (arguments.get("domain") or "").strip() or None
+        country = (arguments.get("country") or "").strip() or None
+        ticker = (arguments.get("ticker") or "").strip() or None
+        subtype = (arguments.get("subtype") or "").strip() or None
+        provider = (arguments.get("provider") or "").strip() or None
+        try:
+            offset = int(arguments.get("page_offset") or 0)
+        except (TypeError, ValueError):
+            offset = 0
+        try:
+            limit = int(arguments.get("page_limit") or 100)
+        except (TypeError, ValueError):
+            limit = 100
+        offset = max(0, offset)
+        limit = max(1, min(500, limit))
+
+        lister = getattr(self._store, "list_calendar_items", None)
+        if not callable(lister):
+            return {"error": "store does not expose list_calendar_items"}
+
+        items, total = lister(
+            domain=domain,
+            country=country,
+            ticker=ticker,
+            subtype=subtype,
+            provider=provider,
+            offset=offset,
+            limit=limit,
+        )
+        next_cursor: dict[str, int] | None = None
+        if offset + len(items) < total:
+            next_cursor = {
+                "page_offset": offset + len(items),
+                "page_limit":  limit,
+            }
+        return {
+            "data":  items,
+            "meta":  {"count": total, "offset": offset, "limit": limit},
+            "links": {"next": next_cursor},
+        }
+
+    def _op_calendar_econ_fetch_nbs(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape an NBS yearly-calendar article into the calendar schema.
+
+        Arguments:
+          calendar_url   — optional. Full URL of an NBS yearly-calendar
+                           article. Required unless ``auto_discover``
+                           is ``true``.
+          auto_discover  — default False. When ``true`` and
+                           ``calendar_url`` is omitted, the fetcher
+                           resolves the article URL for ``year`` (or
+                           the current UTC year) by scraping the NBS
+                           release-calendar index page. Explicit
+                           opt-in keeps accidental network calls out
+                           of caller loops that forgot to pass the
+                           URL.
+          year           — optional integer year override; the parser
+                           defaults to reading it from the article title.
+                           Used for index-page lookup when
+                           ``auto_discover`` is ``true``.
+          dry_run        — default True. No HTTP, no DB writes.
+
+        Dry-run returns the indicator plan. Execute mode hits the URL
+        (or discovers it when ``auto_discover=true``), parses the
+        schedule table, and lands each scheduled release as a
+        ``cal_econ_event`` row with ``actual=NULL`` /
+        ``event_time_precision='datetime'``.
+        """
+        from ingestion.calendar.nbs_api import (
+            INDICATOR_REGISTRY,
+            fetch_nbs_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        calendar_url = arguments.get("calendar_url") or None
+        auto_discover = bool(arguments.get("auto_discover", False))
+        year_raw = arguments.get("year")
+        try:
+            year = int(year_raw) if year_raw is not None else None
+        except (TypeError, ValueError):
+            year = None
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": list(INDICATOR_REGISTRY.keys()),
+                "calendar_url":       calendar_url or "",
+                "auto_discover":      auto_discover,
+                "year":               year,
+                "stopped_reason":     "dry_run",
+            }
+
+        if not calendar_url and not auto_discover:
+            return {
+                "error": (
+                    "calendar_url is required unless auto_discover=true"
+                ),
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_nbs_calendar(
+                connection,
+                calendar_url=calendar_url,
+                year=year,
+                dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":              False,
+            "indicators_planned":   summary.indicators_planned,
+            "calendar_url":         summary.calendar_url,
+            "year":                 summary.year,
+            "url_auto_discovered":  summary.url_auto_discovered,
+            "entries_parsed":       summary.entries_parsed,
+            "rows_raw_inserted":    summary.rows_raw_inserted,
+            "events_upserted":      summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Unified document queries (issue #2 / #3) ────────────────────────
 
     def _op_list_items(self, arguments: dict[str, Any]) -> dict[str, Any]:
