@@ -106,7 +106,11 @@ def test_try_project_nbs_entry_succeeds(validator) -> None:
 
 def test_runner_happy_path(validator) -> None:
     """Index + article fixtures drive the full probe flow; the 2026
-    fixture carries 12 monthly CPI entries."""
+    fixture carries entries across every whitelisted indicator. CPI +
+    PPI fire every month (12 each), Industrial Production / Fixed
+    Asset Investment / Retail Sales skip Feb (11 each), and the PMI
+    row emits two entries per date (Manufacturing + Non-Manufacturing,
+    22 total) — 79 rows in all."""
     probe = validator.NBSProbe(
         name="nbs_yearly_calendar_2026",
         year=2026,
@@ -118,14 +122,18 @@ def test_runner_happy_path(validator) -> None:
         html_fetcher=_article_fetcher,
     )
     assert result.status == "ok"
-    assert result.row_count == 12
-    # Sample is newest-first — December 2026.
+    assert result.row_count == 81
+    # Sample is newest-first — December.
     assert result.sample_row["month"] == 12
-    assert result.sample_row["indicator"] == "CPI"
     assert result.parse_attempts == 10  # capped at 10 per existing pattern
     assert result.parse_successes == 10
     assert "indicator" in result.enum_counters
     assert result.enum_counters["indicator"]["CPI"] == 12
+    assert result.enum_counters["indicator"]["PPI"] == 12
+    # PMI lands 12 per spec because the March cell carries both the
+    # Spring-Festival-delayed Feb release and the regular Mar 31 date.
+    assert result.enum_counters["indicator"]["MANUFACTURING_PMI"] == 12
+    assert result.enum_counters["indicator"]["NON_MANUFACTURING_PMI"] == 12
     assert any("entries by indicator" in n for n in result.notes)
 
 

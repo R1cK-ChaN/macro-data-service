@@ -64,7 +64,13 @@ NBS_CALENDAR_INDEX_URL = (
 )
 
 _YEAR_TITLE_RE = re.compile(r"Calendar\s+of\s+NBS\s+in\s+(\d{4})", re.IGNORECASE)
-_DAY_CELL_RE = re.compile(r"^\s*(\d{1,2})\s*/\s*([A-Za-z]{3,4})")
+# Scans the whole cell (not anchored at start) so a Spring-Festival-
+# shifted cell like ``"4/Wed Note5 31/Tue"`` yields BOTH the delayed
+# previous-month release and the regular current-month release. The
+# day/weekday pair is the stable token shape NBS uses; any trailing
+# ``Note5`` footnote reference sits between pairs and doesn't need to
+# be matched directly.
+_DAY_CELL_RE = re.compile(r"(\d{1,2})\s*/\s*([A-Za-z]{3,4})")
 _EMPTY_MARKERS: frozenset[str] = frozenset({"", "……", "……", "--", "-"})
 
 # Indicator-row cells have the shape:
@@ -85,25 +91,34 @@ class NBSCalendarParseError(ValueError):
     """
 
 
-def _parse_day_cell(text: str) -> tuple[int | None, str, str]:
-    r"""Return ``(day, weekday_label, normalized_cell)``.
+def _parse_day_cell(text: str) -> list[tuple[int, str, str]]:
+    r"""Return every ``(day, weekday_label, normalized_cell)`` token.
 
-    ``day`` is ``None`` for empty markers (the NBS uses full-width
-    ellipsis dots ``"……"``). Non-empty cells are matched against
-    ``^\d{1,2}/[A-Z][a-z]{2,3}`` — any trailing ``"Note5"`` text is
-    preserved in ``normalized_cell`` so the audit payload can
-    surface the footnote reference without it contaminating the
-    typed day/weekday fields.
+    The list is empty for empty markers (the NBS uses full-width
+    ellipsis dots ``"……"``). A normal cell carries one
+    ``day/weekday`` token; Spring-Festival-shifted months carry two
+    in the same cell (``"4/Wed Note5 31/Tue"`` — the previous-month
+    release gets pushed forward, the current-month release stays
+    put). The ``Note5`` footnote reference and any other non-token
+    text between the pairs is ignored at parse time; the full cell
+    string lands on ``normalized_cell`` so the audit payload can
+    surface the footnote reference.
+
+    Raises :class:`NBSCalendarParseError` when a non-empty cell
+    carries zero ``day/weekday`` tokens — a real upstream drift that
+    warrants a loud fail.
     """
     normalized = text.strip()
     if normalized in _EMPTY_MARKERS:
-        return None, "", normalized
-    match = _DAY_CELL_RE.match(normalized)
-    if not match:
+        return []
+    matches = list(_DAY_CELL_RE.finditer(normalized))
+    if not matches:
         raise NBSCalendarParseError(
             f"unparseable NBS release-day cell: {text!r}"
         )
-    return int(match.group(1)), match.group(2), normalized
+    return [
+        (int(m.group(1)), m.group(2), normalized) for m in matches
+    ]
 
 
 def _year_from_title(soup: BeautifulSoup) -> int | None:
@@ -138,14 +153,23 @@ def _iter_cell_texts(row) -> list[str]:
     return [c.get_text(" ", strip=True) for c in row.find_all(["td", "th"])]
 
 
-def _row_matches_indicator(
+def _row_matching_indicators(
     content_text: str, registry: Iterable[NBSIndicatorSpec],
-) -> NBSIndicatorSpec | None:
+) -> list[NBSIndicatorSpec]:
+    """Return every registry spec whose ``label_fragment`` is in the row.
+
+    P5 shipped one-spec-per-row because CPI was the only anchor. P5c
+    expands the registry so one row can carry multiple indicators
+    (the PMI row publishes Manufacturing PMI + Non-Manufacturing PMI
+    simultaneously; both are registered with ``label_fragment="purchasing
+    managers"`` and both match). Order follows registry insertion so
+    downstream entry order is stable across runs.
+    """
     lowered = content_text.lower()
-    for spec in registry:
-        if spec.label_fragment.lower() in lowered:
-            return spec
-    return None
+    return [
+        spec for spec in registry
+        if spec.label_fragment.lower() in lowered
+    ]
 
 
 def parse_nbs_calendar_html(
@@ -196,8 +220,8 @@ def parse_nbs_calendar_html(
             i += 1
             continue
         content_text = indicator_cells[1]
-        spec = _row_matches_indicator(content_text, registry_values)
-        if spec is None:
+        matching_specs = _row_matching_indicators(content_text, registry_values)
+        if not matching_specs:
             i += 1
             continue
 
@@ -208,35 +232,35 @@ def parse_nbs_calendar_html(
         # Use the first non-empty time-row cell as the default
         # release time; per-month overrides would require aligning
         # against the indicator row's month offset, which colspan /
-        # rowspan merges make brittle. For CPI (the P5 anchor) the
-        # release time is uniform across the year, so the default
-        # is load-bearing. A future indicator with mixed times
-        # should extend this logic then.
+        # rowspan merges make brittle. NBS publishes each indicator
+        # row with a uniform release time across the year — the
+        # default is load-bearing. A future indicator with mixed
+        # times should extend this logic then.
         default_time = next(
             (t for t in time_cells if t.strip() and t.strip() not in _EMPTY_MARKERS),
             "",
         ).strip()
         if not default_time:
             raise NBSCalendarParseError(
-                f"NBS row for {spec.indicator!r} has no release-time cell"
+                f"NBS row for {matching_specs[0].indicator!r} "
+                f"has no release-time cell"
             )
 
         month_cells = indicator_cells[2:2 + _MONTH_COL_COUNT]
         for month_idx, cell in enumerate(month_cells, start=1):
-            day, weekday, normalized = _parse_day_cell(cell)
-            if day is None:
-                continue
-            entries.append(
-                NBSReleaseEntry(
-                    year=year,
-                    month=month_idx,
-                    day=day,
-                    release_time_local=default_time,
-                    indicator=spec.indicator,
-                    weekday_label=weekday,
-                    date_cell=normalized,
-                )
-            )
+            for day, weekday, normalized in _parse_day_cell(cell):
+                for spec in matching_specs:
+                    entries.append(
+                        NBSReleaseEntry(
+                            year=year,
+                            month=month_idx,
+                            day=day,
+                            release_time_local=default_time,
+                            indicator=spec.indicator,
+                            weekday_label=weekday,
+                            date_cell=normalized,
+                        )
+                    )
         i += 2
 
     return entries
@@ -274,12 +298,22 @@ def fetch_nbs_yearly_calendar_html(
     year). Use :func:`discover_nbs_calendar_url` to resolve the URL
     automatically from the index when the caller doesn't already
     know it.
+
+    NBS serves the page as UTF-8 (declared in the HTML ``<meta
+    charset="UTF-8">``) but omits ``charset`` from the HTTP
+    ``Content-Type`` header. ``requests`` then falls back to RFC 2616's
+    ISO-8859-1 default, which mis-decodes every CJK character and the
+    horizontal-ellipsis empty-day marker (``'\\xe2\\x80\\xa6\\xe2\\x80\\xa6'`` →
+    ``'â\\x80¦â\\x80¦'``) — the scraper no longer recognises the empty
+    marker and blows up on the first one. Force UTF-8 on the response
+    so ``.text`` returns the right code points.
     """
     owned_session = session is None
     s = session or requests.Session()
     try:
         response = s.get(url, headers=_NBS_BROWSER_HEADERS, timeout=timeout)
         response.raise_for_status()
+        response.encoding = "utf-8"
         return response.text
     finally:
         if owned_session:
@@ -347,6 +381,10 @@ def fetch_nbs_calendar_index_html(
                     timeout=timeout,
                 )
                 response.raise_for_status()
+                # Same UTF-8 override as ``fetch_nbs_yearly_calendar_html``
+                # — NBS omits ``charset`` from the ``Content-Type`` header
+                # and ``requests`` falls back to ISO-8859-1 otherwise.
+                response.encoding = "utf-8"
                 return response.text
             except requests.exceptions.RequestException as exc:
                 last_exc = exc

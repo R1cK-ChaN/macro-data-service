@@ -65,12 +65,26 @@ def _fixture_html(name: str) -> str:
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def test_registry_ships_single_anchor() -> None:
-    assert set(INDICATOR_REGISTRY.keys()) == {"CPI"}
-    spec = INDICATOR_REGISTRY["CPI"]
-    assert spec.country_code == "CN"
-    assert spec.importance == "high"
-    assert "consumer price" in spec.label_fragment.lower()
+def test_registry_ships_p5c_whitelist() -> None:
+    assert set(INDICATOR_REGISTRY.keys()) == {
+        "CPI",
+        "PPI",
+        "INDUSTRIAL_PRODUCTION",
+        "FIXED_ASSET_INVESTMENT",
+        "RETAIL_SALES",
+        "MANUFACTURING_PMI",
+        "NON_MANUFACTURING_PMI",
+    }
+    for spec in INDICATOR_REGISTRY.values():
+        assert spec.country_code == "CN"
+        assert spec.importance in {"low", "medium", "high"}
+        assert spec.label_fragment and spec.label_fragment == spec.label_fragment.lower()
+    # The two PMI specs share a label_fragment so the scraper emits
+    # both events on every PMI release date.
+    assert (
+        INDICATOR_REGISTRY["MANUFACTURING_PMI"].label_fragment
+        == INDICATOR_REGISTRY["NON_MANUFACTURING_PMI"].label_fragment
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -78,24 +92,65 @@ def test_registry_ships_single_anchor() -> None:
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def test_parse_2026_calendar_extracts_twelve_cpi_releases() -> None:
+def test_parse_2026_calendar_extracts_whitelist_releases() -> None:
     entries = parse_nbs_calendar_html(_fixture_html("nbs_2026.html"))
-    assert len(entries) == 12
-    months = [e.month for e in entries]
-    assert months == sorted(months)
-    assert months == list(range(1, 13))
+    # CPI + PPI fire every month (12 each), Industrial Production /
+    # Fixed Asset Investment / Retail Sales skip Feb (11 each due to
+    # the Spring Festival combine-into-March adjustment). PMI's Feb
+    # release gets pushed into March with Note5, so the March cell
+    # carries two dates (``"4/Wed Note5 31/Tue"``) — the parser emits
+    # both, so Manufacturing PMI and Non-Manufacturing PMI each land
+    # 12 entries for the year (the delayed Feb release + the regular
+    # Mar 31 release across 11 months).
+    by_indicator: dict[str, int] = {}
+    for entry in entries:
+        by_indicator[entry.indicator] = by_indicator.get(entry.indicator, 0) + 1
+    assert by_indicator == {
+        "CPI": 12,
+        "PPI": 12,
+        "INDUSTRIAL_PRODUCTION": 11,
+        "FIXED_ASSET_INVESTMENT": 11,
+        "RETAIL_SALES": 11,
+        "MANUFACTURING_PMI": 12,
+        "NON_MANUFACTURING_PMI": 12,
+    }
     for entry in entries:
         assert entry.year == 2026
-        assert entry.indicator == "CPI"
-        assert entry.release_time_local == "9:30"
+        assert entry.release_time_local in {"9:30", "10:00"}
 
 
-def test_parse_carries_day_and_weekday() -> None:
+def test_parse_pmi_march_cell_emits_both_spring_festival_and_regular_dates() -> None:
     entries = parse_nbs_calendar_html(_fixture_html("nbs_2026.html"))
-    january = [e for e in entries if e.month == 1][0]
+    march_mpmi = sorted(
+        (e.day for e in entries if e.month == 3 and e.indicator == "MANUFACTURING_PMI")
+    )
+    # NBS 2026 March PMI cell: "4/Wed Note5 31/Tue" — Feb's release
+    # pushed forward to Mar 4 plus the regular Mar 31 release.
+    assert march_mpmi == [4, 31]
+
+
+def test_parse_cpi_carries_day_and_weekday() -> None:
+    entries = parse_nbs_calendar_html(_fixture_html("nbs_2026.html"))
+    january_cpi = next(
+        e for e in entries if e.month == 1 and e.indicator == "CPI"
+    )
     # NBS 2026 CPI: 9 January 2026 (Friday).
-    assert january.day == 9
-    assert january.weekday_label.lower().startswith("fri")
+    assert january_cpi.day == 9
+    assert january_cpi.weekday_label.lower().startswith("fri")
+
+
+def test_parse_pmi_row_emits_both_manufacturing_and_non_manufacturing() -> None:
+    entries = parse_nbs_calendar_html(_fixture_html("nbs_2026.html"))
+    january_pmi = [
+        e for e in entries
+        if e.month == 1
+        and e.indicator in {"MANUFACTURING_PMI", "NON_MANUFACTURING_PMI"}
+    ]
+    assert {e.indicator for e in january_pmi} == {
+        "MANUFACTURING_PMI", "NON_MANUFACTURING_PMI",
+    }
+    # Both entries land on the same release day.
+    assert {e.day for e in january_pmi} == {january_pmi[0].day}
 
 
 def test_parse_uses_year_override_when_provided() -> None:
@@ -293,7 +348,7 @@ def test_record_shape_is_schedule_only() -> None:
 def test_unknown_indicator_is_rejected() -> None:
     with pytest.raises(KeyError):
         release_entry_to_records(
-            _entry(indicator="PPI"),
+            _entry(indicator="NOT_A_REAL_INDICATOR"),
             snapshot_epoch_ms=1_700_000_000,
         )
 
@@ -454,15 +509,21 @@ def test_fetch_projects_fixture_into_events(store: SQLiteEngineStore) -> None:
             html_fetcher=_fake_fetcher,
             snapshot_epoch_ms=1_700_000_000,
         )
+    # 12 CPI + 12 PPI + 11 Industrial Production + 11 Fixed Asset
+    # Investment + 11 Retail Sales + 12×2 PMI = 81 entries. PMI lands
+    # 12 per spec because the March cell carries both the
+    # Spring-Festival-delayed Feb release and the regular Mar 31
+    # release.
+    expected_entries = 81
     assert captured_url == [FIXTURE_CALENDAR_URL]
-    assert summary.entries_parsed == 12
-    assert summary.rows_raw_inserted == 12
-    assert summary.events_upserted == 12
+    assert summary.entries_parsed == expected_entries
+    assert summary.rows_raw_inserted == expected_entries
+    assert summary.events_upserted == expected_entries
     with store._connection(commit=False) as conn:
         rows = conn.execute(
             "SELECT COUNT(*) FROM cal_econ_event WHERE provider=?", (PROVIDER,),
         ).fetchone()[0]
-    assert rows == 12
+    assert rows == expected_entries
 
 
 def test_fetch_twice_is_idempotent(store: SQLiteEngineStore) -> None:
@@ -510,7 +571,7 @@ def test_service_op_dry_run_returns_plan(store: SQLiteEngineStore) -> None:
     result = svc.invoke("calendar_econ_fetch_nbs", {"dry_run": True})
     assert result["dry_run"] is True
     assert result["stopped_reason"] == "dry_run"
-    assert result["indicators_planned"] == ["CPI"]
+    assert result["indicators_planned"] == list(INDICATOR_REGISTRY.keys())
 
 
 def test_service_op_execute_requires_calendar_url(
