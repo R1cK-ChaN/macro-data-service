@@ -5,9 +5,9 @@ Storage and downstream API are under our control and may be adjusted once upstre
 
 ## Budget
 
-- Requests spent this run: **1**
+- Requests spent this run: **2**
 - federalreserve.gov: no auth, HTML scrape (browser-UA required)
-- Probes planned: 2 / executed: 1
+- Probes planned: 2 / executed: 2
 
 ## Probes
 
@@ -17,7 +17,7 @@ Storage and downstream API are under our control and may be adjusted once upstre
 - Expected shape: `list[FomcMeetingEntry] / list[FedReleaseEntry]`
 - Request path: `GET https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm`
 - Status: **ok**
-- HTTP elapsed: 220 ms
+- HTTP elapsed: 511 ms
 - Row count: 56
 - Note: year span: 2021 → 2027 (7 distinct years) | SEP meetings: 28
 
@@ -43,11 +43,33 @@ Storage and downstream API are under our control and may be adjusted once upstre
 
 ### Probe 2 — `fed_releasedates`
 
-- Purpose: Fed release calendar — rolling ~60-day Beige Book / H.4.1 / H.8 schedule
+- Purpose: Fed calendar JSON — rolling Beige Book / H.4.1 / H.8 schedule
 - Expected shape: `list[FomcMeetingEntry] / list[FedReleaseEntry]`
-- Request path: `GET https://www.federalreserve.gov/newsevents/releasedates.htm`
-- Status: **http_error**
-- Note: HTTPError: 404 Client Error: Not Found for url: https://www.federalreserve.gov/newsevents/releasedates.htm
+- Request path: `GET https://www.federalreserve.gov/json/calendar.json`
+- Status: **ok**
+- HTTP elapsed: 441 ms
+- Row count: 889
+- Note: entries by indicator: FED_H41=417, FED_H8=416, BEIGE_BOOK=56
+
+#### Enum observations (all rows)
+
+- `series_id`: FED_H41=417, FED_H8=416, BEIGE_BOOK=56
+
+#### Parser dry-parse: 10/10 rows parsed
+
+<details><summary>Sample row JSON</summary>
+
+```json
+{
+  "event_time_utc": "2026-12-31T21:30:00+00:00",
+  "release_date": "2026-12-31",
+  "release_time_local": "4:30 PM",
+  "release_title": "H.4.1 - Factors Affecting Reserve Balances",
+  "series_id": "FED_H41"
+}
+```
+
+</details>
 
 ## Summary
 
@@ -55,8 +77,8 @@ Storage and downstream API are under our control and may be adjusted once upstre
 - Missing-expected fields: ✓ none
 - Type mismatches: ✓ none
 - Parse failures in sample: ✓ none
-- Probe-level failures: ⚠️ 1 of 2
+- Probe-level failures: ✓ none
 
 ### Action items
 
-- 1 probe(s) failed outright (status ≠ ``ok``). Each probe's Note lines carry the error — upstream drift (URL / DOM / payload shape) is the most common cause. Resolve before treating the remaining field-diff signal as authoritative.
+- Acquisition layer matches parser expectations. No scaffold changes required.

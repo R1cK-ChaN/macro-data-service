@@ -34,8 +34,8 @@ from .parser import (
 )
 from .projector import project_events, project_schedule_events, store_raw
 from .releases import (
-    fetch_releasedates_html,
-    parse_releasedates_html,
+    fetch_fed_calendar_json,
+    parse_fed_calendar_json,
     release_entry_to_records,
 )
 from .scraper import fetch_fomc_calendar_html, parse_fomc_calendar_html
@@ -163,17 +163,23 @@ def fetch_fed_releasedates(
     snapshot_epoch_ms: int | None = None,
     html_fetcher: Callable[[], str] | None = None,
 ) -> ReleasedatesRunSummary:
-    """Scrape ``federalreserve.gov/newsevents/releasedates.htm`` and
-    project Beige Book / H.4.1 / H.8 rows into the calendar.
+    """Consume ``federalreserve.gov/json/calendar.json`` and project
+    Beige Book / H.4.1 / H.8 rows into the calendar.
 
     Parameters mirror :func:`fetch_fed_calendar`. SEP rows are
     explicitly excluded — see :mod:`ingestion.calendar.fed_api.releases`
     for the rationale. Scheduled speeches / testimony are out of
     P4a scope.
 
-    The Fed releasedates page is a single HTML document covering
-    ~60 days forward of release dates; weekly H.4.1 / H.8 and ~8/year
-    Beige Book entries dominate the whitelist output.
+    The JSON feed is a single document carrying the Fed's full rolling
+    calendar — speeches, testimony, FOMC meetings, and statistical
+    releases. Weekly H.4.1 / H.8 (one feed entry per month, days
+    listed as a comma-separated string) and ~8/year Beige Book entries
+    dominate the whitelisted output.
+
+    The ``html_fetcher`` parameter name is kept for backwards
+    compatibility with earlier test seams — callers pass a lambda
+    returning the JSON text.
     """
     started = time.monotonic()
     planned = ["BEIGE_BOOK", "FED_H41", "FED_H8"]
@@ -189,12 +195,12 @@ def fetch_fed_releasedates(
         datetime.now(timezone.utc).timestamp() * 1000
     )
 
-    fetcher = html_fetcher or fetch_releasedates_html
+    fetcher = html_fetcher or fetch_fed_calendar_json
     try:
-        html = fetcher()
-        entries = parse_releasedates_html(html, row_issues=summary.row_issues)
+        text = fetcher()
+        entries = parse_fed_calendar_json(text, row_issues=summary.row_issues)
     except Exception as exc:
-        logger.warning("Fed releasedates fetch failed: %s", exc)
+        logger.warning("Fed calendar JSON fetch failed: %s", exc)
         summary.fetch_error = str(exc)
         summary.wall_seconds = time.monotonic() - started
         return summary

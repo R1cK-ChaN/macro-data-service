@@ -77,16 +77,16 @@ from ingestion.timeseries.sdmx._types import SDMXObservation  # noqa: E402
 from ingestion.timeseries.sdmx.providers.ecb import ECBClient  # noqa: E402
 
 from ingestion.calendar.fed_api import (  # noqa: E402
-    FED_RELEASEDATES_URL,
+    FED_CALENDAR_JSON_URL,
     FOMC_CALENDAR_URL,
     FomcMeetingEntry,
     FedReleaseEntry,
     INDICATOR_REGISTRY as FED_INDICATOR_REGISTRY,
+    fetch_fed_calendar_json,
     fetch_fomc_calendar_html,
-    fetch_releasedates_html,
     meeting_entry_to_records,
+    parse_fed_calendar_json,
     parse_fomc_calendar_html,
-    parse_releasedates_html,
     release_entry_to_records,
 )
 
@@ -1552,12 +1552,13 @@ def run_ecb_probe(client: ECBClient, probe: ECBProbe) -> ProbeResult:
 # Fed probe plan + runner
 # ──────────────────────────────────────────────────────────────────────────
 
-# Fed publishes no calendar API; both ``fomccalendars.htm`` (the FOMC
-# meeting schedule) and ``releasedates.htm`` (Beige Book / H.4.1 / H.8)
-# are HTML scrapes. Probe runner doesn't do a per-field observation
-# diff — the parser consumes the DOM at the boundary. Upstream drift
-# surfaces as zero parsed entries (scraper raises) or non-empty
-# ``row_issues`` (partial row-level failures after a title match).
+# Fed publishes no authenticated calendar API. ``fomccalendars.htm``
+# is an HTML scrape; ``/json/calendar.json`` (Beige Book / H.4.1 / H.8
+# alongside FOMC meetings and speeches) is a JSON feed. The probe
+# runner doesn't do a per-field observation diff — the parser consumes
+# the payload at the boundary. Upstream drift surfaces as zero parsed
+# entries (parser raises) or non-empty ``row_issues`` (partial row-
+# level failures after a title match).
 
 
 @dataclass
@@ -1577,14 +1578,15 @@ class FedProbe:
 
 
 def plan_fed_probes() -> list[FedProbe]:
-    """Two probes — one per Fed HTML surface.
+    """Two probes — one per Fed calendar surface.
 
-    The FOMC calendar carries ~48 meetings across a 6-year rolling
+    The FOMC HTML calendar carries ~48 meetings across a 6-year rolling
     window (3 years past + current + 2 years forward) in a stable
-    panel-per-year layout; ``releasedates.htm`` carries a rolling
-    ~60-day schedule of weekly H.4.1 / H.8 releases and Beige Book
-    entries. Each probe issues exactly one HTTP request per run — no
-    fan-out.
+    panel-per-year layout; ``/json/calendar.json`` carries the full
+    rolling calendar — weekly H.4.1 / H.8 (one entry per month, days
+    comma-separated), ~8/year Beige Book, plus FOMC meetings, speeches,
+    and testimony we filter out. Each probe issues exactly one HTTP
+    request per run — no fan-out.
     """
     return [
         FedProbe(
@@ -1599,10 +1601,10 @@ def plan_fed_probes() -> list[FedProbe]:
         FedProbe(
             name="fed_releasedates",
             source="releasedates",
-            url=FED_RELEASEDATES_URL,
+            url=FED_CALENDAR_JSON_URL,
             description=(
-                "Fed release calendar — rolling ~60-day Beige Book / "
-                "H.4.1 / H.8 schedule"
+                "Fed calendar JSON — rolling Beige Book / H.4.1 / H.8 "
+                "schedule"
             ),
         ),
     ]
@@ -1709,15 +1711,15 @@ def _run_releasedates_probe(result: ProbeResult, releasedates_fetcher) -> ProbeR
     t0 = _time.monotonic()
     row_issues: list[str] = []
     try:
-        html = releasedates_fetcher()
-        entries = parse_releasedates_html(html, row_issues=row_issues)
+        text = releasedates_fetcher()
+        entries = parse_fed_calendar_json(text, row_issues=row_issues)
     except Exception as exc:
         result.status = "http_error"
         result.notes.append(f"{type(exc).__name__}: {exc}")
         return result
     result.http_elapsed_ms = (_time.monotonic() - t0) * 1000
 
-    # ``parse_releasedates_html`` already raises on both empty-match
+    # ``parse_fed_calendar_json`` already raises on both empty-match
     # and all-matches-failed paths (see the module for the exact
     # guards), so ``entries`` is guaranteed non-empty once we reach
     # here — the general exception branch above carries the loud-
@@ -1770,22 +1772,23 @@ def run_fed_probe(
     probe: FedProbe,
     *,
     fomc_fetcher=fetch_fomc_calendar_html,
-    releasedates_fetcher=fetch_releasedates_html,
+    releasedates_fetcher=fetch_fed_calendar_json,
 ) -> ProbeResult:
     """Execute one Fed probe and return a populated :class:`ProbeResult`.
 
-    Unlike the API-based probes, Fed reads HTML and parses it locally.
-    The runner drives the production fetcher + parser; ``fomc_fetcher``
-    and ``releasedates_fetcher`` are seams tests inject to feed
-    fixture HTML without hitting ``federalreserve.gov``. ``auth_missing``
-    is not reachable — the Fed pages are public.
+    Unlike the API-based probes, Fed consumes public web responses
+    locally — HTML for FOMC calendar, JSON for the release feed. The
+    runner drives the production fetcher + parser; ``fomc_fetcher``
+    and ``releasedates_fetcher`` are seams tests inject to feed fixture
+    payloads without hitting ``federalreserve.gov``. ``auth_missing``
+    is not reachable — both surfaces are public.
     """
     generic = Probe(
         name=probe.name,
         path=f"GET {probe.url}",
         description=probe.description,
         expected_shape="list[FomcMeetingEntry] / list[FedReleaseEntry]",
-        expected_fields=frozenset(),  # HTML surface — diff not meaningful
+        expected_fields=frozenset(),  # HTML/JSON surface — diff not meaningful
     )
     result = ProbeResult(probe=generic, status="skipped")
     result.request_path = generic.path

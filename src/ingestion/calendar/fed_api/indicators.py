@@ -12,9 +12,10 @@ macro release after CPI / NFP.
 
 Beige Book, H.4.1 weekly balance sheet, H.8, Summary of Economic
 Projections (the quarterly dot-plot subset of FOMC), and scheduled
-Fed Chair / Vice-Chair speeches are deferred to P4a — they come from
-a different upstream page (``federalreserve.gov/newsevents/releasedates.htm``)
-with a different DOM, so splitting keeps review surface tight.
+Fed Chair / Vice-Chair speeches ship through P4a — they come from a
+separate upstream feed (``federalreserve.gov/json/calendar.json``)
+with a different payload shape, so splitting keeps review surface
+tight.
 
 The shape mirrors :mod:`ingestion.calendar.bls_api.indicators`,
 :mod:`ingestion.calendar.bea_api.indicators`, and
@@ -52,7 +53,7 @@ INDICATOR_REGISTRY: dict[str, FedIndicatorSpec] = {
         importance="high",
         category="Monetary Policy",
     ),
-    # ── P4a: releasedates.htm additions ────────────────────────────
+    # ── P4a: /json/calendar.json additions ──────────────────────────
     # Beige Book: narrative summary of regional economic conditions,
     # ~8 per year, 2 weeks before each FOMC meeting at 14:00 ET.
     "BEIGE_BOOK": FedIndicatorSpec(
@@ -76,7 +77,7 @@ INDICATOR_REGISTRY: dict[str, FedIndicatorSpec] = {
     ),
     # H.8 — Assets and Liabilities of Commercial Banks in the United
     # States, weekly (Fridays) at 16:15 ET. Less market-moving than
-    # H.4.1 but carried on the same releasedates page.
+    # H.4.1 but carried on the same calendar feed.
     "FED_H8": FedIndicatorSpec(
         indicator="H.8",
         country_code="US",

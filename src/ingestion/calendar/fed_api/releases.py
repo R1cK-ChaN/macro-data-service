@@ -1,5 +1,5 @@
-"""Scrape ``federalreserve.gov/newsevents/releasedates.htm`` for the
-non-FOMC Fed calendar surface (issue #9 P4a).
+"""Consume ``federalreserve.gov/json/calendar.json`` for the non-FOMC
+Fed calendar surface (issue #9 P4a + P4b-live-follow-up).
 
 Scope covers three indicators the Fed publishes outside the FOMC
 calendar:
@@ -14,18 +14,27 @@ calendar:
 Summary of Economic Projections (SEP) is explicitly excluded: it
 already rides on the FOMC calendar via :attr:`FomcMeetingEntry.has_sep`
 and the title ``"FOMC Rate Decision + SEP"``, so emitting a separate
-SEP row from this page would create a duplicate calendar event for
+SEP row from this feed would create a duplicate calendar event for
 every quarterly FOMC meeting.
 
-Scheduled Fed Chair / Vice-Chair speeches on the release-dates page
-are out of P4a scope — they belong in the news / speech pipeline,
-not here.
+Scheduled Fed Chair / Vice-Chair speeches on the calendar feed are
+out of P4a scope — they belong in the news / speech pipeline, not
+here.
 
-Fetch + parse are separable functions. Tests feed fixture HTML
-directly to :func:`parse_releasedates_html`; live callers use
-:func:`fetch_releasedates_html` which reuses the browser-UA header
-bundle from the FOMC scraper (``federalreserve.gov`` 403s on
-default ``python-requests`` UA).
+Fetch + parse are separable functions. Tests feed fixture JSON
+directly to :func:`parse_fed_calendar_json`; live callers use
+:func:`fetch_fed_calendar_json` which drives :class:`requests.Session`
+against the plain JSON endpoint. The Fed's ``fomccalendars.htm``
+still requires a browser UA, but ``/json/calendar.json`` accepts the
+default ``python-requests`` UA.
+
+The JSON feed replaces the HTML scrape at
+``/newsevents/releasedates.htm`` that 404'd during the 2026-04-22
+live probe (issue #9 P4b-live). The JSON surface carries the same
+Beige Book / H.4.1 / H.8 content alongside FOMC meetings, speeches,
+and testimony; the title-substring whitelist carries over unchanged.
+The wire payload is UTF-8 with a leading BOM — ``fetch_fed_calendar_json``
+strips it so ``json.loads`` accepts the returned text directly.
 """
 
 from __future__ import annotations
@@ -39,7 +48,6 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 import requests
-from bs4 import BeautifulSoup
 
 from ingestion.calendar._official_shared import (
     canonicalize_indicator,
@@ -54,19 +62,16 @@ from .parser import (
     FedCalendarEventRecord,
     FedCalendarRawRecord,
 )
-from .scraper import _FED_BROWSER_HEADERS
 
 logger = logging.getLogger(__name__)
 
-FED_RELEASEDATES_URL = (
-    "https://www.federalreserve.gov/newsevents/releasedates.htm"
-)
+FED_CALENDAR_JSON_URL = "https://www.federalreserve.gov/json/calendar.json"
 
 # Release-title match table. Entry order matters: longer / more-
 # specific fragments first so ``"H.4.1"`` matches before the
 # less-specific ``"H."`` never would. Each entry maps a lowercase
 # substring to the target indicator id + default release time
-# (applied when the row has no explicit time cell).
+# (applied when the event has no parseable ``time`` field).
 _MATCH_ENTRIES: tuple[tuple[str, str, str], ...] = (
     ("beige book",      "BEIGE_BOOK", "2:00 PM"),
     ("h.4.1",           "FED_H41",    "4:30 PM"),
@@ -75,17 +80,28 @@ _MATCH_ENTRIES: tuple[tuple[str, str, str], ...] = (
     # "h8" bare substring is too common — require the dotted form.
 )
 
-# Release titles that must be ignored even when they substring-match
+# Feed ``type`` values the parser will consider for whitelist matching.
+# The Fed's calendar JSON carries an explicit ``type`` on every entry
+# — ``"Beige"`` for Beige Book rows and ``"Stat"`` for the weekly
+# statistical releases that include H.4.1 / H.8. Gating matches on
+# ``type`` before title prevents a governor speech titled
+# ``"Rethinking the Beige Book"`` (type ``"Speeches"``) or a
+# testimony transcript mentioning ``"H.4.1"`` from getting projected
+# as a spurious BEIGE_BOOK / FED_H41 release row — Codex P2 on
+# 2026-04-22. The current feed has zero such collisions but the
+# categories trade on our whitelist keywords routinely enough to
+# make this inevitable over a multi-year horizon.
+_RELEASE_TYPES: frozenset[str] = frozenset({"Beige", "Stat"})
+
+# Event titles that must be ignored even when they substring-match
 # the table above — currently SEP (rides on FOMC calendar) and the
-# speeches / testimony rows that fall outside P4a scope.
+# G.19 / H.15 titles that happen to tokenise similarly to whitelisted
+# ids. The SEP entry is belt-and-suspenders: the JSON feed groups
+# SEP under the FOMC meeting's description rather than a standalone
+# row, so the fragment rarely matches; keeping the exclude keeps the
+# parser stable if the feed layout shifts.
 _EXCLUDE_FRAGMENTS: tuple[str, ...] = (
     "summary of economic projections",
-    # Defensive: G.19 Consumer Credit and H.15 Selected Interest Rates
-    # happen to share a tokenised shape with some indicators; their
-    # ids don't appear in ``_MATCH_ENTRIES`` but an inline title drift
-    # ("H.4.1 Consumer Credit" on a future page) would otherwise
-    # substring-match and mis-label. Cheap to list here and they
-    # don't appear in the whitelist by design.
     "consumer credit - g.19",
     "consumer credit g.19",
     "selected interest rates - h.15",
@@ -93,86 +109,86 @@ _EXCLUDE_FRAGMENTS: tuple[str, ...] = (
 )
 
 
-class FedReleasedatesParseError(ValueError):
-    """Raised when the releasedates.htm DOM deviates from expectations."""
+class FedCalendarJsonParseError(ValueError):
+    """Raised when the calendar JSON feed deviates from expectations."""
 
 
 @dataclass(frozen=True)
 class FedReleaseEntry:
-    """One matched row from ``releasedates.htm``, pre-projection."""
+    """One matched event from the Fed calendar JSON feed, pre-projection."""
 
     series_id: str          # matches INDICATOR_REGISTRY key
-    release_title: str      # verbatim cell text
+    release_title: str      # verbatim "title" field
     release_date: str       # ISO YYYY-MM-DD
-    release_time_local: str # verbatim "2:00 PM" (or default from match)
+    release_time_local: str # normalized "4:30 PM" (or default from match)
     event_time_utc: str     # ISO datetime with UTC offset
 
 
-# Date cell shapes observed on Fed releasedates.htm:
-#   "January 7, 2026"
-#   "Jan 7, 2026"
-#   "Jan. 7, 2026"
-#   "2026-01-07"
-_RELEASE_DATE_RE = re.compile(
-    r"([A-Za-z]+)\.?\s+(\d{1,2}),\s*(\d{4})"
-)
-_ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
-# No trailing ``\b``: the dotted forms (``a.m.`` / ``p.m.``) end on a
-# period, which is not a word character, so a trailing ``\b`` would
-# refuse to match them and leave ``_extract_time`` with a bare
-# ``HH:MM`` that ``parse_scheduled_release_time`` reads as 24-hour —
-# placing every PM Fed release 12h early in UTC.
-_TIME_RE = re.compile(
-    r"\b(\d{1,2})[:.](\d{2})(?:\s*(AM|PM|A\.M\.|P\.M\.))?",
-    re.IGNORECASE,
+# ``parse_scheduled_release_time`` reads the AM/PM suffix case-
+# insensitively but requires a period-free form. The feed writes
+# ``"4:30 p.m."`` uniformly; normalize to ``"4:30 PM"`` so the shared
+# helper accepts it.
+_TIME_FULLMATCH_RE = re.compile(
+    r"\s*(\d{1,2})[:.](\d{2})\s*([AaPp]\.?\s*[Mm]\.?)?\s*(?:ET|EST|EDT)?\s*",
 )
 
-_MONTH_NAMES: dict[str, int] = {
-    "january":   1, "february":  2, "march":     3, "april":     4,
-    "may":       5, "june":      6, "july":      7, "august":    8,
-    "september": 9, "october":  10, "november": 11, "december": 12,
-    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6,
-    "jul": 7, "aug": 8, "sep": 9, "sept": 9,
-    "oct": 10, "nov": 11, "dec": 12,
-}
 
+def _normalize_time(text: str | None, *, default: str) -> str:
+    """Normalize feed ``"4:30 p.m."`` → ``"4:30 PM"``, fall back on misses.
 
-def _parse_date_from_text(text: str) -> date | None:
-    m = _ISO_DATE_RE.search(text)
-    if m:
-        try:
-            return date.fromisoformat(m.group(1))
-        except ValueError:
-            pass
-    m = _RELEASE_DATE_RE.search(text)
-    if m:
-        month_s, day_s, year_s = m.groups()
-        month = _MONTH_NAMES.get(month_s.strip(".").lower())
-        if month:
-            try:
-                return date(year=int(year_s), month=month, day=int(day_s))
-            except ValueError:
-                pass
-    return None
-
-
-def _extract_time(text: str, default: str) -> str:
-    """Pull a ``HH:MM am/pm`` time out of the row text, or fall back.
-
-    When the row carries a bare ``HH:MM`` without an AM/PM suffix,
-    the per-indicator ``default`` wins rather than the bare form —
-    a 24-hour reading of ``"4:30"`` places H.4.1 at 04:30 ET instead
-    of 16:30 ET, flipping every PM release 12 hours early.
+    Bare ``HH:MM`` (no suffix) falls back to the per-indicator default
+    rather than reading as 24-hour — a naive 24-hour reading of
+    ``"4:30"`` would place H.4.1 at 04:30 ET instead of 16:30 ET,
+    flipping every PM release 12 hours early.
     """
-    m = _TIME_RE.search(text)
-    if not m:
+    if not text:
         return default
-    hh, mm, suffix = m.groups()
-    if suffix is None:
+    match = _TIME_FULLMATCH_RE.fullmatch(text)
+    if not match:
         return default
-    hour = int(hh)
-    suffix_clean = suffix.upper().replace(".", "")
-    return f"{hour}:{mm} {suffix_clean}"
+    hh, mm, suffix = match.groups()
+    if not suffix:
+        return default
+    suffix_clean = suffix.upper().replace(".", "").replace(" ", "")
+    return f"{int(hh)}:{mm} {suffix_clean}"
+
+
+_YM_RE = re.compile(r"^\s*(\d{4})-(\d{1,2})\s*$")
+
+
+def _parse_year_month(text: str) -> tuple[int, int]:
+    """Parse a feed ``month`` field ``"YYYY-MM"`` into ``(year, month)``.
+
+    Raises :class:`ValueError` for any out-of-range or unparseable
+    form; caller converts to a row-level issue.
+    """
+    match = _YM_RE.match(text)
+    if not match:
+        raise ValueError(f"unparseable month: {text!r}")
+    year = int(match.group(1))
+    month = int(match.group(2))
+    if not 1 <= month <= 12:
+        raise ValueError(f"month out of range: {month}")
+    return year, month
+
+
+def _split_days(text: str) -> list[int]:
+    """Split ``"3, 10, 17, 24, 31"`` (or ``"25"``) into ``[int, ...]``.
+
+    Empty / non-numeric tokens are silently skipped — the feed is
+    well-formed in practice but a stray separator shouldn't abort
+    the whole event.
+    """
+    out: list[int] = []
+    for token in text.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            out.append(int(token))
+        except ValueError:
+            continue
+    return out
 
 
 def _match_release(title: str) -> tuple[str, str] | None:
@@ -187,52 +203,101 @@ def _match_release(title: str) -> tuple[str, str] | None:
     return None
 
 
-def parse_releasedates_html(
-    html: str,
+def parse_fed_calendar_json(
+    text: str,
     *,
     row_issues: list[str] | None = None,
 ) -> list[FedReleaseEntry]:
-    """Extract :class:`FedReleaseEntry` rows from releasedates.htm.
+    """Extract :class:`FedReleaseEntry` rows from the Fed calendar JSON feed.
 
-    Walks every ``<tr>`` in every ``<table>``. A row matches when its
-    text substring-matches one of ``_MATCH_ENTRIES`` (and doesn't
-    substring-match an ``_EXCLUDE_FRAGMENTS`` phrase). Matched rows
-    without a parseable date are captured in ``row_issues`` rather
-    than silently dropped — same shape as BEA P2a's parser.
+    Walks every element of the top-level ``events`` array. An event
+    matches when its ``title`` substring-matches one of
+    ``_MATCH_ENTRIES`` and doesn't substring-match an
+    ``_EXCLUDE_FRAGMENTS`` phrase. Events with unparseable month / day /
+    time fields are captured in ``row_issues`` rather than silently
+    dropped — same shape as BEA P2a's parser. Multi-day events (one
+    feed entry with ``"days": "3, 10, 17, 24, 31"``) emit one
+    :class:`FedReleaseEntry` per day.
+
+    The feed ships with a UTF-8 BOM on the wire;
+    :func:`fetch_fed_calendar_json` strips it before handing off, but
+    test callers may pass either form — the parser tolerates a leading
+    BOM here too.
     """
-    soup = BeautifulSoup(html, "html.parser")
-    tables = soup.find_all("table")
-    if not tables:
-        raise FedReleasedatesParseError(
-            "no <table> found in releasedates HTML"
+    stripped = text.lstrip("\ufeff")
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError as exc:
+        raise FedCalendarJsonParseError(
+            f"calendar JSON payload did not parse: {exc}"
+        ) from exc
+    events = payload.get("events") if isinstance(payload, dict) else None
+    if not isinstance(events, list):
+        raise FedCalendarJsonParseError(
+            "calendar JSON payload missing 'events' array"
         )
 
     entries: list[FedReleaseEntry] = []
     matched_any = False
-    for table in tables:
-        for row in table.find_all("tr"):
-            cells = row.find_all(["th", "td"])
-            if not cells:
-                continue
-            row_text = row.get_text(" ", strip=True)
-            if not row_text:
-                continue
-            match = _match_release(row_text)
-            if match is None:
-                continue
-            matched_any = True
-            series_id, default_time = match
-            spec = INDICATOR_REGISTRY[series_id]
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        # Gate on ``type`` first — the feed tags every entry and
+        # release rows always land as ``"Beige"`` or ``"Stat"``. Any
+        # other value (``"Speeches"``, ``"Testimony"``, ``"FOMC"``,
+        # ``"Conferences"``, the ``"events"`` orphan sub-entries with
+        # empty ``month``, …) is off-scope for this connector, so we
+        # skip before the title match. The skip is silent: feeds
+        # routinely carry hundreds of these and ``row_issues`` is
+        # reserved for genuine month/day drift on a release row.
+        if event.get("type") not in _RELEASE_TYPES:
+            continue
+        title_raw = event.get("title")
+        if not isinstance(title_raw, str):
+            continue
+        title = title_raw.strip()
+        if not title:
+            continue
+        match = _match_release(title)
+        if match is None:
+            continue
+        matched_any = True
+        series_id, default_time = match
+        INDICATOR_REGISTRY[series_id]  # fail-fast if registry drifts
 
-            release_date = _parse_date_from_text(row_text)
-            if release_date is None:
+        month_raw = event.get("month")
+        days_raw = event.get("days")
+        if not isinstance(month_raw, str) or not isinstance(days_raw, str):
+            if row_issues is not None:
+                row_issues.append(
+                    f"{title!r}: missing month/days "
+                    f"(month={month_raw!r}, days={days_raw!r})"
+                )
+            continue
+        try:
+            year, month_num = _parse_year_month(month_raw)
+        except ValueError as exc:
+            if row_issues is not None:
+                row_issues.append(f"{title!r}: {exc}")
+            continue
+        day_tokens = _split_days(days_raw)
+        if not day_tokens:
+            if row_issues is not None:
+                row_issues.append(
+                    f"{title!r}: unparseable days {days_raw!r}"
+                )
+            continue
+
+        release_time = _normalize_time(event.get("time"), default=default_time)
+        for day in day_tokens:
+            try:
+                release_date = date(year=year, month=month_num, day=day)
+            except ValueError as exc:
                 if row_issues is not None:
                     row_issues.append(
-                        f"{row_text[:80]!r}: no parseable date"
+                        f"{title!r} day={day} month={month_raw!r}: {exc}"
                     )
                 continue
-
-            release_time = _extract_time(row_text, default=default_time)
             try:
                 scheduled = parse_scheduled_release_time(
                     release_date, release_time,
@@ -241,19 +306,14 @@ def parse_releasedates_html(
             except Exception as exc:
                 if row_issues is not None:
                     row_issues.append(
-                        f"{row_text[:80]!r} time={release_time!r}: {exc}"
+                        f"{title!r} date={release_date.isoformat()} "
+                        f"time={release_time!r}: {exc}"
                     )
                 continue
-
-            # Title = the release-name portion of the row, not the full
-            # row text. Best-effort extraction: strip leading date +
-            # time tokens, keep the rest. Falls back to the registry
-            # title when the regex doesn't match.
-            title_fragment = _extract_title_fragment(row_text, spec)
             entries.append(
                 FedReleaseEntry(
                     series_id=series_id,
-                    release_title=title_fragment,
+                    release_title=title,
                     release_date=release_date.isoformat(),
                     release_time_local=release_time,
                     event_time_utc=scheduled.utc.isoformat(),
@@ -261,39 +321,21 @@ def parse_releasedates_html(
             )
 
     if not matched_any:
-        raise FedReleasedatesParseError(
-            "no rows matching the releasedates whitelist fragments"
+        raise FedCalendarJsonParseError(
+            "no calendar events matching the Fed whitelist fragments"
         )
     if not entries:
-        # Codex P4a — if every whitelisted row hit a row-level parse
-        # failure (Fed date or time format drifted on every match),
+        # Codex P4a — if every whitelisted event hit a row-level parse
+        # failure (feed month/day/time format drifted on every match),
         # returning an empty list would let ``fetch_fed_releasedates``
         # commit a successful zero-row run and mask the outage.
-        # ``row_issues`` still carries the per-row detail for
+        # ``row_issues`` still carries the per-event detail for
         # operator diagnosis.
         detail = f" ({len(row_issues or ())} row issues)" if row_issues else ""
-        raise FedReleasedatesParseError(
-            "whitelist matched but every row failed parsing" + detail
+        raise FedCalendarJsonParseError(
+            "whitelist matched but every event failed parsing" + detail
         )
     return entries
-
-
-_DATE_PREFIX_RE = re.compile(
-    r"^\s*(?:[A-Za-z]+\.?\s+\d{1,2},\s*\d{4}|\d{4}-\d{2}-\d{2})\s*"
-)
-
-
-def _extract_title_fragment(row_text: str, spec: FedIndicatorSpec) -> str:
-    """Pull the release-name portion out of a full row's text.
-
-    Row text on releasedates.htm typically reads ``"January 7, 2026
-    4:30 PM Factors Affecting Reserve Balances - H.4.1"``. Strip the
-    date prefix + time token to keep only the release name. Falls
-    back to the registry title when nothing remains.
-    """
-    stripped = _DATE_PREFIX_RE.sub("", row_text)
-    stripped = _TIME_RE.sub("", stripped, count=1).strip(" -—–")
-    return stripped or spec.title
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -382,7 +424,7 @@ def release_entry_to_records(
         consensus_forecast=None,
         ticker="",
         source="Federal Reserve",
-        source_url=FED_RELEASEDATES_URL,
+        source_url=FED_CALENDAR_JSON_URL,
         content_hash=content_hash,
         last_update_epoch_ms=None,
         observed_at_epoch_ms=observed,
@@ -395,27 +437,29 @@ def release_entry_to_records(
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def fetch_releasedates_html(
+def fetch_fed_calendar_json(
     *,
     session: requests.Session | None = None,
     timeout: float = 30.0,
 ) -> str:
-    """GET the Fed releasedates page and return HTML text.
+    """GET the Fed calendar JSON feed and return BOM-stripped UTF-8 text.
 
-    Reuses the browser-UA header bundle from
-    :mod:`ingestion.calendar.fed_api.scraper` — the same user agent
-    works for both ``fomccalendars.htm`` and ``releasedates.htm``.
+    The feed ships with a UTF-8 BOM on the wire; the caller receives
+    BOM-stripped text so :func:`json.loads` accepts it directly. Plain
+    ``python-requests`` UA is accepted — unlike ``fomccalendars.htm``
+    which 403s the default UA, the JSON endpoint has no UA gate.
     """
     owned_session = session is None
     s = session or requests.Session()
     try:
-        response = s.get(
-            FED_RELEASEDATES_URL,
-            headers=_FED_BROWSER_HEADERS,
-            timeout=timeout,
-        )
+        response = s.get(FED_CALENDAR_JSON_URL, timeout=timeout)
         response.raise_for_status()
-        return response.text
+        # ``response.text`` guesses encoding from headers and can land
+        # on ISO-8859-1 when the server's ``Content-Type`` omits an
+        # explicit ``charset``. Decode from raw bytes against
+        # UTF-8-with-BOM so the parser sees plain JSON regardless of
+        # how the server labels the response.
+        return response.content.decode("utf-8-sig")
     finally:
         if owned_session:
             s.close()

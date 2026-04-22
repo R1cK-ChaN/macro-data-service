@@ -1,17 +1,19 @@
-"""Tests for the Fed live-probe scaffold (issue #9 P4b-infra).
+"""Tests for the Fed live-probe scaffold (issue #9 P4b-infra +
+P4b-live-follow-up).
 
 No real HTTP. Exercises the probe planner, runner dispatch, and the
-per-surface probe paths (FOMC calendar + releasedates). Fixture HTML
-comes from :mod:`tests.fixtures.fed_fomc_calendar` and
+per-surface probe paths (FOMC calendar HTML + release calendar JSON).
+Fixtures come from :mod:`tests.fixtures.fed_fomc_calendar` and
 :mod:`tests.fixtures.fed_releasedates` — the same captures the
 connector's own scaffold tests use.
 
 Parallel in shape to :mod:`tests.test_bls_live_probe_scaffold` /
 :mod:`tests.test_bea_live_probe_scaffold` /
 :mod:`tests.test_ecb_live_probe_scaffold`. Fed has no auth, so there's
-no ``auth_missing`` branch; the probe consumes HTML locally, so the
-diff-field-level coverage present for API probes is not meaningful
-here — instead we test the parse-count / sample / dry-project surfaces.
+no ``auth_missing`` branch; the probe consumes HTML / JSON locally,
+so the diff-field-level coverage present for API probes is not
+meaningful here — instead we test the parse-count / sample / dry-project
+surfaces.
 """
 
 from __future__ import annotations
@@ -55,8 +57,8 @@ def _fomc_fixture_html() -> str:
     return (FOMC_FIXTURE_DIR / "fomc_2026.html").read_text(encoding="utf-8")
 
 
-def _releasedates_fixture_html() -> str:
-    return (RELEASEDATES_FIXTURE_DIR / "releasedates.html").read_text(
+def _releasedates_fixture_json() -> str:
+    return (RELEASEDATES_FIXTURE_DIR / "calendar.json").read_text(
         encoding="utf-8",
     )
 
@@ -86,11 +88,11 @@ def test_planner_fomc_probe_carries_calendar_url(validator) -> None:
     assert probes["fomc_calendar"].url == FOMC_CALENDAR_URL
 
 
-def test_planner_releasedates_probe_carries_releasedates_url(validator) -> None:
-    from ingestion.calendar.fed_api import FED_RELEASEDATES_URL
+def test_planner_releasedates_probe_carries_json_feed_url(validator) -> None:
+    from ingestion.calendar.fed_api import FED_CALENDAR_JSON_URL
 
     probes = {p.source: p for p in validator.plan_fed_probes()}
-    assert probes["releasedates"].url == FED_RELEASEDATES_URL
+    assert probes["releasedates"].url == FED_CALENDAR_JSON_URL
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -182,22 +184,23 @@ def test_fomc_runner_flags_empty_parse_as_http_error(validator) -> None:
 
 
 def test_releasedates_runner_flags_whitelist_miss_as_http_error(validator) -> None:
-    """``parse_releasedates_html`` raises ``FedReleasedatesParseError``
-    when ``matched_any`` is False — the releasedates page never
+    """``parse_fed_calendar_json`` raises ``FedCalendarJsonParseError``
+    when no whitelist fragment matches — the calendar feed never
     legitimately publishes zero whitelist matches (weekly H.4.1 / H.8
-    dominate the 60-day window), so the raise is the upstream-drift
+    dominate the rolling window), so the raise is the upstream-drift
     signal. The probe's general exception branch converts it into
     ``http_error`` with the raise message preserved."""
-    html_with_no_matching_titles = (
-        "<html><body><table><tr><td>Unrelated text</td></tr></table></body></html>"
+    json_with_no_matching_titles = (
+        '{"events":[{"title":"Speech -- Governor Jane Doe",'
+        '"time":"2:30 p.m.","month":"2026-01","days":"9","type":"Speeches"}]}'
     )
     probe = _releasedates_probe(validator)
     result = validator.run_fed_probe(
-        probe, releasedates_fetcher=lambda: html_with_no_matching_titles,
+        probe, releasedates_fetcher=lambda: json_with_no_matching_titles,
     )
     assert result.status == "http_error"
     assert result.row_count == 0
-    assert any("FedReleasedatesParseError" in n for n in result.notes)
+    assert any("FedCalendarJsonParseError" in n for n in result.notes)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -225,7 +228,7 @@ def test_releasedates_runner_reports_http_error(validator) -> None:
 def test_releasedates_runner_handles_happy_path(validator) -> None:
     probe = _releasedates_probe(validator)
     result = validator.run_fed_probe(
-        probe, releasedates_fetcher=_releasedates_fixture_html,
+        probe, releasedates_fetcher=_releasedates_fixture_json,
     )
     assert result.status == "ok"
     assert result.row_count >= 1

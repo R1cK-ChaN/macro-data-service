@@ -1012,16 +1012,16 @@ class LocalMacroDataService:
     def _op_calendar_econ_fetch_fed_releases(
         self, arguments: dict[str, Any],
     ) -> dict[str, Any]:
-        """Scrape ``releasedates.htm`` into the calendar schema.
+        """Consume ``/json/calendar.json`` into the calendar schema.
 
         Arguments:
           dry_run — default True. No HTTP, no DB writes.
 
         Complements ``calendar_econ_fetch_fed`` (the FOMC meeting
         scrape) with the Fed's news-release schedule — Beige Book,
-        H.4.1, H.8. SEP rows on the page are filtered out (they
-        ride as a boolean on the FOMC event). Scheduled speeches
-        and testimony are out of scope.
+        H.4.1, H.8. SEP events are filtered out (they ride as a
+        boolean on the FOMC event). Scheduled speeches and testimony
+        are out of scope.
         """
         from ingestion.calendar.fed_api import fetch_fed_releasedates
 

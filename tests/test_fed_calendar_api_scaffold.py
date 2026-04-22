@@ -61,7 +61,7 @@ def _fixture_html(name: str) -> str:
 
 def test_registry_keeps_fomc_rate_anchor() -> None:
     """FOMC_RATE is still in the registry after P4a — we only added
-    new indicators for the releasedates.htm surface, we didn't
+    new indicators for the /json/calendar.json surface, we didn't
     remove or rename the original anchor."""
     assert "FOMC_RATE" in INDICATOR_REGISTRY
     spec = INDICATOR_REGISTRY["FOMC_RATE"]
