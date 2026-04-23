@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from storage.sqlite import SQLiteEngineStore, StoredEventRecord
+from storage.sqlite import (
+    SQLiteEngineStore,
+    StoredEventRecord,
+    _calendar_keyword_patterns,
+)
 
 
 @pytest.fixture()
@@ -244,6 +248,24 @@ def test_legacy_calendar_read_helpers_use_economic_lane(
     assert latest.actual == "3.1"
     assert latest.surprise == -0.1
     assert [event.event_id for event in trend] == ["bls:cpi-2026-03"]
+
+
+def test_calendar_keyword_patterns_normalize_keyword_before_alias_lookup(
+    store: SQLiteEngineStore,
+) -> None:
+    store.seed_calendar_indicators()
+
+    direct_aliases = _calendar_keyword_patterns("CPI (Mar)")
+    assert "consumer price index" in direct_aliases
+
+    with store._connection(commit=False) as c:
+        seeded_aliases = _calendar_keyword_patterns(
+            "Inflation   Rate (Mar)",
+            connection=c,
+        )
+
+    assert "inflation rate mom" in seeded_aliases
+    assert "inflation rate yoy" in seeded_aliases
 
 
 def test_legacy_calendar_upcoming_helper_uses_economic_lane(

@@ -46,7 +46,9 @@ def _calendar_keyword_patterns(
     *,
     connection: sqlite3.Connection | None = None,
 ) -> list[str]:
-    base = keyword.strip().lower()
+    from ingestion.scrapers._common import normalize_indicator_name
+
+    base = normalize_indicator_name(keyword)
     if not base:
         return []
     patterns = {base}
@@ -67,7 +69,7 @@ def _calendar_keyword_patterns(
             (like, like, like),
         ).fetchall()
         for row in rows:
-            pattern = str(row["pattern"] or "").strip().lower()
+            pattern = normalize_indicator_name(str(row["pattern"] or ""))
             if pattern:
                 patterns.add(pattern)
     return sorted(patterns)
