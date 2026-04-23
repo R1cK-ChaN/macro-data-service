@@ -7,8 +7,9 @@ re-invoked on every sweep — bandwidth spent on a known-bad surface,
 log noise, and wall-clock slowed by failing HTTP / parse round-trips.
 
 This module persists a small circuit-breaker state per scheduler
-connector (``"bls"`` / ``"bea"`` / ``"census"`` / ``"ecb"`` /
-``"fed-fomc"`` / ``"fed-releases"`` / ``"fed-values"`` / ``"nbs"``). After
+connector (``"bls"`` / ``"bea"`` / ``"census"`` / ``"ism"`` /
+``"umich"`` / ``"ecb"`` / ``"fed-fomc"`` / ``"fed-releases"`` /
+``"fed-values"`` / ``"nbs"``). After
 :data:`FAILURE_THRESHOLD` consecutive failures, the connector enters
 a cool-down of :data:`COOLDOWN_SECONDS`. Subsequent sweeps skip the
 connector until ``cooling_until_ms`` passes. A successful run

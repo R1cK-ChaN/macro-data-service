@@ -114,6 +114,7 @@ def test_cal_provider_seeded(store: SQLiteEngineStore) -> None:
         ("ism",              "market_data",       "economic",  100),
         ("nbs",              "government_agency", "economic",  100),
         ("tradingeconomics", "data_aggregator",   "economic",  10),
+        ("umich",            "market_data",       "economic",  100),
     ]
 
 
@@ -124,7 +125,7 @@ def test_cal_provider_seed_idempotent(tmp_path: Path) -> None:
     second = SQLiteEngineStore(db_path=db)
     with second._connection(commit=False) as c:
         n = c.execute("SELECT COUNT(*) FROM cal_provider").fetchone()[0]
-    assert n == 9
+    assert n == 10
 
 
 def test_importance_flows_through_view_as_enum_string(store: SQLiteEngineStore) -> None:

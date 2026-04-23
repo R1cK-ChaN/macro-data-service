@@ -18,6 +18,7 @@ dependencies = [
     "openai>=1.10.0",
     "playwright",
     "playwright-stealth",
+    "pypdf>=4.0.0",
     "PyYAML",
     "readability-lxml",
     "requests",

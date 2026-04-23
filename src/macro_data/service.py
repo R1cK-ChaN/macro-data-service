@@ -1054,6 +1054,123 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    # -- Economic calendar - U Michigan connector (issue #13 P3) ------
+
+    def _op_calendar_econ_fetch_umich(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch the current U Michigan Consumer Sentiment value."""
+        from ingestion.calendar.umich_api import fetch_umich_calendar
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list) and raw_series:
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            from ingestion.calendar.umich_api.fetcher import _resolve_series
+            planned, unknown = _resolve_series(series_ids)
+            return {
+                "dry_run":        True,
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_umich_calendar(
+                connection,
+                series_ids=series_ids,
+                dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "series_unknown":     summary.series_unknown,
+            "release_stage":      summary.release_stage,
+            "observations_seen":  summary.observations_seen,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_error":        summary.fetch_error,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_schedule_umich(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape the U Michigan Consumer Sentiment release calendar."""
+        from ingestion.calendar.umich_api import schedule_umich_calendar
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list) and raw_series:
+            series_ids = [str(s) for s in raw_series]
+        try:
+            year = int(arguments["year"]) if arguments.get("year") else None
+        except (TypeError, ValueError):
+            year = None
+
+        if dry_run:
+            from ingestion.calendar.umich_api.fetcher import _resolve_series
+            planned, unknown = _resolve_series(series_ids)
+            return {
+                "dry_run":        True,
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "year":           year,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = schedule_umich_calendar(
+                connection,
+                series_ids=series_ids,
+                dry_run=False,
+                year=year,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "series_unknown":     summary.series_unknown,
+            "year":               summary.year,
+            "source_url":         summary.source_url,
+            "entries_parsed":     summary.entries_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_error":        summary.fetch_error,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Economic calendar — ECB connector (issue #9 P3) ─────────────────
 
     def _op_calendar_econ_fetch_ecb(
@@ -1384,7 +1501,7 @@ class LocalMacroDataService:
         Arguments:
           dry_run      — default True. No HTTP, no DB writes.
           connectors   — optional list subset of
-                         ``["bls", "bea", "census", "ecb", "fed-values"]``.
+                         ``["bls", "bea", "census", "ism", "umich", "ecb", "fed-values"]``.
           start_year   — optional int; default ``current_year − 1``.
                          Applied to BLS / BEA / Census.
           end_year     — optional int; default current year. BLS / BEA / Census.
@@ -1472,7 +1589,7 @@ class LocalMacroDataService:
 
         Daily-cron candidate for the recurring-fetch scheduler
         (:mod:`ingestion.calendar.scheduler`). Iterates BLS + BEA +
-        Census + ECB + Fed FOMC + Fed releasedates + NBS in order, isolating
+        Census + ISM + U Michigan + ECB + Fed FOMC + Fed releasedates + NBS in order, isolating
         per-connector exceptions so one upstream outage (ECB 502, NBS
         timeout, …) doesn't roll back the rest. Each connector gets
         its own connection / commit / rollback lifecycle.
@@ -1480,7 +1597,7 @@ class LocalMacroDataService:
         Arguments:
           dry_run    — default True. No HTTP, no DB writes.
           connectors — optional list subset of
-                       ``["bls","bea","census","ecb","fed-fomc","fed-releases","nbs"]``;
+                       ``["bls","bea","census","ism","umich","ecb","fed-fomc","fed-releases","nbs"]``;
                        omit to run the full roster.
 
         This slice ships only the schedule-side aggregator. The

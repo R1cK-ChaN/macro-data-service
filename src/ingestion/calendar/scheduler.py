@@ -9,9 +9,11 @@ Two driver entry points, one shared per-connector loop:
 
 - :func:`refresh_all_schedules` (P-sched-1) — schedule-side: invokes
   every connector's forward-looking schedule scrape (BLS / BEA / Census
-  / ECB / Fed FOMC / Fed releasedates / NBS). Daily-cron candidate.
+  / ISM / U Michigan / ECB / Fed FOMC / Fed releasedates / NBS).
+  Daily-cron candidate.
 - :func:`sweep_value_side` (P-sched-2) — value-side: invokes every
-  connector's value-bearing scrape (BLS / BEA / Census / ECB / Fed-values).
+  connector's value-bearing scrape (BLS / BEA / Census / ISM /
+  U Michigan / ECB / Fed-values).
   NBS has no value-side op yet and is not in the plan. Frequent-cron
   candidate — repeatedly runs to pick up new values once the release
   crosses its scheduled time, so the calendar's ``actual`` fills
@@ -59,6 +61,7 @@ from .fed_api import (
 )
 from .ism_api import fetch_ism_calendar, schedule_ism_calendar
 from .nbs_api import fetch_nbs_calendar
+from .umich_api import fetch_umich_calendar, schedule_umich_calendar
 from .scheduler_state import (
     DAILY_BUDGET_CAPS,
     get_connector_state,
@@ -96,6 +99,10 @@ def _ism(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_ism_calendar(conn, dry_run=dry_run)
 
 
+def _umich(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return schedule_umich_calendar(conn, dry_run=dry_run)
+
+
 def _ecb(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_ecb_calendar(conn, dry_run=dry_run)
 
@@ -124,6 +131,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("bea", _bea),
     ("census", _census),
     ("ism", _ism),
+    ("umich", _umich),
     ("ecb", _ecb),
     ("fed-fomc", _fed_fomc),
     ("fed-releases", _fed_releases),
@@ -141,7 +149,7 @@ ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
 # calendar doesn't belong here either — the value-bearing Fed op is
 # ``fetch_fed_statement_values`` exposed as ``fed-values`` below.
 ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
-    "bls", "bea", "census", "ism", "ecb", "fed-values",
+    "bls", "bea", "census", "ism", "umich", "ecb", "fed-values",
 )
 
 
@@ -669,6 +677,9 @@ def sweep_value_side(
     def _ism_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         return fetch_ism_calendar(conn, dry_run=dry_run)
 
+    def _umich_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        return fetch_umich_calendar(conn, dry_run=dry_run)
+
     def _ecb_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # ECB SDMX has no auth — plain HTTP against data-api.ecb.europa.eu.
         from ingestion.timeseries.sdmx.providers.ecb import ECBClient
@@ -690,6 +701,7 @@ def sweep_value_side(
         "bea":        _bea_values,
         "census":     _census_values,
         "ism":        _ism_values,
+        "umich":      _umich_values,
         "ecb":        _ecb_values,
         "fed-values": _fed_values,
     }

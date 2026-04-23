@@ -52,6 +52,7 @@ _MODIFIER_SUFFIXES: tuple[str, ...] = (
     " annualised",
     " adv",
     " advance",
+    " prel",
     " prelim",
     " preliminary",
     " final",
@@ -185,6 +186,11 @@ _ALIASES: dict[str, str] = {
     "ism manufacturing pmi": "MFG_PMI",
     "nbs manufacturing pmi": "MFG_PMI",
     "nbs non-manufacturing pmi": "NON_MFG_PMI",
+    "michigan consumer sentiment": "MICHIGAN_SENTIMENT",
+    "university of michigan consumer sentiment": "MICHIGAN_SENTIMENT",
+    "uom consumer sentiment": "MICHIGAN_SENTIMENT",
+    "prelim uom consumer sentiment": "MICHIGAN_SENTIMENT",
+    "revised uom consumer sentiment": "MICHIGAN_SENTIMENT",
     # NBS's ``cal_econ_event.title`` carries a ``"China "`` country
     # prefix on every indicator (so a multi-country display surface
     # can tell the origin at a glance). The parity harness
