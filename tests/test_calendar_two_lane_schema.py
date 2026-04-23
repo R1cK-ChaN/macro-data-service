@@ -10,7 +10,6 @@ import pytest
 from storage.sqlite import (
     SQLiteEngineStore,
     StoredEventRecord,
-    _calendar_keyword_patterns_and_raw,
 )
 
 
@@ -300,22 +299,29 @@ def test_calendar_keyword_patterns_expand_nfp_provider_spellings(
     }
 
 
-def test_calendar_keyword_patterns_match_raw_db_spellings_before_normalizing(
+def test_calendar_keyword_filter_matches_acronym_aliases(
     store: SQLiteEngineStore,
 ) -> None:
     store.seed_calendar_indicators()
-
-    direct_aliases, _ = _calendar_keyword_patterns_and_raw("CPI (Mar)")
-    assert "consumer price index" in direct_aliases
-
-    with store._connection(commit=False) as c:
-        seeded_aliases, _ = _calendar_keyword_patterns_and_raw(
-            "Inflation   Rate (Mar)",
-            connection=c,
+    with store._connection(commit=True) as c:
+        c.execute(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                country_code, category, title, importance, actual, content_hash,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                'bls', 'cpi-official', '2026-04-10T12:30:00+00:00',
+                'datetime', 'US', 'Inflation', 'Consumer Price Index',
+                'high', '1.0', 'cpi-official', 1700000000000,
+                '2026-04-23', '2026-04-23'
+            )
+            """
         )
 
-    assert "inflation rate mom" in seeded_aliases
-    assert "inflation rate yoy" in seeded_aliases
+    events = store.list_indicator_releases(indicator_keyword="CPI (Mar)", limit=10)
+
+    assert [event.event_id for event in events] == ["bls:cpi-official"]
 
 
 def test_calendar_keyword_filter_uses_raw_title_spellings(
@@ -435,6 +441,8 @@ def test_legacy_calendar_upcoming_helper_uses_economic_lane(
 def test_legacy_calendar_range_helper_handles_date_precision_as_utc(
     store: SQLiteEngineStore,
 ) -> None:
+    from macro_data.service import LocalMacroDataService
+
     with store._connection(commit=True) as c:
         c.execute(
             """
@@ -459,6 +467,14 @@ def test_legacy_calendar_range_helper_handles_date_precision_as_utc(
     assert len(events) == 1
     assert events[0].timestamp == start
     assert events[0].event_id == "tradingeconomics:date-only"
+    assert events[0].event_time_utc == "2026-04-23"
+    assert events[0].event_time_precision == "date"
+    assert events[0].raw_json["event_time_utc"] == "2026-04-23"
+    assert events[0].raw_json["event_time_precision"] == "date"
+
+    result = LocalMacroDataService(store=store).invoke("get_latest_released_event", {})
+    assert result["event"]["event_time_utc"] == "2026-04-23"
+    assert result["event"]["event_time_precision"] == "date"
 
 
 def test_latest_released_event_prefers_newest_before_importance(
@@ -499,6 +515,7 @@ def test_fetch_live_calendar_op_is_retired(
     result = LocalMacroDataService(store=store).invoke("fetch_live_calendar", {})
     assert result["retired"] is True
     assert result["total_fetched"] == 0
+    assert result["returned"] == 0
     assert result["events"] == []
     assert result["replacement"] == {
         "read": "GET /v1/calendar or service op list_calendar_items",

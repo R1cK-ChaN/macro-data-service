@@ -46,22 +46,21 @@ _CALENDAR_KEYWORD_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _calendar_keyword_patterns_and_raw(
-    keyword: str,
+def _add_calendar_keyword_filter(
+    conditions: list[str],
+    params: list[Any],
+    keyword: str | None,
     *,
     connection: sqlite3.Connection | None = None,
-) -> tuple[set[str], set[str]]:
+) -> None:
     from ingestion.scrapers._common import normalize_indicator_name
 
-    base = normalize_indicator_name(keyword)
+    raw_keyword = (keyword or "").strip()
+    base = normalize_indicator_name(raw_keyword)
     if not base:
-        return set(), set()
-    raw_keyword = keyword.strip()
-    patterns = {base}
-    raw_patterns = {raw_keyword, base}
+        return
     aliases = _CALENDAR_KEYWORD_ALIASES.get(base, ())
-    patterns.update(aliases)
-    raw_patterns.update(aliases)
+    raw_patterns = {raw_keyword, base, *aliases}
     if connection is not None:
         lookup_terms = {raw_keyword, base, *aliases}
         for lookup_term in sorted(term for term in lookup_terms if term):
@@ -94,25 +93,8 @@ def _calendar_keyword_patterns_and_raw(
             for row in rows:
                 for column in ("alias_raw", "canonical_raw", "indicator_raw"):
                     raw_pattern = str(row[column] or "").strip()
-                    if not raw_pattern:
-                        continue
-                    raw_patterns.add(raw_pattern)
-                    pattern = normalize_indicator_name(raw_pattern)
-                    if pattern:
-                        patterns.add(pattern)
-    return patterns, raw_patterns
-
-
-def _add_calendar_keyword_filter(
-    conditions: list[str],
-    params: list[Any],
-    keyword: str | None,
-    *,
-    connection: sqlite3.Connection | None = None,
-) -> None:
-    _, raw_patterns = _calendar_keyword_patterns_and_raw(
-        keyword or "", connection=connection
-    )
+                    if raw_pattern:
+                        raw_patterns.add(raw_pattern)
     if not raw_patterns:
         return
     clauses: list[str] = []
@@ -203,6 +185,8 @@ class StoredEventRecord:
     unit: str = ""
     raw_json: dict[str, Any] = field(default_factory=dict)
     indicator_id: str | None = None
+    event_time_utc: str = ""
+    event_time_precision: str = "datetime"
 
 
 @dataclass(frozen=True)
@@ -4305,6 +4289,8 @@ class SQLiteEngineStore:
             currency=row["currency"],
             unit=row["unit"],
             raw_json={
+                "event_time_utc": row["event_time_utc"],
+                "event_time_precision": row["event_time_precision"],
                 "provider_event_id": row["provider_event_id"],
                 "reference_date": row["reference_date"],
                 "reference_label": row["reference_label"],
@@ -4312,6 +4298,8 @@ class SQLiteEngineStore:
                 "content_hash": row["content_hash"],
             },
             indicator_id=row["indicator_id"],
+            event_time_utc=row["event_time_utc"],
+            event_time_precision=row["event_time_precision"] or "datetime",
         )
 
     def _row_to_event(self, row: sqlite3.Row) -> StoredEventRecord:

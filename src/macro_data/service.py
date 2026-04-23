@@ -3407,6 +3407,14 @@ class LocalMacroDataService:
         indicator_id = getattr(event, "indicator_id", "")
         if indicator_id:
             payload["indicator_id"] = indicator_id
+        event_time_utc = getattr(event, "event_time_utc", "")
+        if event_time_utc:
+            payload["event_time_utc"] = event_time_utc
+            payload["event_time_precision"] = getattr(
+                event,
+                "event_time_precision",
+                "datetime",
+            )
         return payload
 
     def _price_to_dict(self, price: Any) -> dict[str, Any]:
