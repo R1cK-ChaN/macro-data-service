@@ -2613,6 +2613,7 @@ class SQLiteEngineStore:
                     ("eodhd",            "data_aggregator",   "corporate", 10,  _now_iso, _now_iso),
                     ("bls",              "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("bea",              "government_agency", "economic",  100, _now_iso, _now_iso),
+                    ("census",           "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("federal-reserve",  "central_bank",      "economic",  100, _now_iso, _now_iso),
                     ("ecb",              "central_bank",      "economic",  100, _now_iso, _now_iso),
                     ("nbs",              "government_agency", "economic",  100, _now_iso, _now_iso),

@@ -3,8 +3,8 @@
 This package owns two physically separate calendar lanes:
 
 - **Economic lane** (`cal_econ_*`) — macro releases. TradingEconomics is the
-  historical bootstrap source; official institutions (BLS, BEA, ECB, Fed,
-  NBS, etc.) are the forward collection path.
+  historical bootstrap source; official institutions (BLS, BEA, Census, ECB,
+  Fed, NBS, etc.) are the forward collection path.
 - **Corporate lane** (`cal_corp_*`) — earnings, IPOs, splits, dividends, and
   earnings trends. EODHD is the current corporate-actions source.
 

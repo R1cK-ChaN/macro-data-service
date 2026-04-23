@@ -810,6 +810,140 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    # ── Economic calendar — Census connector (issue #13 P1) ─────────────
+
+    def _op_calendar_econ_fetch_census(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch Census EITS observations into the calendar."""
+        from datetime import datetime as _dt, timezone as _tz
+
+        from ingestion.calendar.census_api import (
+            CensusEITSClient,
+            fetch_census_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        now_year = _dt.now(_tz.utc).year
+        try:
+            start_year = int(arguments.get("start_year") or (now_year - 1))
+        except (TypeError, ValueError):
+            start_year = now_year - 1
+        try:
+            end_year = int(arguments.get("end_year") or now_year)
+        except (TypeError, ValueError):
+            end_year = now_year
+        if end_year < start_year:
+            start_year, end_year = end_year, start_year
+
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list) and raw_series:
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            from ingestion.calendar.census_api.fetcher import _resolve_series
+            planned, unknown = _resolve_series(series_ids)
+            return {
+                "dry_run":        True,
+                "start_year":     start_year,
+                "end_year":       end_year,
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        client = CensusEITSClient()
+        connection = get_conn()
+        try:
+            summary = fetch_census_calendar(
+                connection,
+                client,
+                start_year=start_year,
+                end_year=end_year,
+                series_ids=series_ids,
+                dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "start_year":         summary.start_year,
+            "end_year":           summary.end_year,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "series_unknown":     summary.series_unknown,
+            "observations_seen":  summary.observations_seen,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "requests_made":      summary.requests_made,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_schedule_census(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape the Census economic-indicator release calendar."""
+        from ingestion.calendar.census_api import schedule_census_calendar
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list) and raw_series:
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            from ingestion.calendar.census_api.fetcher import _resolve_series
+            planned, unknown = _resolve_series(series_ids)
+            return {
+                "dry_run":        True,
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = schedule_census_calendar(
+                connection,
+                series_ids=series_ids,
+                dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "series_unknown":     summary.series_unknown,
+            "entries_parsed":     summary.entries_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "row_issues":         summary.row_issues,
+            "fetch_error":        summary.fetch_error,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Economic calendar — ECB connector (issue #9 P3) ─────────────────
 
     def _op_calendar_econ_fetch_ecb(
@@ -1140,10 +1274,10 @@ class LocalMacroDataService:
         Arguments:
           dry_run      — default True. No HTTP, no DB writes.
           connectors   — optional list subset of
-                         ``["bls", "bea", "ecb", "fed-values"]``.
+                         ``["bls", "bea", "census", "ecb", "fed-values"]``.
           start_year   — optional int; default ``current_year − 1``.
-                         Applied to BLS / BEA only.
-          end_year     — optional int; default current year. BLS / BEA.
+                         Applied to BLS / BEA / Census.
+          end_year     — optional int; default current year. BLS / BEA / Census.
           start_period — optional SDMX period string (ECB only).
           end_period   — optional SDMX period string (ECB only).
 
@@ -1228,7 +1362,7 @@ class LocalMacroDataService:
 
         Daily-cron candidate for the recurring-fetch scheduler
         (:mod:`ingestion.calendar.scheduler`). Iterates BLS + BEA +
-        ECB + Fed FOMC + Fed releasedates + NBS in order, isolating
+        Census + ECB + Fed FOMC + Fed releasedates + NBS in order, isolating
         per-connector exceptions so one upstream outage (ECB 502, NBS
         timeout, …) doesn't roll back the rest. Each connector gets
         its own connection / commit / rollback lifecycle.
@@ -1236,8 +1370,8 @@ class LocalMacroDataService:
         Arguments:
           dry_run    — default True. No HTTP, no DB writes.
           connectors — optional list subset of
-                       ``["bls","bea","ecb","fed-fomc","fed-releases","nbs"]``;
-                       omit to run all six.
+                       ``["bls","bea","census","ecb","fed-fomc","fed-releases","nbs"]``;
+                       omit to run the full roster.
 
         This slice ships only the schedule-side aggregator. The
         value-side sweep (triggered after each expected release

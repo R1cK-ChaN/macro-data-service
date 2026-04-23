@@ -6,6 +6,8 @@ module. With five concrete callers the discipline-rule threshold
 (3× concrete case) is well past; this module lifts the SQL once and
 per-connector projectors become thin re-exports.
 
+Census joined this shared projector under issue #13.
+
 Corrected merge rule (adopted from NBS P5 review):
 
 - An incoming ``datetime``-precision ``event_time_utc`` **overwrites**

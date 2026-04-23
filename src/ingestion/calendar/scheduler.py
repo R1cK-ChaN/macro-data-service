@@ -8,10 +8,10 @@ connector ops to run on a recurring cron, not by hand.
 Two driver entry points, one shared per-connector loop:
 
 - :func:`refresh_all_schedules` (P-sched-1) — schedule-side: invokes
-  every connector's forward-looking schedule scrape (BLS / BEA / ECB
-  / Fed FOMC / Fed releasedates / NBS). Daily-cron candidate.
+  every connector's forward-looking schedule scrape (BLS / BEA / Census
+  / ECB / Fed FOMC / Fed releasedates / NBS). Daily-cron candidate.
 - :func:`sweep_value_side` (P-sched-2) — value-side: invokes every
-  connector's value-bearing scrape (BLS / BEA / ECB / Fed-values).
+  connector's value-bearing scrape (BLS / BEA / Census / ECB / Fed-values).
   NBS has no value-side op yet and is not in the plan. Frequent-cron
   candidate — repeatedly runs to pick up new values once the release
   crosses its scheduled time, so the calendar's ``actual`` fills
@@ -50,6 +50,7 @@ _ECB_CRON_WINDOW_DAYS = 180
 
 from .bea_api import fetch_bea_calendar, schedule_bea_calendar
 from .bls_api import fetch_bls_calendar, schedule_bls_calendar
+from .census_api import fetch_census_calendar, schedule_census_calendar
 from .ecb_api import fetch_ecb_calendar, schedule_ecb_calendar
 from .fed_api import (
     fetch_fed_calendar,
@@ -86,6 +87,10 @@ def _bea(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_bea_calendar(conn, dry_run=dry_run)
 
 
+def _census(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return schedule_census_calendar(conn, dry_run=dry_run)
+
+
 def _ecb(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_ecb_calendar(conn, dry_run=dry_run)
 
@@ -112,6 +117,7 @@ def _nbs(conn: sqlite3.Connection, dry_run: bool) -> Any:
 _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("bls", _bls),
     ("bea", _bea),
+    ("census", _census),
     ("ecb", _ecb),
     ("fed-fomc", _fed_fomc),
     ("fed-releases", _fed_releases),
@@ -129,7 +135,7 @@ ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
 # calendar doesn't belong here either — the value-bearing Fed op is
 # ``fetch_fed_statement_values`` exposed as ``fed-values`` below.
 ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
-    "bls", "bea", "ecb", "fed-values",
+    "bls", "bea", "census", "ecb", "fed-values",
 )
 
 
@@ -489,7 +495,7 @@ def refresh_all_schedules(
         series plan so the caller can inspect the scope.
     connectors:
         Optional subset of connector names to run. Omit (or pass the
-        full tuple) to run all six. Order follows
+        full tuple) to run the full roster. Order follows
         :data:`_DEFAULT_CONNECTORS`.
     _connector_overrides:
         Test seam — swaps in fake per-connector functions so unit
@@ -576,8 +582,8 @@ def sweep_value_side(
         When ``True`` (default) no HTTP and no DB writes. Connector
         dry-runs return their plan.
     start_year / end_year:
-        Year window passed through to BLS / BEA value-side ops (which
-        require it). Default: ``(current_year − 1, current_year)`` — a
+        Year window passed through to BLS / BEA / Census value-side ops.
+        Default: ``(current_year − 1, current_year)`` — a
         two-year window large enough that the freshness guard still
         skips recomputing settled rows while any just-published
         observation lands.
@@ -644,6 +650,16 @@ def sweep_value_side(
             dry_run=dry_run,
         )
 
+    def _census_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        from ingestion.calendar.census_api import CensusEITSClient
+        client = CensusEITSClient()
+        return fetch_census_calendar(
+            conn, client,
+            start_year=resolved_start_year,
+            end_year=resolved_end_year,
+            dry_run=dry_run,
+        )
+
     def _ecb_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # ECB SDMX has no auth — plain HTTP against data-api.ecb.europa.eu.
         from ingestion.timeseries.sdmx.providers.ecb import ECBClient
@@ -663,6 +679,7 @@ def sweep_value_side(
     value_side_map: dict[ConnectorName, _ConnectorFn] = {
         "bls":        _bls_values,
         "bea":        _bea_values,
+        "census":     _census_values,
         "ecb":        _ecb_values,
         "fed-values": _fed_values,
     }

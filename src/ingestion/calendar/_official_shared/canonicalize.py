@@ -138,6 +138,15 @@ _ALIASES: dict[str, str] = {
     "international trade in goods and services": "TRADE_BALANCE",
     "trade balance": "TRADE_BALANCE",
     "corporate profits": "CORPORATE_PROFITS",
+    "retail sales": "RETAIL_SALES",
+    "retail sales m/m": "RETAIL_SALES",
+    "advance monthly sales for retail and food services": "RETAIL_SALES",
+    "durable goods orders": "DURABLE_GOODS_ORDERS",
+    "durable goods orders m/m": "DURABLE_GOODS_ORDERS",
+    "advance report on durable goods": "DURABLE_GOODS_ORDERS",
+    "housing starts": "HOUSING_STARTS",
+    "new residential construction": "HOUSING_STARTS",
+    "building permits": "BUILDING_PERMITS",
     # ── Central banks ───────────────────────────────────────────
     "fomc meeting": "FOMC_RATE",
     "fomc rate decision": "FOMC_RATE",
@@ -171,7 +180,6 @@ _ALIASES: dict[str, str] = {
     # ── China (NBS) ─────────────────────────────────────────────
     "industrial production": "INDUSTRIAL_PRODUCTION",
     "fixed asset investment": "FIXED_ASSET_INVESTMENT",
-    "retail sales": "RETAIL_SALES",
     "manufacturing pmi": "MFG_PMI",
     "non-manufacturing pmi": "NON_MFG_PMI",
     "nbs manufacturing pmi": "MFG_PMI",
