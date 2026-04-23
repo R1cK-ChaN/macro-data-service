@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -206,7 +206,7 @@ def test_importance_check_constraint_rejects_integer(store: SQLiteEngineStore) -
 def test_legacy_calendar_read_helpers_use_economic_lane(
     store: SQLiteEngineStore,
 ) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with store._connection(commit=True) as c:
         c.execute(
             """
@@ -361,7 +361,7 @@ def test_calendar_keyword_filter_keeps_normalized_base_title_match(
 def test_legacy_calendar_upcoming_helper_uses_economic_lane(
     store: SQLiteEngineStore,
 ) -> None:
-    tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
+    tomorrow = datetime.now(UTC) + timedelta(days=1)
     with store._connection(commit=True) as c:
         c.execute(
             """
@@ -399,9 +399,9 @@ def test_legacy_calendar_range_helper_handles_date_precision_as_utc(
             )
             """
         )
-    start = int(datetime(2026, 4, 23, tzinfo=timezone.utc).timestamp())
+    start = int(datetime(2026, 4, 23, tzinfo=UTC).timestamp())
     end = int(
-        datetime(2026, 4, 23, 23, 59, 59, tzinfo=timezone.utc).timestamp()
+        datetime(2026, 4, 23, 23, 59, 59, tzinfo=UTC).timestamp()
     )
 
     events = store.list_events_in_range(date_from=start, date_to=end)
@@ -414,7 +414,7 @@ def test_legacy_calendar_range_helper_handles_date_precision_as_utc(
 def test_latest_released_event_prefers_newest_before_importance(
     store: SQLiteEngineStore,
 ) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     older = now - timedelta(days=2)
     newer = now - timedelta(days=1)
     with store._connection(commit=True) as c:
@@ -476,13 +476,13 @@ def test_event_subtype_check_constraint(store: SQLiteEngineStore) -> None:
 
 def test_calendar_item_dto_extension() -> None:
     """Legacy construction still works; new fields have defaults."""
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
 
     from contracts import CalendarItem, Importance
 
     legacy = CalendarItem(
         event_id="x",
-        release_time=datetime.now(timezone.utc),
+        release_time=datetime.now(UTC),
         indicator="CPI",
         country="US",
         importance=Importance.HIGH,
@@ -494,7 +494,7 @@ def test_calendar_item_dto_extension() -> None:
 
     corp = CalendarItem(
         event_id="eodhd:abc",
-        release_time=datetime.now(timezone.utc),
+        release_time=datetime.now(UTC),
         indicator="",
         country="",
         importance=Importance.MEDIUM,
