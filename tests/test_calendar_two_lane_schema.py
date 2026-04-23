@@ -278,8 +278,9 @@ def test_legacy_calendar_range_helper_handles_date_precision_as_utc(
 def test_latest_released_event_prefers_newest_before_importance(
     store: SQLiteEngineStore,
 ) -> None:
-    older = datetime(2026, 4, 22, 12, tzinfo=timezone.utc)
-    newer = datetime(2026, 4, 23, 12, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    older = now - timedelta(days=2)
+    newer = now - timedelta(days=1)
     with store._connection(commit=True) as c:
         c.executemany(
             """

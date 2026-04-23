@@ -41,12 +41,35 @@ _CALENDAR_KEYWORD_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _calendar_keyword_patterns(keyword: str) -> list[str]:
+def _calendar_keyword_patterns(
+    keyword: str,
+    *,
+    connection: sqlite3.Connection | None = None,
+) -> list[str]:
     base = keyword.strip().lower()
     if not base:
         return []
     patterns = {base}
     patterns.update(_CALENDAR_KEYWORD_ALIASES.get(base, ()))
+    if connection is not None:
+        like = f"%{base}%"
+        rows = connection.execute(
+            """
+            SELECT alias_normalized AS pattern FROM calendar_indicator_alias
+            WHERE alias_normalized LIKE ?
+            UNION
+            SELECT LOWER(canonical_name) AS pattern FROM calendar_indicator
+            WHERE LOWER(canonical_name) LIKE ?
+            UNION
+            SELECT indicator_id AS pattern FROM calendar_indicator
+            WHERE LOWER(indicator_id) LIKE ?
+            """,
+            (like, like, like),
+        ).fetchall()
+        for row in rows:
+            pattern = str(row["pattern"] or "").strip().lower()
+            if pattern:
+                patterns.add(pattern)
     return sorted(patterns)
 
 
@@ -54,8 +77,10 @@ def _add_calendar_keyword_filter(
     conditions: list[str],
     params: list[Any],
     keyword: str | None,
+    *,
+    connection: sqlite3.Connection | None = None,
 ) -> None:
-    patterns = _calendar_keyword_patterns(keyword or "")
+    patterns = _calendar_keyword_patterns(keyword or "", connection=connection)
     if not patterns:
         return
     clauses: list[str] = []
@@ -102,6 +127,38 @@ def _calendar_surprise(
     if actual_value is None or forecast_value is None:
         return None
     return round(actual_value - forecast_value, 4)
+
+
+def _event_time_lower_bound_clause() -> str:
+    return (
+        "((event_time_precision = 'date' AND date(event_time_utc) >= date(?)) "
+        "OR (event_time_precision != 'date' AND datetime(event_time_utc) >= datetime(?)))"
+    )
+
+
+def _event_time_upper_bound_clause() -> str:
+    return (
+        "((event_time_precision = 'date' AND date(event_time_utc) <= date(?)) "
+        "OR (event_time_precision != 'date' AND datetime(event_time_utc) <= datetime(?)))"
+    )
+
+
+def _add_event_time_lower_bound(
+    conditions: list[str],
+    params: list[Any],
+    value: str,
+) -> None:
+    conditions.append(_event_time_lower_bound_clause())
+    params.extend((value, value))
+
+
+def _add_event_time_upper_bound(
+    conditions: list[str],
+    params: list[Any],
+    value: str,
+) -> None:
+    conditions.append(_event_time_upper_bound_clause())
+    params.extend((value, value))
 
 
 @dataclass(frozen=True)
@@ -3933,8 +3990,9 @@ class SQLiteEngineStore:
         category: str | None = None,
     ) -> list[StoredEventRecord]:
         cutoff = (utc_now() - timedelta(days=days)).isoformat()
-        conditions = ["datetime(event_time_utc) >= datetime(?)"]
-        params: list[Any] = [cutoff]
+        conditions: list[str] = []
+        params: list[Any] = []
+        _add_event_time_lower_bound(conditions, params, cutoff)
         if released_only:
             conditions.append("actual IS NOT NULL")
         if importance:
@@ -3968,8 +4026,9 @@ class SQLiteEngineStore:
         category: str | None = None,
     ) -> list[StoredEventRecord]:
         now_iso = utc_now().isoformat()
-        conditions = ["datetime(event_time_utc) >= datetime(?)"]
-        params: list[Any] = [now_iso]
+        conditions: list[str] = []
+        params: list[Any] = []
+        _add_event_time_lower_bound(conditions, params, now_iso)
         if importance:
             conditions.append("importance = ?")
             params.append(importance)
@@ -4005,11 +4064,10 @@ class SQLiteEngineStore:
     ) -> list[StoredEventRecord]:
         from_iso = datetime.fromtimestamp(date_from, tz=timezone.utc).isoformat()
         to_iso = datetime.fromtimestamp(date_to, tz=timezone.utc).isoformat()
-        conditions = [
-            "datetime(event_time_utc) >= datetime(?)",
-            "datetime(event_time_utc) <= datetime(?)",
-        ]
-        params: list[Any] = [from_iso, to_iso]
+        conditions: list[str] = []
+        params: list[Any] = []
+        _add_event_time_lower_bound(conditions, params, from_iso)
+        _add_event_time_upper_bound(conditions, params, to_iso)
         if released_only:
             conditions.append("actual IS NOT NULL")
         if importance:
@@ -4060,11 +4118,13 @@ class SQLiteEngineStore:
         indicator_keyword: str,
         limit: int = 12,
     ) -> list[StoredEventRecord]:
-        conditions = ["actual IS NOT NULL"]
-        params: list[Any] = []
-        _add_calendar_keyword_filter(conditions, params, indicator_keyword)
-        params.append(limit)
         with self._connection(commit=False) as connection:
+            conditions = ["actual IS NOT NULL"]
+            params: list[Any] = []
+            _add_calendar_keyword_filter(
+                conditions, params, indicator_keyword, connection=connection
+            )
+            params.append(limit)
             rows = connection.execute(
                 f"""
                 SELECT * FROM cal_econ_event
@@ -4154,10 +4214,12 @@ class SQLiteEngineStore:
         )
 
     def latest_released_event(self, *, indicator_keyword: str | None = None) -> StoredEventRecord | None:
-        params: list[Any] = []
-        conditions = ["actual IS NOT NULL"]
-        _add_calendar_keyword_filter(conditions, params, indicator_keyword)
         with self._connection(commit=False) as connection:
+            params: list[Any] = []
+            conditions = ["actual IS NOT NULL"]
+            _add_calendar_keyword_filter(
+                conditions, params, indicator_keyword, connection=connection
+            )
             row = connection.execute(
                 f"""
                 SELECT * FROM cal_econ_event
