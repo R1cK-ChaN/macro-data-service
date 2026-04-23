@@ -2,8 +2,9 @@
 
 Compares `cal_econ_event` rows carrying the TE provider id
 (``"tradingeconomics"``) against rows from the official-source
-connectors (``"bls"`` / ``"bea"`` / ``"ecb"`` / ``"federal-reserve"``
-/ ``"nbs"``) and reports per-indicator match coverage. Used to verify
+connectors (``"bls"`` / ``"bea"`` / ``"census"`` / ``"ism"`` /
+``"umich"`` / ``"conference-board"`` / ``"nar"`` / ``"ecb"`` /
+``"federal-reserve"`` / ``"nbs"``) and reports per-indicator match coverage. Used to verify
 that the official-source scheduler is collecting the same releases TE
 has historically carried before the TE subscription is retired
 (issue #9 P8).
@@ -54,7 +55,8 @@ TE_PROVIDER = "tradingeconomics"
 # connector's ``parser.PROVIDER`` constant). Fed uses the hyphenated
 # form because ``cal_provider`` carries the kebab-case id.
 OFFICIAL_PROVIDERS: tuple[str, ...] = (
-    "bls", "bea", "ecb", "federal-reserve", "nbs",
+    "bls", "bea", "census", "ism", "umich", "conference-board",
+    "nar", "ecb", "federal-reserve", "nbs",
 )
 
 

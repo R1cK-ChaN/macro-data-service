@@ -66,6 +66,62 @@ from ingestion.calendar.bea_api import (  # noqa: E402
 )
 from ingestion.timeseries.scrapers.bea import BEAClient  # noqa: E402
 
+from ingestion.calendar.census_api import (  # noqa: E402
+    CensusEITSClient,
+    CensusEITSObservation,
+    INDICATOR_REGISTRY as CENSUS_INDICATOR_REGISTRY,
+    parse_observation as parse_census_observation,
+)
+
+from ingestion.calendar.ism_api import (  # noqa: E402
+    ISM_RELEASE_CALENDAR_URL,
+    ISM_REPORTS_URL,
+    discover_current_report_url,
+    fetch_report_html as fetch_ism_report_html,
+    fetch_reports_landing_html as fetch_ism_reports_landing_html,
+    fetch_schedule_html as fetch_ism_schedule_html,
+    parse_report_html as parse_ism_report_html,
+    parse_schedule_html as parse_ism_schedule_html,
+    report_value_to_records as ism_report_value_to_records,
+    schedule_entry_to_records as ism_schedule_entry_to_records,
+)
+
+from ingestion.calendar.umich_api import (  # noqa: E402
+    UMICH_MAIN_URL,
+    UMICH_SURVEY_INFO_URL,
+    UMichScheduleDocument,
+    current_value_to_records as umich_current_value_to_records,
+    fetch_current_results_html as fetch_umich_current_results_html,
+    fetch_release_dates_document as fetch_umich_release_dates_document,
+    parse_current_results_html as parse_umich_current_results_html,
+    parse_release_dates_text as parse_umich_release_dates_text,
+    schedule_entry_to_records as umich_schedule_entry_to_records,
+)
+
+from ingestion.calendar.conference_board_api import (  # noqa: E402
+    CONFERENCE_BOARD_CALENDAR_URL,
+    CONFERENCE_BOARD_CONSUMER_CONFIDENCE_URL,
+    CONFERENCE_BOARD_LEADING_INDICATORS_URL,
+    current_value_to_records as conference_board_current_value_to_records,
+    fetch_calendar_json as fetch_conference_board_calendar_json,
+    fetch_indicator_html as fetch_conference_board_indicator_html,
+    parse_calendar_events_json as parse_conference_board_calendar_events_json,
+    parse_current_value_html as parse_conference_board_current_value_html,
+    schedule_entry_to_records as conference_board_schedule_entry_to_records,
+)
+
+from ingestion.calendar.nar_api import (  # noqa: E402
+    NAR_EXISTING_HOME_SALES_URL,
+    NAR_PENDING_HOME_SALES_URL,
+    NAR_SCHEDULE_URL,
+    current_value_to_records as nar_current_value_to_records,
+    fetch_current_html as fetch_nar_current_html,
+    fetch_schedule_html as fetch_nar_schedule_html,
+    parse_current_value_html as parse_nar_current_value_html,
+    parse_schedule_html as parse_nar_schedule_html,
+    schedule_entry_to_records as nar_schedule_entry_to_records,
+)
+
 from ingestion.calendar.ecb_api import (  # noqa: E402
     INDICATOR_REGISTRY as ECB_INDICATOR_REGISTRY,
     parse_observation as parse_ecb_observation,
@@ -717,6 +773,8 @@ def render_report(
     today = datetime.now(timezone.utc).date().isoformat()
     provider_label = {
         "te": "TE", "eodhd": "EODHD", "bls": "BLS", "bea": "BEA",
+        "census": "Census", "ism": "ISM", "umich": "U Michigan",
+        "conference-board": "Conference Board", "nar": "NAR",
         "ecb": "ECB", "fed": "Fed", "nbs": "NBS",
     }.get(provider, provider.upper())
     budget_line = {
@@ -724,6 +782,11 @@ def render_report(
         "eodhd": "- EODHD All-in-One plan: per-call consumption (no tight cap)",
         "bls":   "- BLS Public Data API v2 free-tier daily cap: 500",
         "bea":   "- BEA REST API free-tier daily cap: 1000",
+        "census": "- Census EITS API: optional key, unspecified rate limit (polite)",
+        "ism":    "- ISM public HTML: no auth, unspecified rate limit (polite)",
+        "umich": "- U Michigan public HTML/PDF: no auth, unspecified rate limit (polite)",
+        "conference-board": "- Conference Board public HTML/JSON: no auth, unspecified rate limit (polite)",
+        "nar": "- NAR public HTML: no auth, unspecified rate limit (polite)",
         "ecb":   "- ECB Data Portal: no auth, unspecified rate limit (polite)",
         "fed":   "- federalreserve.gov: no auth, HTML scrape (browser-UA required)",
         "nbs":   "- stats.gov.cn: no auth, HTTP-only, flaky from non-CN IPs",
@@ -1325,6 +1388,923 @@ def run_bea_probe(client: BEAClient, probe: BEAProbe) -> ProbeResult:
             if len(result.parse_error_samples) < 3:
                 result.parse_error_samples.append(msg)
     return result
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Census probe plan + runner
+# ──────────────────────────────────────────────────────────────────────────
+
+CENSUS_EITS_EXPECTED_FIELDS: frozenset[str] = frozenset({
+    "data_type_code",
+    "seasonally_adj",
+    "category_code",
+    "cell_value",
+    "error_data",
+    "time_slot_id",
+    "time_slot_name",
+    "time",
+    "us",
+})
+
+
+@dataclass
+class CensusProbe:
+    """One Census live-validation probe — one series in one EITS year."""
+
+    name: str
+    series_id: str
+    dataset: str
+    data_type_code: str
+    category_code: str
+    seasonally_adj: str
+    time_slot_id: str
+    description: str
+    year: int
+
+
+def plan_census_probes() -> list[CensusProbe]:
+    """One probe per Census calendar registry entry."""
+    now_year = datetime.now(timezone.utc).year
+    probes: list[CensusProbe] = []
+    for series_id, spec in CENSUS_INDICATOR_REGISTRY.items():
+        token = _bls_probe_token(spec.indicator)
+        probes.append(
+            CensusProbe(
+                name=f"{token}_{now_year}",
+                series_id=series_id,
+                dataset=spec.dataset,
+                data_type_code=spec.data_type_code,
+                category_code=spec.category_code,
+                seasonally_adj=spec.seasonally_adj,
+                time_slot_id=spec.time_slot_id,
+                description=spec.title,
+                year=now_year,
+            )
+        )
+    return probes
+
+
+def _diff_census_row(raw_row: dict[str, Any]) -> RowDiff:
+    observed = set(raw_row.keys())
+    diff = RowDiff(
+        observed_fields=sorted(observed),
+        read_by_parser=sorted(observed & CENSUS_EITS_EXPECTED_FIELDS),
+        ignored_by_parser=[],
+        unknown_observed=sorted(observed - CENSUS_EITS_EXPECTED_FIELDS),
+        missing_expected=sorted(CENSUS_EITS_EXPECTED_FIELDS - observed),
+    )
+    value = raw_row.get("cell_value")
+    if value in (None, ""):
+        diff.type_warnings.append("cell_value missing")
+    else:
+        try:
+            float(str(value))
+        except ValueError:
+            diff.type_warnings.append(f"cell_value is not numeric: {value!r}")
+    return diff
+
+
+def _row_matches_census_probe(row: dict[str, str], probe: CensusProbe) -> bool:
+    return (
+        row.get("data_type_code") == probe.data_type_code
+        and row.get("seasonally_adj") == probe.seasonally_adj
+        and row.get("category_code") == probe.category_code
+        and row.get("time_slot_id") == probe.time_slot_id
+    )
+
+
+def _census_obs_from_row(row: dict[str, str], probe: CensusProbe) -> CensusEITSObservation:
+    return CensusEITSObservation(
+        series_id=probe.series_id,
+        dataset=probe.dataset,
+        time=row.get("time", ""),
+        data_type_code=row.get("data_type_code", ""),
+        category_code=row.get("category_code", ""),
+        seasonally_adj=row.get("seasonally_adj", ""),
+        time_slot_id=row.get("time_slot_id", ""),
+        time_slot_name=row.get("time_slot_name", ""),
+        cell_value=row.get("cell_value", ""),
+        error_data=row.get("error_data", ""),
+        raw=dict(row),
+    )
+
+
+def _try_parse_census(row: dict[str, str], probe: CensusProbe) -> tuple[bool, str]:
+    spec = CENSUS_INDICATOR_REGISTRY.get(probe.series_id)
+    if spec is None:
+        return False, f"no Census calendar spec for series_id={probe.series_id!r}"
+    try:
+        obs = _census_obs_from_row(row, probe)
+        raw, event = parse_census_observation(
+            obs,
+            snapshot_epoch_ms=1_700_000_000_000,
+            spec=spec,
+        )
+        return True, (
+            f"ok indicator={spec.indicator} event_id={raw.provider_event_id[:10]}…"
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def run_census_probe(client: CensusEITSClient, probe: CensusProbe) -> ProbeResult:
+    generic = Probe(
+        name=probe.name,
+        path=f"GET https://api.census.gov/data/timeseries/eits/{probe.dataset}",
+        description=probe.description,
+        expected_shape="list[dict] after EITS header-row decode",
+        expected_fields=CENSUS_EITS_EXPECTED_FIELDS,
+    )
+    result = ProbeResult(probe=generic, status="skipped")
+    result.request_path = (
+        f"{generic.path}?time={probe.year}&for=us:* "
+        f"(filter data_type_code={probe.data_type_code} "
+        f"seasonally_adj={probe.seasonally_adj} "
+        f"category_code={probe.category_code})"
+    )
+
+    import time as _time
+    t0 = _time.monotonic()
+    try:
+        rows = client.get_dataset_year(probe.dataset, probe.year)
+    except Exception as exc:
+        result.status = "http_error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        return result
+    result.http_elapsed_ms = (_time.monotonic() - t0) * 1000
+
+    filtered = [row for row in rows if _row_matches_census_probe(row, probe)]
+    result.status = "ok"
+    result.row_count = len(filtered)
+    if not filtered:
+        result.notes.append(
+            f"Census returned zero rows for {probe.series_id} in {probe.year} "
+            f"(dataset payload had {len(rows)} rows)"
+        )
+        return result
+
+    filtered = sorted(filtered, key=lambda row: row.get("time", ""), reverse=True)
+    result.sample_row = filtered[0]
+    result.field_diff = _diff_census_row(filtered[0])
+    result.enum_counters = {
+        "time": Counter(row.get("time") for row in filtered),
+        "error_data": Counter(row.get("error_data") for row in filtered),
+    }
+
+    sample_n = min(10, len(filtered))
+    result.parse_attempts = sample_n
+    for row in filtered[:sample_n]:
+        ok, msg = _try_parse_census(row, probe)
+        if ok:
+            result.parse_successes += 1
+        else:
+            if len(result.parse_error_samples) < 3:
+                result.parse_error_samples.append(msg)
+    return result
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# ISM probe plan + runner
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class ISMProbe:
+    """One ISM live-validation probe."""
+
+    name: str
+    source: str
+    url: str
+    description: str
+
+
+def plan_ism_probes() -> list[ISMProbe]:
+    """Validate the ISM release calendar and current Manufacturing report."""
+    return [
+        ISMProbe(
+            name="ism_release_calendar",
+            source="schedule",
+            url=ISM_RELEASE_CALENDAR_URL,
+            description=(
+                "ISM Manufacturing PMI release dates from the public "
+                "release-calendar table"
+            ),
+        ),
+        ISMProbe(
+            name="ism_current_manufacturing_report",
+            source="report",
+            url=ISM_REPORTS_URL,
+            description=(
+                "ISM PMI reports hub discovery plus current Manufacturing "
+                "PMI report value parse"
+            ),
+        ),
+    ]
+
+
+def _try_project_ism_schedule(entry: Any) -> tuple[bool, str]:
+    try:
+        raw, event = ism_schedule_entry_to_records(
+            entry,
+            snapshot_epoch_ms=1_700_000_000_000,
+        )
+        return True, (
+            f"ok series={entry.series_id} ref={event.reference_date} "
+            f"event_id={raw.provider_event_id[:10]}..."
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _try_project_ism_value(value: Any) -> tuple[bool, str]:
+    try:
+        raw, event = ism_report_value_to_records(
+            value,
+            snapshot_epoch_ms=1_700_000_000_000,
+        )
+        return True, (
+            f"ok series={value.series_id} actual={event.actual} "
+            f"event_id={raw.provider_event_id[:10]}..."
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _run_ism_schedule_probe(
+    result: ProbeResult,
+    schedule_fetcher,
+) -> ProbeResult:
+    import time as _time
+
+    t0 = _time.monotonic()
+    try:
+        html = schedule_fetcher()
+        entries = parse_ism_schedule_html(html)
+    except Exception as exc:
+        result.status = "http_error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        return result
+    result.http_elapsed_ms = (_time.monotonic() - t0) * 1000
+    result.row_count = len(entries)
+    if not entries:
+        result.status = "http_error"
+        result.notes.append("zero ISM schedule entries parsed")
+        return result
+    result.status = "ok"
+    ordered = sorted(entries, key=lambda e: e.release_date, reverse=True)
+    sample = ordered[0]
+    result.sample_row = {
+        "series_id": sample.series_id,
+        "reference_date": sample.reference_date,
+        "release_date": sample.release_date,
+        "event_time_utc": sample.event_time_utc,
+    }
+    by_series = Counter(entry.series_id for entry in entries)
+    result.enum_counters = {"series_id": by_series}
+    result.notes.append(
+        "entries by series: "
+        + ", ".join(f"{k}={v}" for k, v in by_series.most_common())
+    )
+    sample_n = min(10, len(ordered))
+    result.parse_attempts = sample_n
+    for entry in ordered[:sample_n]:
+        ok, msg = _try_project_ism_schedule(entry)
+        if ok:
+            result.parse_successes += 1
+        else:
+            if len(result.parse_error_samples) < 3:
+                result.parse_error_samples.append(msg)
+    return result
+
+
+def _run_ism_report_probe(
+    result: ProbeResult,
+    landing_fetcher,
+    report_fetcher,
+) -> ProbeResult:
+    import time as _time
+
+    t0 = _time.monotonic()
+    try:
+        landing_html = landing_fetcher()
+        report_url = discover_current_report_url(landing_html)
+        result.request_path = f"GET {ISM_REPORTS_URL} -> GET {report_url}"
+        report_html = report_fetcher(report_url)
+        value = parse_ism_report_html(report_html, source_url=report_url)
+    except Exception as exc:
+        result.status = "http_error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        return result
+    result.http_elapsed_ms = (_time.monotonic() - t0) * 1000
+    result.status = "ok"
+    result.row_count = 1
+    result.sample_row = {
+        "series_id": value.series_id,
+        "reference_date": value.reference_date,
+        "actual": value.actual,
+        "previous": value.previous,
+        "source_url": value.source_url,
+    }
+    result.parse_attempts = 1
+    ok, msg = _try_project_ism_value(value)
+    if ok:
+        result.parse_successes = 1
+    else:
+        result.parse_error_samples.append(msg)
+    return result
+
+
+def run_ism_probe(
+    probe: ISMProbe,
+    *,
+    schedule_fetcher=fetch_ism_schedule_html,
+    landing_fetcher=fetch_ism_reports_landing_html,
+    report_fetcher=fetch_ism_report_html,
+) -> ProbeResult:
+    """Execute one ISM public-HTML probe."""
+    generic = Probe(
+        name=probe.name,
+        path=f"GET {probe.url}",
+        description=probe.description,
+        expected_shape="HTML -> ISM schedule entries / report value",
+        expected_fields=frozenset(),
+    )
+    result = ProbeResult(probe=generic, status="skipped")
+    result.request_path = generic.path
+    if probe.source == "schedule":
+        return _run_ism_schedule_probe(result, schedule_fetcher)
+    if probe.source == "report":
+        return _run_ism_report_probe(result, landing_fetcher, report_fetcher)
+    raise ValueError(f"unknown ISM probe source: {probe.source!r}")
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# U Michigan probe plan + runner
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class UMichProbe:
+    """One U Michigan live-validation probe."""
+
+    name: str
+    source: str
+    url: str
+    description: str
+    year: int | None = None
+
+
+def plan_umich_probes() -> list[UMichProbe]:
+    """Validate the U Michigan release-date PDF and current results page."""
+    year = datetime.now(timezone.utc).year
+    return [
+        UMichProbe(
+            name=f"umich_release_dates_{year}",
+            source="schedule",
+            url=UMICH_SURVEY_INFO_URL,
+            description=(
+                "U Michigan Consumer Sentiment preliminary/final release "
+                f"dates for {year}"
+            ),
+            year=year,
+        ),
+        UMichProbe(
+            name="umich_current_results",
+            source="current",
+            url=UMICH_MAIN_URL,
+            description=(
+                "U Michigan current Consumer Sentiment table value parse"
+            ),
+        ),
+    ]
+
+
+def _try_project_umich_schedule(entry: Any) -> tuple[bool, str]:
+    try:
+        raw, event = umich_schedule_entry_to_records(
+            entry,
+            snapshot_epoch_ms=1_700_000_000_000,
+        )
+        return True, (
+            f"ok series={entry.series_id} stage={entry.release_stage} "
+            f"ref={event.reference_date} event_id={raw.provider_event_id[:10]}..."
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _try_project_umich_value(value: Any) -> tuple[bool, str]:
+    try:
+        raw, event = umich_current_value_to_records(
+            value,
+            snapshot_epoch_ms=1_700_000_000_000,
+        )
+        return True, (
+            f"ok series={value.series_id} stage={value.release_stage} "
+            f"actual={event.actual} event_id={raw.provider_event_id[:10]}..."
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _coerce_umich_document(doc: object) -> tuple[str, str]:
+    if isinstance(doc, UMichScheduleDocument):
+        return doc.text, doc.source_url
+    return str(doc), UMICH_SURVEY_INFO_URL
+
+
+def _run_umich_schedule_probe(
+    result: ProbeResult,
+    probe: UMichProbe,
+    document_fetcher,
+) -> ProbeResult:
+    import time as _time
+
+    t0 = _time.monotonic()
+    try:
+        doc = document_fetcher(year=probe.year)
+        text, source_url = _coerce_umich_document(doc)
+        result.request_path = f"GET {UMICH_SURVEY_INFO_URL} -> GET {source_url}"
+        entries = parse_umich_release_dates_text(text, source_url=source_url)
+    except Exception as exc:
+        result.status = "http_error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        return result
+    result.http_elapsed_ms = (_time.monotonic() - t0) * 1000
+    result.row_count = len(entries)
+    if not entries:
+        result.status = "http_error"
+        result.notes.append("zero U Michigan schedule entries parsed")
+        return result
+    result.status = "ok"
+    ordered = sorted(entries, key=lambda e: e.release_date, reverse=True)
+    sample = ordered[0]
+    result.sample_row = {
+        "series_id": sample.series_id,
+        "reference_date": sample.reference_date,
+        "release_stage": sample.release_stage,
+        "release_date": sample.release_date,
+        "event_time_utc": sample.event_time_utc,
+    }
+    by_stage = Counter(entry.release_stage for entry in entries)
+    result.enum_counters = {"release_stage": by_stage}
+    result.notes.append(
+        "entries by stage: "
+        + ", ".join(f"{k}={v}" for k, v in by_stage.most_common())
+    )
+    sample_n = min(10, len(ordered))
+    result.parse_attempts = sample_n
+    for entry in ordered[:sample_n]:
+        ok, msg = _try_project_umich_schedule(entry)
+        if ok:
+            result.parse_successes += 1
+        else:
+            if len(result.parse_error_samples) < 3:
+                result.parse_error_samples.append(msg)
+    return result
+
+
+def _run_umich_current_probe(
+    result: ProbeResult,
+    current_fetcher,
+) -> ProbeResult:
+    import time as _time
+
+    t0 = _time.monotonic()
+    try:
+        html = current_fetcher()
+        value = parse_umich_current_results_html(html, source_url=UMICH_MAIN_URL)
+    except Exception as exc:
+        result.status = "http_error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        return result
+    result.http_elapsed_ms = (_time.monotonic() - t0) * 1000
+    result.status = "ok"
+    result.row_count = 1
+    result.sample_row = {
+        "series_id": value.series_id,
+        "reference_date": value.reference_date,
+        "release_stage": value.release_stage,
+        "actual": value.actual,
+        "previous": value.previous,
+        "source_url": value.source_url,
+    }
+    result.parse_attempts = 1
+    ok, msg = _try_project_umich_value(value)
+    if ok:
+        result.parse_successes = 1
+    else:
+        result.parse_error_samples.append(msg)
+    return result
+
+
+def run_umich_probe(
+    probe: UMichProbe,
+    *,
+    document_fetcher=fetch_umich_release_dates_document,
+    current_fetcher=fetch_umich_current_results_html,
+) -> ProbeResult:
+    """Execute one U Michigan public HTML/PDF probe."""
+    generic = Probe(
+        name=probe.name,
+        path=f"GET {probe.url}",
+        description=probe.description,
+        expected_shape="HTML/PDF -> U Michigan schedule entries / current value",
+        expected_fields=frozenset(),
+    )
+    result = ProbeResult(probe=generic, status="skipped")
+    result.request_path = generic.path
+    if probe.source == "schedule":
+        return _run_umich_schedule_probe(result, probe, document_fetcher)
+    if probe.source == "current":
+        return _run_umich_current_probe(result, current_fetcher)
+    raise ValueError(f"unknown U Michigan probe source: {probe.source!r}")
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Conference Board probe plan + runner
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class ConferenceBoardProbe:
+    """One Conference Board live-validation probe."""
+
+    name: str
+    source: str
+    url: str
+    description: str
+    series_id: str = ""
+    from_epoch_ms: int | None = None
+    to_epoch_ms: int | None = None
+
+
+def _conference_board_window() -> tuple[int, int]:
+    today = datetime.now(timezone.utc).date()
+    start = today - timedelta(days=45)
+    end = today + timedelta(days=180)
+    start_ms = int(datetime(start.year, start.month, start.day, tzinfo=timezone.utc).timestamp() * 1000)
+    end_ms = int(datetime(end.year, end.month, end.day, tzinfo=timezone.utc).timestamp() * 1000)
+    return start_ms, end_ms
+
+
+def plan_conference_board_probes() -> list[ConferenceBoardProbe]:
+    """Validate the Conference Board calendar endpoint and current pages."""
+    from_ms, to_ms = _conference_board_window()
+    return [
+        ConferenceBoardProbe(
+            name="conference_board_release_calendar",
+            source="schedule",
+            url=CONFERENCE_BOARD_CALENDAR_URL,
+            description=(
+                "Conference Board economic-indicator calendar rows for "
+                "US Consumer Confidence and US Leading Index"
+            ),
+            from_epoch_ms=from_ms,
+            to_epoch_ms=to_ms,
+        ),
+        ConferenceBoardProbe(
+            name="conference_board_consumer_confidence",
+            source="current",
+            url=CONFERENCE_BOARD_CONSUMER_CONFIDENCE_URL,
+            description="Conference Board current Consumer Confidence value parse",
+            series_id="TCB_CONSUMER_CONFIDENCE",
+        ),
+        ConferenceBoardProbe(
+            name="conference_board_us_leading_index",
+            source="current",
+            url=CONFERENCE_BOARD_LEADING_INDICATORS_URL,
+            description="Conference Board current US Leading Index monthly-change parse",
+            series_id="TCB_LEADING_INDEX",
+        ),
+    ]
+
+
+def _try_project_conference_board_schedule(entry: Any) -> tuple[bool, str]:
+    try:
+        raw, event = conference_board_schedule_entry_to_records(
+            entry,
+            snapshot_epoch_ms=1_700_000_000_000,
+        )
+        return True, (
+            f"ok series={entry.series_id} ref={event.reference_date} "
+            f"event_id={raw.provider_event_id[:10]}..."
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _try_project_conference_board_value(value: Any) -> tuple[bool, str]:
+    try:
+        raw, event = conference_board_current_value_to_records(
+            value,
+            snapshot_epoch_ms=1_700_000_000_000,
+        )
+        return True, (
+            f"ok series={value.series_id} actual={event.actual} "
+            f"event_id={raw.provider_event_id[:10]}..."
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _run_conference_board_schedule_probe(
+    result: ProbeResult,
+    probe: ConferenceBoardProbe,
+    schedule_fetcher,
+) -> ProbeResult:
+    import time as _time
+
+    from_ms, to_ms = probe.from_epoch_ms, probe.to_epoch_ms
+    if from_ms is None or to_ms is None:
+        from_ms, to_ms = _conference_board_window()
+    result.request_path = f"GET {probe.url}?from={from_ms}&to={to_ms}"
+    t0 = _time.monotonic()
+    try:
+        payload = schedule_fetcher(from_epoch_ms=from_ms, to_epoch_ms=to_ms)
+        entries = parse_conference_board_calendar_events_json(payload)
+    except Exception as exc:
+        result.status = "http_error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        return result
+    result.http_elapsed_ms = (_time.monotonic() - t0) * 1000
+    result.row_count = len(entries)
+    if not entries:
+        result.status = "http_error"
+        result.notes.append("zero Conference Board schedule entries parsed")
+        return result
+    result.status = "ok"
+    ordered = sorted(entries, key=lambda e: e.release_date, reverse=True)
+    sample = ordered[0]
+    result.sample_row = {
+        "series_id": sample.series_id,
+        "calendar_event_id": sample.calendar_event_id,
+        "reference_date": sample.reference_date,
+        "release_date": sample.release_date,
+        "event_time_utc": sample.event_time_utc,
+        "source_url": sample.source_url,
+    }
+    by_series = Counter(entry.series_id for entry in entries)
+    result.enum_counters = {"series_id": by_series}
+    result.notes.append(
+        "entries by series: "
+        + ", ".join(f"{k}={v}" for k, v in by_series.most_common())
+    )
+    sample_n = min(10, len(ordered))
+    result.parse_attempts = sample_n
+    for entry in ordered[:sample_n]:
+        ok, msg = _try_project_conference_board_schedule(entry)
+        if ok:
+            result.parse_successes += 1
+        else:
+            if len(result.parse_error_samples) < 3:
+                result.parse_error_samples.append(msg)
+    return result
+
+
+def _run_conference_board_current_probe(
+    result: ProbeResult,
+    probe: ConferenceBoardProbe,
+    current_fetcher,
+) -> ProbeResult:
+    import time as _time
+
+    t0 = _time.monotonic()
+    try:
+        html = current_fetcher(probe.url)
+        value = parse_conference_board_current_value_html(
+            html,
+            source_url=probe.url,
+            series_id=probe.series_id,
+        )
+    except Exception as exc:
+        result.status = "http_error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        return result
+    result.http_elapsed_ms = (_time.monotonic() - t0) * 1000
+    result.status = "ok"
+    result.row_count = 1
+    result.sample_row = {
+        "series_id": value.series_id,
+        "reference_date": value.reference_date,
+        "actual": value.actual,
+        "previous": value.previous,
+        "index_level": value.index_level,
+        "source_url": value.source_url,
+    }
+    result.parse_attempts = 1
+    ok, msg = _try_project_conference_board_value(value)
+    if ok:
+        result.parse_successes = 1
+    else:
+        result.parse_error_samples.append(msg)
+    return result
+
+
+def run_conference_board_probe(
+    probe: ConferenceBoardProbe,
+    *,
+    schedule_fetcher=fetch_conference_board_calendar_json,
+    current_fetcher=fetch_conference_board_indicator_html,
+) -> ProbeResult:
+    """Execute one Conference Board public HTML/JSON probe."""
+    generic = Probe(
+        name=probe.name,
+        path=f"GET {probe.url}",
+        description=probe.description,
+        expected_shape="JSON/HTML -> Conference Board schedule entries / current values",
+        expected_fields=frozenset(),
+    )
+    result = ProbeResult(probe=generic, status="skipped")
+    result.request_path = generic.path
+    if probe.source == "schedule":
+        return _run_conference_board_schedule_probe(result, probe, schedule_fetcher)
+    if probe.source == "current":
+        return _run_conference_board_current_probe(result, probe, current_fetcher)
+    raise ValueError(f"unknown Conference Board probe source: {probe.source!r}")
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# NAR probe plan + runner
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class NARProbe:
+    """One NAR live-validation probe."""
+
+    name: str
+    source: str
+    url: str
+    description: str
+    series_id: str = ""
+
+
+def plan_nar_probes() -> list[NARProbe]:
+    """Validate the NAR schedule page and current housing-statistics pages."""
+    return [
+        NARProbe(
+            name="nar_statistical_release_schedule",
+            source="schedule",
+            url=NAR_SCHEDULE_URL,
+            description=(
+                "NAR statistical release schedule rows for Existing-Home "
+                "Sales and Pending Home Sales Index"
+            ),
+        ),
+        NARProbe(
+            name="nar_existing_home_sales",
+            source="current",
+            url=NAR_EXISTING_HOME_SALES_URL,
+            description="NAR current Existing Home Sales million-SAAR parse",
+            series_id="NAR_EXISTING_HOME_SALES",
+        ),
+        NARProbe(
+            name="nar_pending_home_sales",
+            source="current",
+            url=NAR_PENDING_HOME_SALES_URL,
+            description="NAR current Pending Home Sales MoM percent parse",
+            series_id="NAR_PENDING_HOME_SALES_MOM",
+        ),
+    ]
+
+
+def _try_project_nar_schedule(entry: Any) -> tuple[bool, str]:
+    try:
+        raw, event = nar_schedule_entry_to_records(
+            entry,
+            snapshot_epoch_ms=1_700_000_000_000,
+        )
+        return True, (
+            f"ok series={entry.series_id} ref={event.reference_date} "
+            f"event_id={raw.provider_event_id[:10]}..."
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _try_project_nar_value(value: Any) -> tuple[bool, str]:
+    try:
+        raw, event = nar_current_value_to_records(
+            value,
+            snapshot_epoch_ms=1_700_000_000_000,
+        )
+        return True, (
+            f"ok series={value.series_id} actual={event.actual} "
+            f"event_id={raw.provider_event_id[:10]}..."
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _run_nar_schedule_probe(
+    result: ProbeResult,
+    schedule_fetcher,
+) -> ProbeResult:
+    import time as _time
+
+    t0 = _time.monotonic()
+    try:
+        html = schedule_fetcher()
+        entries = parse_nar_schedule_html(html)
+    except Exception as exc:
+        result.status = "http_error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        return result
+    result.http_elapsed_ms = (_time.monotonic() - t0) * 1000
+    result.row_count = len(entries)
+    if not entries:
+        result.status = "http_error"
+        result.notes.append("zero NAR schedule entries parsed")
+        return result
+    result.status = "ok"
+    ordered = sorted(entries, key=lambda e: e.release_date, reverse=True)
+    sample = ordered[0]
+    result.sample_row = {
+        "series_id": sample.series_id,
+        "raw_title": sample.raw_title,
+        "reference_date": sample.reference_date,
+        "release_date": sample.release_date,
+        "event_time_utc": sample.event_time_utc,
+    }
+    by_series = Counter(entry.series_id for entry in entries)
+    result.enum_counters = {"series_id": by_series}
+    result.notes.append(
+        "entries by series: "
+        + ", ".join(f"{k}={v}" for k, v in by_series.most_common())
+    )
+    sample_n = min(10, len(ordered))
+    result.parse_attempts = sample_n
+    for entry in ordered[:sample_n]:
+        ok, msg = _try_project_nar_schedule(entry)
+        if ok:
+            result.parse_successes += 1
+        else:
+            if len(result.parse_error_samples) < 3:
+                result.parse_error_samples.append(msg)
+    return result
+
+
+def _run_nar_current_probe(
+    result: ProbeResult,
+    probe: NARProbe,
+    current_fetcher,
+) -> ProbeResult:
+    import time as _time
+
+    t0 = _time.monotonic()
+    try:
+        html = current_fetcher(probe.url)
+        value = parse_nar_current_value_html(
+            html,
+            source_url=probe.url,
+            series_id=probe.series_id,
+        )
+    except Exception as exc:
+        result.status = "http_error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        return result
+    result.http_elapsed_ms = (_time.monotonic() - t0) * 1000
+    result.status = "ok"
+    result.row_count = 1
+    result.sample_row = {
+        "series_id": value.series_id,
+        "reference_date": value.reference_date,
+        "actual": value.actual,
+        "previous": value.previous,
+        "raw_change": value.raw_change,
+        "source_url": value.source_url,
+    }
+    result.parse_attempts = 1
+    ok, msg = _try_project_nar_value(value)
+    if ok:
+        result.parse_successes = 1
+    else:
+        result.parse_error_samples.append(msg)
+    return result
+
+
+def run_nar_probe(
+    probe: NARProbe,
+    *,
+    schedule_fetcher=fetch_nar_schedule_html,
+    current_fetcher=fetch_nar_current_html,
+) -> ProbeResult:
+    """Execute one NAR public HTML probe."""
+    generic = Probe(
+        name=probe.name,
+        path=f"GET {probe.url}",
+        description=probe.description,
+        expected_shape="HTML -> NAR schedule entries / current values",
+        expected_fields=frozenset(),
+    )
+    result = ProbeResult(probe=generic, status="skipped")
+    result.request_path = generic.path
+    if probe.source == "schedule":
+        return _run_nar_schedule_probe(result, schedule_fetcher)
+    if probe.source == "current":
+        return _run_nar_current_probe(result, probe, current_fetcher)
+    raise ValueError(f"unknown NAR probe source: {probe.source!r}")
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -1979,9 +2959,17 @@ def run_nbs_probe(
 # ──────────────────────────────────────────────────────────────────────────
 
 
-_OFFICIAL_PROVIDERS: frozenset[str] = frozenset({"bls", "bea", "fed", "ecb", "nbs"})
+_OFFICIAL_PROVIDERS: frozenset[str] = frozenset(
+    {
+        "bls", "bea", "census", "ism", "umich", "conference-board",
+        "nar", "fed", "ecb", "nbs",
+    }
+)
 _OFFICIAL_PROVIDERS_WITH_PROBES: frozenset[str] = frozenset(
-    {"bls", "bea", "ecb", "fed", "nbs"}
+    {
+        "bls", "bea", "census", "ism", "umich", "conference-board",
+        "nar", "ecb", "fed", "nbs",
+    }
 )
 
 
@@ -1989,12 +2977,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "--provider",
-        choices=["te", "eodhd", "bls", "bea", "fed", "ecb", "nbs"],
+        choices=[
+            "te", "eodhd", "bls", "bea", "census", "ism", "umich",
+            "conference-board", "nar", "fed", "ecb", "nbs",
+        ],
         default="te",
         help=(
             "which acquisition lane to validate. "
-            "bls / bea / ecb / fed / nbs all have live probes (P1b / P2b "
-            "/ P3b / P4b / P5c)."
+            "bls / bea / census / ism / umich / conference-board / "
+            "nar / ecb / fed / nbs all have live probes."
         ),
     )
     ap.add_argument(
@@ -2046,6 +3037,26 @@ def main(argv: list[str] | None = None) -> int:
     if args.provider == "bea":
         bea_probes = plan_bea_probes()
         return _run_bea(args, bea_probes)
+
+    if args.provider == "census":
+        census_probes = plan_census_probes()
+        return _run_census(args, census_probes)
+
+    if args.provider == "ism":
+        ism_probes = plan_ism_probes()
+        return _run_ism(args, ism_probes)
+
+    if args.provider == "umich":
+        umich_probes = plan_umich_probes()
+        return _run_umich(args, umich_probes)
+
+    if args.provider == "conference-board":
+        conference_board_probes = plan_conference_board_probes()
+        return _run_conference_board(args, conference_board_probes)
+
+    if args.provider == "nar":
+        nar_probes = plan_nar_probes()
+        return _run_nar(args, nar_probes)
 
     if args.provider == "ecb":
         ecb_probes = plan_ecb_probes()
@@ -2217,6 +3228,247 @@ def _run_bea(args: argparse.Namespace, probes: list[BEAProbe]) -> int:
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / (
         f"calendar_acquisition_bea_"
+        f"{datetime.now(timezone.utc).date().isoformat()}.md"
+    )
+    report_path.write_text(report, encoding="utf-8")
+    print()
+    print(f"Report written: {report_path}")
+    return 0
+
+
+def _run_census(args: argparse.Namespace, probes: list[CensusProbe]) -> int:
+    """Dispatch the Census EITS probe flow."""
+    if not args.execute:
+        print("DRY RUN (census) — pass --execute to actually hit upstream.")
+        print()
+        for i, p in enumerate(probes, 1):
+            print(f"{i}. {p.name}")
+            print(
+                f"   coordinate: {p.dataset} data_type={p.data_type_code} "
+                f"seasonally_adj={p.seasonally_adj} category={p.category_code}"
+            )
+            print(f"   year: {p.year}")
+            print(f"   purpose: {p.description}")
+        print()
+        print(f"Total planned requests: {len(probes)}")
+        return 0
+
+    if not args.yes:
+        print(f"Planned Census probes ({len(probes)}):")
+        for i, p in enumerate(probes, 1):
+            print(
+                f"  {i}. {p.name} — {p.dataset} {p.data_type_code} "
+                f"{p.category_code} {p.year}"
+            )
+        print(f"Estimated upstream requests: {len(probes)}")
+        resp = input("Proceed with live run? [y/N] ").strip().lower()
+        if resp not in {"y", "yes"}:
+            print("Aborted.")
+            return 1
+
+    results: list[ProbeResult] = []
+    client = CensusEITSClient()
+    for probe in probes:
+        result = run_census_probe(client, probe)
+        results.append(result)
+        _print_probe_summary(result)
+
+    report = render_report(
+        results,
+        requests_spent=client.requests_made,
+        provider="census",
+    )
+    report_dir = Path(args.report_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / (
+        f"calendar_acquisition_census_"
+        f"{datetime.now(timezone.utc).date().isoformat()}.md"
+    )
+    report_path.write_text(report, encoding="utf-8")
+    print()
+    print(f"Report written: {report_path}")
+    return 0
+
+
+def _run_ism(args: argparse.Namespace, probes: list[ISMProbe]) -> int:
+    """Dispatch the ISM public-HTML probe flow."""
+    if not args.execute:
+        print("DRY RUN (ism) — pass --execute to actually hit upstream.")
+        print()
+        for i, p in enumerate(probes, 1):
+            print(f"{i}. {p.name}")
+            print(f"   url: {p.url}")
+            print(f"   purpose: {p.description}")
+        print()
+        print(f"Total planned requests: {len(probes)}")
+        return 0
+
+    if not args.yes:
+        print(f"Planned ISM probes ({len(probes)}):")
+        for i, p in enumerate(probes, 1):
+            print(f"  {i}. {p.name} — {p.url}")
+        print("Estimated upstream requests: 3")
+        resp = input("Proceed with live run? [y/N] ").strip().lower()
+        if resp not in {"y", "yes"}:
+            print("Aborted.")
+            return 1
+
+    results: list[ProbeResult] = []
+    for probe in probes:
+        result = run_ism_probe(probe)
+        results.append(result)
+        _print_probe_summary(result)
+
+    report = render_report(
+        results,
+        requests_spent=3,
+        provider="ism",
+    )
+    report_dir = Path(args.report_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / (
+        f"calendar_acquisition_ism_"
+        f"{datetime.now(timezone.utc).date().isoformat()}.md"
+    )
+    report_path.write_text(report, encoding="utf-8")
+    print()
+    print(f"Report written: {report_path}")
+    return 0
+
+
+def _run_umich(args: argparse.Namespace, probes: list[UMichProbe]) -> int:
+    """Dispatch the U Michigan public HTML/PDF probe flow."""
+    if not args.execute:
+        print("DRY RUN (umich) — pass --execute to actually hit upstream.")
+        print()
+        for i, p in enumerate(probes, 1):
+            print(f"{i}. {p.name}")
+            print(f"   url: {p.url}")
+            print(f"   purpose: {p.description}")
+        print()
+        print("Total planned requests: 3")
+        return 0
+
+    if not args.yes:
+        print(f"Planned U Michigan probes ({len(probes)}):")
+        for i, p in enumerate(probes, 1):
+            print(f"  {i}. {p.name} — {p.url}")
+        print("Estimated upstream requests: 3")
+        resp = input("Proceed with live run? [y/N] ").strip().lower()
+        if resp not in {"y", "yes"}:
+            print("Aborted.")
+            return 1
+
+    results: list[ProbeResult] = []
+    for probe in probes:
+        result = run_umich_probe(probe)
+        results.append(result)
+        _print_probe_summary(result)
+
+    report = render_report(
+        results,
+        requests_spent=3,
+        provider="umich",
+    )
+    report_dir = Path(args.report_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / (
+        f"calendar_acquisition_umich_"
+        f"{datetime.now(timezone.utc).date().isoformat()}.md"
+    )
+    report_path.write_text(report, encoding="utf-8")
+    print()
+    print(f"Report written: {report_path}")
+    return 0
+
+
+def _run_conference_board(
+    args: argparse.Namespace,
+    probes: list[ConferenceBoardProbe],
+) -> int:
+    """Dispatch the Conference Board public JSON/HTML probe flow."""
+    if not args.execute:
+        print("DRY RUN (conference-board) — pass --execute to actually hit upstream.")
+        print()
+        for i, p in enumerate(probes, 1):
+            print(f"{i}. {p.name}")
+            print(f"   url: {p.url}")
+            print(f"   purpose: {p.description}")
+        print()
+        print("Total planned requests: 3")
+        return 0
+
+    if not args.yes:
+        print(f"Planned Conference Board probes ({len(probes)}):")
+        for i, p in enumerate(probes, 1):
+            print(f"  {i}. {p.name} — {p.url}")
+        print("Estimated upstream requests: 3")
+        resp = input("Proceed with live run? [y/N] ").strip().lower()
+        if resp not in {"y", "yes"}:
+            print("Aborted.")
+            return 1
+
+    results: list[ProbeResult] = []
+    for probe in probes:
+        result = run_conference_board_probe(probe)
+        results.append(result)
+        _print_probe_summary(result)
+
+    report = render_report(
+        results,
+        requests_spent=3,
+        provider="conference-board",
+    )
+    report_dir = Path(args.report_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / (
+        f"calendar_acquisition_conference_board_"
+        f"{datetime.now(timezone.utc).date().isoformat()}.md"
+    )
+    report_path.write_text(report, encoding="utf-8")
+    print()
+    print(f"Report written: {report_path}")
+    return 0
+
+
+def _run_nar(args: argparse.Namespace, probes: list[NARProbe]) -> int:
+    """Dispatch the NAR public HTML probe flow."""
+    if not args.execute:
+        print("DRY RUN (nar) — pass --execute to actually hit upstream.")
+        print()
+        for i, p in enumerate(probes, 1):
+            print(f"{i}. {p.name}")
+            print(f"   url: {p.url}")
+            print(f"   purpose: {p.description}")
+        print()
+        print("Total planned requests: 3")
+        return 0
+
+    if not args.yes:
+        print(f"Planned NAR probes ({len(probes)}):")
+        for i, p in enumerate(probes, 1):
+            print(f"  {i}. {p.name} — {p.url}")
+        print("Estimated upstream requests: 3")
+        resp = input("Proceed with live run? [y/N] ").strip().lower()
+        if resp not in {"y", "yes"}:
+            print("Aborted.")
+            return 1
+
+    results: list[ProbeResult] = []
+    for probe in probes:
+        result = run_nar_probe(probe)
+        results.append(result)
+        _print_probe_summary(result)
+
+    report = render_report(
+        results,
+        requests_spent=3,
+        provider="nar",
+    )
+    report_dir = Path(args.report_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / (
+        f"calendar_acquisition_nar_"
         f"{datetime.now(timezone.utc).date().isoformat()}.md"
     )
     report_path.write_text(report, encoding="utf-8")

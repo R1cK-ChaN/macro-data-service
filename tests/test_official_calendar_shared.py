@@ -58,6 +58,7 @@ def test_canonicalize_strips_parens_and_modifiers() -> None:
     assert canonicalize_indicator("CPI YoY SA") == "CPI"
     assert canonicalize_indicator("GDP Advance") == "GDP"
     assert canonicalize_indicator("GDP Prelim") == "GDP"
+    assert canonicalize_indicator("Michigan Consumer Sentiment Prel") == "MICHIGAN_SENTIMENT"
 
 
 def test_canonicalize_collapses_whitespace() -> None:
@@ -265,7 +266,10 @@ def test_official_providers_have_higher_precedence_than_te(
                 "SELECT provider_id, precedence FROM cal_provider"
             ).fetchall()
         )
-    for provider in ("bls", "bea", "federal-reserve", "ecb", "nbs"):
+    for provider in (
+        "bls", "bea", "census", "ism", "umich", "conference-board",
+        "nar", "federal-reserve", "ecb", "nbs",
+    ):
         assert rows[provider] == 100, f"{provider} precedence"
     assert rows["tradingeconomics"] == 10
     assert rows["eodhd"] == 10

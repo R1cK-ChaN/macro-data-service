@@ -99,12 +99,21 @@ def test_provider_constants_align_with_parser_ids() -> None:
     from ingestion.calendar.te_api.parser import PROVIDER as TE_FROM_PARSER
     from ingestion.calendar.bls_api.parser import PROVIDER as BLS
     from ingestion.calendar.bea_api.parser import PROVIDER as BEA
+    from ingestion.calendar.census_api.parser import PROVIDER as CENSUS
+    from ingestion.calendar.conference_board_api.parser import (
+        PROVIDER as CONFERENCE_BOARD,
+    )
     from ingestion.calendar.ecb_api.parser import PROVIDER as ECB
     from ingestion.calendar.fed_api.parser import PROVIDER as FED
+    from ingestion.calendar.ism_api.parser import PROVIDER as ISM
+    from ingestion.calendar.nar_api.parser import PROVIDER as NAR
+    from ingestion.calendar.umich_api.parser import PROVIDER as UMICH
     from ingestion.calendar.nbs_api.parser import PROVIDER as NBS
 
     assert TE_PROVIDER == TE_FROM_PARSER
-    assert set(OFFICIAL_PROVIDERS) == {BLS, BEA, ECB, FED, NBS}
+    assert set(OFFICIAL_PROVIDERS) == {
+        BLS, BEA, CENSUS, ISM, UMICH, CONFERENCE_BOARD, NAR, ECB, FED, NBS,
+    }
 
 
 def test_parity_empty_window_returns_zero_totals(

@@ -94,7 +94,7 @@ def test_view_unions_both_lanes(store: SQLiteEngineStore) -> None:
 
 
 def test_cal_provider_seeded(store: SQLiteEngineStore) -> None:
-    """TE + EODHD aggregators (precedence=10) plus the five official-source
+    """TE + EODHD aggregators (precedence=10) plus the official-source
     providers seeded by issue #9 P0 (precedence=100)."""
     with store._connection(commit=False) as c:
         rows = [
@@ -107,11 +107,16 @@ def test_cal_provider_seeded(store: SQLiteEngineStore) -> None:
     assert rows == [
         ("bea",              "government_agency", "economic",  100),
         ("bls",              "government_agency", "economic",  100),
+        ("census",           "government_agency", "economic",  100),
+        ("conference-board",  "market_data",       "economic",  100),
         ("ecb",              "central_bank",      "economic",  100),
         ("eodhd",            "data_aggregator",   "corporate", 10),
         ("federal-reserve",  "central_bank",      "economic",  100),
+        ("ism",              "market_data",       "economic",  100),
+        ("nar",              "market_data",       "economic",  100),
         ("nbs",              "government_agency", "economic",  100),
         ("tradingeconomics", "data_aggregator",   "economic",  10),
+        ("umich",            "market_data",       "economic",  100),
     ]
 
 
@@ -122,7 +127,7 @@ def test_cal_provider_seed_idempotent(tmp_path: Path) -> None:
     second = SQLiteEngineStore(db_path=db)
     with second._connection(commit=False) as c:
         n = c.execute("SELECT COUNT(*) FROM cal_provider").fetchone()[0]
-    assert n == 7
+    assert n == 12
 
 
 def test_importance_flows_through_view_as_enum_string(store: SQLiteEngineStore) -> None:

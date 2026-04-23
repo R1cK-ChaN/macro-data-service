@@ -1,6 +1,6 @@
 """Shared utilities for official-source economic calendar connectors.
 
-Used by BLS / BEA / Federal-Reserve / ECB / NBS ingestion (issue #9).
+Used by BLS / BEA / Census / Federal-Reserve / ECB / NBS ingestion.
 Nothing upstream-specific lives here — per-source auth, rate limiting,
 and payload shapes live in the source's own ``<source>_api/`` package.
 The four utilities this module exposes are the ones that reappear across

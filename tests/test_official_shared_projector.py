@@ -9,7 +9,7 @@ CASE shape; BLS / BEA / ECB / Fed preserved an existing
 where both rows were ``datetime``-precise. The shared projector
 adopts NBS's corrected rule — an incoming ``datetime`` overwrites
 a stored ``datetime`` — and this file guards that invariant on
-each of the five providers so a future SQL edit can't quietly
+each provider so a future SQL edit can't quietly
 re-regress one of them.
 
 No new test infrastructure; the fixtures reuse each connector's
@@ -51,10 +51,10 @@ def _make_event(
     """Construct an *EventRecord dataclass for a given connector.
 
     Accepts the record class itself so the test can iterate across
-    BLS / BEA / ECB / Fed / NBS record types without hard-coding
+    BLS / BEA / Census / U Michigan / NAR / ECB / Fed / NBS record types without hard-coding
     constructor signatures — every official-source connector
     defines an ``@dataclass(frozen=True)`` with the same 24
-    fields, so the same kwargs work for all five.
+    fields, so the same kwargs work for every connector.
     """
     return record_cls(
         provider=provider,
@@ -92,18 +92,39 @@ def _iter_connectors():
     from ingestion.calendar.bea_api.parser import (
         BEACalendarEventRecord, PROVIDER as BEA_PROVIDER,
     )
+    from ingestion.calendar.census_api.parser import (
+        CensusCalendarEventRecord, PROVIDER as CENSUS_PROVIDER,
+    )
+    from ingestion.calendar.conference_board_api.parser import (
+        ConferenceBoardCalendarEventRecord,
+        PROVIDER as CONFERENCE_BOARD_PROVIDER,
+    )
     from ingestion.calendar.ecb_api.parser import (
         ECBCalendarEventRecord, PROVIDER as ECB_PROVIDER,
     )
     from ingestion.calendar.fed_api.parser import (
         FedCalendarEventRecord, PROVIDER as FED_PROVIDER,
     )
+    from ingestion.calendar.nar_api.parser import (
+        NARCalendarEventRecord, PROVIDER as NAR_PROVIDER,
+    )
     from ingestion.calendar.nbs_api.parser import (
         NBSCalendarEventRecord, PROVIDER as NBS_PROVIDER,
+    )
+    from ingestion.calendar.umich_api.parser import (
+        UMichCalendarEventRecord, PROVIDER as UMICH_PROVIDER,
     )
     return [
         ("bls", BLS_PROVIDER, BLSCalendarEventRecord),
         ("bea", BEA_PROVIDER, BEACalendarEventRecord),
+        ("census", CENSUS_PROVIDER, CensusCalendarEventRecord),
+        ("umich", UMICH_PROVIDER, UMichCalendarEventRecord),
+        (
+            "conference_board",
+            CONFERENCE_BOARD_PROVIDER,
+            ConferenceBoardCalendarEventRecord,
+        ),
+        ("nar", NAR_PROVIDER, NARCalendarEventRecord),
         ("ecb", ECB_PROVIDER, ECBCalendarEventRecord),
         ("fed", FED_PROVIDER, FedCalendarEventRecord),
         ("nbs", NBS_PROVIDER, NBSCalendarEventRecord),
@@ -276,6 +297,10 @@ def test_store_raw_idempotent_across_all_connectors(
     for module_name, raw_name in {
         "bls": "BLSCalendarRawRecord",
         "bea": "BEACalendarRawRecord",
+        "census": "CensusCalendarRawRecord",
+        "umich": "UMichCalendarRawRecord",
+        "conference_board": "ConferenceBoardCalendarRawRecord",
+        "nar": "NARCalendarRawRecord",
         "ecb": "ECBCalendarRawRecord",
         "fed": "FedCalendarRawRecord",
         "nbs": "NBSCalendarRawRecord",

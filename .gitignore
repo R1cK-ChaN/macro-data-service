@@ -5,3 +5,4 @@ __pycache__/
 .macro-data/
 .env
 .claude/
+.codex

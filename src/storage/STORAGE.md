@@ -486,6 +486,8 @@ Seeded on `init_schema` (issue #8 + issue #9 P0):
 | `eodhd`           | `data_aggregator` | corporate | 10         |
 | `bls`             | `government_agency` | economic | 100       |
 | `bea`             | `government_agency` | economic | 100       |
+| `census`          | `government_agency` | economic | 100       |
+| `ism`             | `market_data`     | economic  | 100        |
 | `federal-reserve` | `central_bank`    | economic  | 100        |
 | `ecb`             | `central_bank`    | economic  | 100        |
 | `nbs`             | `government_agency` | economic | 100       |
