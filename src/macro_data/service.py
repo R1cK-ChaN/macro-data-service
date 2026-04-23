@@ -3392,7 +3392,12 @@ class LocalMacroDataService:
     def _event_to_dict(self, event: Any) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "source": event.source,
-            "event_id": event.event_id,
+            "event_id": (
+                f"{event.source}:{event.event_id}"
+                if ":" not in str(event.event_id)
+                else event.event_id
+            ),
+            "provider_event_id": event.event_id,
             "timestamp": event.timestamp,
             "datetime_utc": format_epoch_iso(event.timestamp),
             "country": event.country,

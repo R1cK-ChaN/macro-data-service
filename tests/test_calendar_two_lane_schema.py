@@ -46,6 +46,21 @@ def _indexes(store: SQLiteEngineStore, table: str) -> set[str]:
         }
 
 
+def _index_sql(store: SQLiteEngineStore, table: str) -> dict[str, str]:
+    with store._connection(commit=False) as c:
+        return {
+            row["name"]: row["sql"] or ""
+            for row in c.execute(
+                """
+                SELECT name, sql
+                FROM sqlite_master
+                WHERE type = 'index' AND tbl_name = ?
+                """,
+                (table,),
+            ).fetchall()
+        }
+
+
 def test_schema_creates_six_calendar_tables(store: SQLiteEngineStore) -> None:
     expected = {
         "cal_provider",
@@ -79,6 +94,9 @@ def test_schema_creates_calendar_time_expression_indexes(
         "idx_cal_econ_event_date_indicator",
     }
     assert expected <= _indexes(store, "cal_econ_event")
+    sql_by_name = _index_sql(store, "cal_econ_event")
+    assert "datetime(event_time_utc)" in sql_by_name["idx_cal_econ_event_datetime"]
+    assert "date(event_time_utc)" in sql_by_name["idx_cal_econ_event_date"]
 
 
 def test_view_unions_both_lanes(store: SQLiteEngineStore) -> None:
@@ -119,6 +137,9 @@ def test_view_unions_both_lanes(store: SQLiteEngineStore) -> None:
         ("corporate", "earnings",  None, "AAPL.US", "AAPL Q2 Earnings"),
         ("economic",  "release",   "US", None,       "CPI YoY"),
     ]
+    stats = store.get_source_storage_stats("calendar")
+    assert stats["latest_ts"].startswith("1970-01-01T00:00:00.")
+    assert stats["latest_ts"].endswith("+00:00")
 
 
 def test_cal_provider_seeded(store: SQLiteEngineStore) -> None:
@@ -238,16 +259,17 @@ def test_legacy_calendar_read_helpers_use_economic_lane(
         )
     )
 
-    recent = store.list_recent_events(released_only=True, country="US")
+    recent = store.list_recent_events(released_only=True, country="United States")
     latest = store.latest_released_event(indicator_keyword="cpi")
     trend = store.list_indicator_releases(indicator_keyword="cpi")
 
     assert [event.source for event in recent] == ["bls"]
+    assert recent[0].country == "United States"
     assert latest is not None
     assert latest.source == "bls"
     assert latest.actual == "3.1"
     assert latest.surprise == pytest.approx(-0.1)
-    assert [event.event_id for event in trend] == ["bls:cpi-2026-03"]
+    assert [event.event_id for event in trend] == ["cpi-2026-03"]
 
 
 def test_calendar_keyword_patterns_expand_nfp_provider_spellings(
@@ -293,9 +315,9 @@ def test_calendar_keyword_patterns_expand_nfp_provider_spellings(
 
     assert len(events) == 3
     assert {event.event_id for event in events} == {
-        "tradingeconomics:nfp-te",
-        "forexfactory:nfp-ff",
-        "investing:nfp-investing",
+        "nfp-te",
+        "nfp-ff",
+        "nfp-investing",
     }
 
 
@@ -321,7 +343,7 @@ def test_calendar_keyword_filter_matches_acronym_aliases(
 
     events = store.list_indicator_releases(indicator_keyword="CPI (Mar)", limit=10)
 
-    assert [event.event_id for event in events] == ["bls:cpi-official"]
+    assert [event.event_id for event in events] == ["cpi-official"]
 
 
 def test_calendar_keyword_filter_invalid_keyword_fails_closed(
@@ -388,7 +410,7 @@ def test_calendar_keyword_filter_uses_raw_title_spellings(
     latest = store.latest_released_event(indicator_keyword="CPI (Mar)")
 
     assert latest is not None
-    assert latest.event_id == "bls:cpi-mar"
+    assert latest.event_id == "cpi-mar"
 
 
 def test_calendar_keyword_filter_preserves_normalized_alias_lookup(
@@ -414,7 +436,7 @@ def test_calendar_keyword_filter_preserves_normalized_alias_lookup(
     latest = store.latest_released_event(indicator_keyword="Inflation   Rate (Mar)")
 
     assert latest is not None
-    assert latest.event_id == "tradingeconomics:inflation-yoy"
+    assert latest.event_id == "inflation-yoy"
 
 
 def test_recent_events_excludes_future_scheduled_rows(
@@ -443,7 +465,33 @@ def test_recent_events_excludes_future_scheduled_rows(
 
     events = store.list_recent_events(released_only=False, country="US")
 
-    assert [event.event_id for event in events] == ["bls:past-release"]
+    assert [event.event_id for event in events] == ["past-release"]
+
+
+def test_calendar_country_filter_accepts_iso_codes_outside_aliases(
+    store: SQLiteEngineStore,
+) -> None:
+    past = datetime.now(UTC) - timedelta(hours=1)
+    with store._connection(commit=True) as c:
+        c.execute(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                country_code, category, title, importance, actual, content_hash,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                'tradingeconomics', 'de-cpi', ?, 'datetime',
+                'DE', 'Inflation', 'Germany CPI', 'high', '1.0', 'de-cpi',
+                1700000000000, '2026-04-23', '2026-04-23'
+            )
+            """,
+            (past.isoformat(),),
+        )
+
+    events = store.list_recent_events(released_only=True, country="DE")
+
+    assert [event.event_id for event in events] == ["de-cpi"]
+    assert events[0].country == "DE"
 
 
 def test_calendar_keyword_filter_keeps_normalized_base_title_match(
@@ -468,7 +516,7 @@ def test_calendar_keyword_filter_keeps_normalized_base_title_match(
     latest = store.latest_released_event(indicator_keyword="Retail Sales (Mar)")
 
     assert latest is not None
-    assert latest.event_id == "census:retail-sales"
+    assert latest.event_id == "retail-sales"
 
 
 def test_legacy_calendar_upcoming_helper_uses_economic_lane(
@@ -491,8 +539,8 @@ def test_legacy_calendar_upcoming_helper_uses_economic_lane(
             (tomorrow.isoformat(),),
         )
 
-    events = store.list_upcoming_events(country="US", category="Growth")
-    assert [event.event_id for event in events] == ["bea:gdp-future"]
+    events = store.list_upcoming_events(country="United States", category="Growth")
+    assert [event.event_id for event in events] == ["gdp-future"]
 
 
 def test_legacy_calendar_range_helper_handles_date_precision_as_utc(
@@ -519,11 +567,15 @@ def test_legacy_calendar_range_helper_handles_date_precision_as_utc(
         datetime(2026, 4, 23, 23, 59, 59, tzinfo=UTC).timestamp()
     )
 
-    events = store.list_events_in_range(date_from=start, date_to=end)
+    events = store.list_events_in_range(
+        date_from=start,
+        date_to=end,
+        country="United States",
+    )
 
     assert len(events) == 1
     assert events[0].timestamp == start
-    assert events[0].event_id == "tradingeconomics:date-only"
+    assert events[0].event_id == "date-only"
     assert events[0].event_time_utc == "2026-04-23"
     assert events[0].event_time_precision == "date"
     assert events[0].raw_json["event_time_utc"] == "2026-04-23"
@@ -561,7 +613,7 @@ def test_latest_released_event_prefers_newest_before_importance(
     latest = store.latest_released_event()
 
     assert latest is not None
-    assert latest.event_id == "bea:newer-low"
+    assert latest.event_id == "newer-low"
 
 
 def test_fetch_live_calendar_op_is_retired(

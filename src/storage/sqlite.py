@@ -46,6 +46,49 @@ _CALENDAR_KEYWORD_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+_CALENDAR_COUNTRY_ALIASES: dict[str, str] = {
+    "US": "US",
+    "USA": "US",
+    "UNITED STATES": "US",
+    "UNITED STATES OF AMERICA": "US",
+    "CN": "CN",
+    "CHINA": "CN",
+    "JP": "JP",
+    "JAPAN": "JP",
+    "UK": "UK",
+    "GB": "UK",
+    "UNITED KINGDOM": "UK",
+    "EU": "EU",
+    "EURO AREA": "EU",
+    "EUROZONE": "EU",
+    "EUROPEAN UNION": "EU",
+}
+
+_CALENDAR_COUNTRY_DISPLAY: dict[str, str] = {
+    "US": "United States",
+    "CN": "China",
+    "JP": "Japan",
+    "UK": "United Kingdom",
+    "EU": "Euro Area",
+}
+
+
+def _calendar_country_code(value: str) -> str | None:
+    normalized = re.sub(r"[\s_-]+", " ", value.strip().upper())
+    if not normalized:
+        return None
+    if normalized in _CALENDAR_COUNTRY_ALIASES:
+        return _CALENDAR_COUNTRY_ALIASES[normalized]
+    if re.fullmatch(r"[A-Z]{2}", normalized):
+        return normalized
+    return None
+
+
+def _calendar_country_display(country_code: str) -> str:
+    code = (country_code or "").strip().upper()
+    return _CALENDAR_COUNTRY_DISPLAY.get(code, code)
+
+
 def _add_calendar_keyword_filter(
     conditions: list[str],
     params: list[Any],
@@ -166,6 +209,19 @@ def _add_event_time_upper_bound(
         "OR (event_time_precision != 'date' AND datetime(event_time_utc) <= datetime(?)))"
     )
     params.extend((value, value))
+
+
+def _add_calendar_country_filter(
+    conditions: list[str],
+    params: list[Any],
+    country: str,
+) -> None:
+    country_code = _calendar_country_code(country)
+    if country_code is None:
+        conditions.append("1 = 0")
+        return
+    conditions.append("country_code = ?")
+    params.append(country_code)
 
 
 @dataclass(frozen=True)
@@ -4026,8 +4082,7 @@ class SQLiteEngineStore:
             conditions.append("importance = ?")
             params.append(importance)
         if country:
-            conditions.append("country_code = ?")
-            params.append(country)
+            _add_calendar_country_filter(conditions, params, country)
         if category:
             conditions.append("category = ?")
             params.append(category)
@@ -4060,8 +4115,7 @@ class SQLiteEngineStore:
             conditions.append("importance = ?")
             params.append(importance)
         if country:
-            conditions.append("country_code = ?")
-            params.append(country)
+            _add_calendar_country_filter(conditions, params, country)
         if category:
             conditions.append("category = ?")
             params.append(category)
@@ -4101,8 +4155,7 @@ class SQLiteEngineStore:
             conditions.append("importance = ?")
             params.append(importance)
         if country:
-            conditions.append("country_code = ?")
-            params.append(country)
+            _add_calendar_country_filter(conditions, params, country)
         if category:
             conditions.append("category = ?")
             params.append(category)
@@ -4279,9 +4332,9 @@ class SQLiteEngineStore:
         timestamp = int(parsed_event_time.timestamp())
         return StoredEventRecord(
             source=row["provider"],
-            event_id=f"{row['provider']}:{row['provider_event_id']}",
+            event_id=row["provider_event_id"],
             timestamp=timestamp,
-            country=row["country_code"],
+            country=_calendar_country_display(row["country_code"]),
             indicator=row["title"],
             category=row["category"],
             importance=row["importance"] or "medium",
@@ -4299,6 +4352,8 @@ class SQLiteEngineStore:
                 "event_time_utc": row["event_time_utc"],
                 "event_time_precision": row["event_time_precision"],
                 "provider_event_id": row["provider_event_id"],
+                "provider": row["provider"],
+                "country_code": row["country_code"],
                 "reference_date": row["reference_date"],
                 "reference_label": row["reference_label"],
                 "source_url": row["source_url"],
@@ -7919,8 +7974,8 @@ class SQLiteEngineStore:
             "market": ("market_prices", "1 = 1", tuple(), "scraped_at"),
             "fed": ("central_bank_comms", "source = ?", ("fed",), "scraped_at"),
             "calendar": (
-                "v_calendar_item", "1 = 1", tuple(),
-                "datetime(observed_at_epoch_ms / 1000, 'unixepoch')",
+                "v_calendar_item", "1 = 1", (),
+                "strftime('%Y-%m-%dT%H:%M:%f+00:00', observed_at_epoch_ms / 1000.0, 'unixepoch')",
             ),
             "news": ("news_articles", "source_feed NOT LIKE 'gov_%'", tuple(), "scraped_at"),
             "gov_reports": ("document", "1 = 1", tuple(), "updated_at"),
