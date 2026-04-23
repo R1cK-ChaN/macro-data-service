@@ -191,6 +191,14 @@ _ALIASES: dict[str, str] = {
     "uom consumer sentiment": "MICHIGAN_SENTIMENT",
     "prelim uom consumer sentiment": "MICHIGAN_SENTIMENT",
     "revised uom consumer sentiment": "MICHIGAN_SENTIMENT",
+    "cb consumer confidence": "CB_CONSUMER_CONFIDENCE",
+    "consumer confidence": "CB_CONSUMER_CONFIDENCE",
+    "consumer confidence index": "CB_CONSUMER_CONFIDENCE",
+    "conference board consumer confidence": "CB_CONSUMER_CONFIDENCE",
+    "cb leading index": "CB_LEADING_INDEX",
+    "leading index": "CB_LEADING_INDEX",
+    "leading economic index": "CB_LEADING_INDEX",
+    "conference board leading economic index": "CB_LEADING_INDEX",
     # NBS's ``cal_econ_event.title`` carries a ``"China "`` country
     # prefix on every indicator (so a multi-country display surface
     # can tell the origin at a glance). The parity harness

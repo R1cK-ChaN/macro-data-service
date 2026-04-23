@@ -98,6 +98,18 @@ from ingestion.calendar.umich_api import (  # noqa: E402
     schedule_entry_to_records as umich_schedule_entry_to_records,
 )
 
+from ingestion.calendar.conference_board_api import (  # noqa: E402
+    CONFERENCE_BOARD_CALENDAR_URL,
+    CONFERENCE_BOARD_CONSUMER_CONFIDENCE_URL,
+    CONFERENCE_BOARD_LEADING_INDICATORS_URL,
+    current_value_to_records as conference_board_current_value_to_records,
+    fetch_calendar_json as fetch_conference_board_calendar_json,
+    fetch_indicator_html as fetch_conference_board_indicator_html,
+    parse_calendar_events_json as parse_conference_board_calendar_events_json,
+    parse_current_value_html as parse_conference_board_current_value_html,
+    schedule_entry_to_records as conference_board_schedule_entry_to_records,
+)
+
 from ingestion.calendar.ecb_api import (  # noqa: E402
     INDICATOR_REGISTRY as ECB_INDICATOR_REGISTRY,
     parse_observation as parse_ecb_observation,
@@ -750,6 +762,7 @@ def render_report(
     provider_label = {
         "te": "TE", "eodhd": "EODHD", "bls": "BLS", "bea": "BEA",
         "census": "Census", "ism": "ISM", "umich": "U Michigan",
+        "conference-board": "Conference Board",
         "ecb": "ECB", "fed": "Fed", "nbs": "NBS",
     }.get(provider, provider.upper())
     budget_line = {
@@ -760,6 +773,7 @@ def render_report(
         "census": "- Census EITS API: optional key, unspecified rate limit (polite)",
         "ism":    "- ISM public HTML: no auth, unspecified rate limit (polite)",
         "umich": "- U Michigan public HTML/PDF: no auth, unspecified rate limit (polite)",
+        "conference-board": "- Conference Board public HTML/JSON: no auth, unspecified rate limit (polite)",
         "ecb":   "- ECB Data Portal: no auth, unspecified rate limit (polite)",
         "fed":   "- federalreserve.gov: no auth, HTML scrape (browser-UA required)",
         "nbs":   "- stats.gov.cn: no auth, HTTP-only, flaky from non-CN IPs",
@@ -1895,6 +1909,209 @@ def run_umich_probe(
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Conference Board probe plan + runner
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class ConferenceBoardProbe:
+    """One Conference Board live-validation probe."""
+
+    name: str
+    source: str
+    url: str
+    description: str
+    series_id: str = ""
+    from_epoch_ms: int | None = None
+    to_epoch_ms: int | None = None
+
+
+def _conference_board_window() -> tuple[int, int]:
+    today = datetime.now(timezone.utc).date()
+    start = today - timedelta(days=45)
+    end = today + timedelta(days=180)
+    start_ms = int(datetime(start.year, start.month, start.day, tzinfo=timezone.utc).timestamp() * 1000)
+    end_ms = int(datetime(end.year, end.month, end.day, tzinfo=timezone.utc).timestamp() * 1000)
+    return start_ms, end_ms
+
+
+def plan_conference_board_probes() -> list[ConferenceBoardProbe]:
+    """Validate the Conference Board calendar endpoint and current pages."""
+    from_ms, to_ms = _conference_board_window()
+    return [
+        ConferenceBoardProbe(
+            name="conference_board_release_calendar",
+            source="schedule",
+            url=CONFERENCE_BOARD_CALENDAR_URL,
+            description=(
+                "Conference Board economic-indicator calendar rows for "
+                "US Consumer Confidence and US Leading Index"
+            ),
+            from_epoch_ms=from_ms,
+            to_epoch_ms=to_ms,
+        ),
+        ConferenceBoardProbe(
+            name="conference_board_consumer_confidence",
+            source="current",
+            url=CONFERENCE_BOARD_CONSUMER_CONFIDENCE_URL,
+            description="Conference Board current Consumer Confidence value parse",
+            series_id="TCB_CONSUMER_CONFIDENCE",
+        ),
+        ConferenceBoardProbe(
+            name="conference_board_us_leading_index",
+            source="current",
+            url=CONFERENCE_BOARD_LEADING_INDICATORS_URL,
+            description="Conference Board current US Leading Index monthly-change parse",
+            series_id="TCB_LEADING_INDEX",
+        ),
+    ]
+
+
+def _try_project_conference_board_schedule(entry: Any) -> tuple[bool, str]:
+    try:
+        raw, event = conference_board_schedule_entry_to_records(
+            entry,
+            snapshot_epoch_ms=1_700_000_000_000,
+        )
+        return True, (
+            f"ok series={entry.series_id} ref={event.reference_date} "
+            f"event_id={raw.provider_event_id[:10]}..."
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _try_project_conference_board_value(value: Any) -> tuple[bool, str]:
+    try:
+        raw, event = conference_board_current_value_to_records(
+            value,
+            snapshot_epoch_ms=1_700_000_000_000,
+        )
+        return True, (
+            f"ok series={value.series_id} actual={event.actual} "
+            f"event_id={raw.provider_event_id[:10]}..."
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _run_conference_board_schedule_probe(
+    result: ProbeResult,
+    probe: ConferenceBoardProbe,
+    schedule_fetcher,
+) -> ProbeResult:
+    import time as _time
+
+    from_ms, to_ms = probe.from_epoch_ms, probe.to_epoch_ms
+    if from_ms is None or to_ms is None:
+        from_ms, to_ms = _conference_board_window()
+    result.request_path = f"GET {probe.url}?from={from_ms}&to={to_ms}"
+    t0 = _time.monotonic()
+    try:
+        payload = schedule_fetcher(from_epoch_ms=from_ms, to_epoch_ms=to_ms)
+        entries = parse_conference_board_calendar_events_json(payload)
+    except Exception as exc:
+        result.status = "http_error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        return result
+    result.http_elapsed_ms = (_time.monotonic() - t0) * 1000
+    result.row_count = len(entries)
+    if not entries:
+        result.status = "http_error"
+        result.notes.append("zero Conference Board schedule entries parsed")
+        return result
+    result.status = "ok"
+    ordered = sorted(entries, key=lambda e: e.release_date, reverse=True)
+    sample = ordered[0]
+    result.sample_row = {
+        "series_id": sample.series_id,
+        "calendar_event_id": sample.calendar_event_id,
+        "reference_date": sample.reference_date,
+        "release_date": sample.release_date,
+        "event_time_utc": sample.event_time_utc,
+        "source_url": sample.source_url,
+    }
+    by_series = Counter(entry.series_id for entry in entries)
+    result.enum_counters = {"series_id": by_series}
+    result.notes.append(
+        "entries by series: "
+        + ", ".join(f"{k}={v}" for k, v in by_series.most_common())
+    )
+    sample_n = min(10, len(ordered))
+    result.parse_attempts = sample_n
+    for entry in ordered[:sample_n]:
+        ok, msg = _try_project_conference_board_schedule(entry)
+        if ok:
+            result.parse_successes += 1
+        else:
+            if len(result.parse_error_samples) < 3:
+                result.parse_error_samples.append(msg)
+    return result
+
+
+def _run_conference_board_current_probe(
+    result: ProbeResult,
+    probe: ConferenceBoardProbe,
+    current_fetcher,
+) -> ProbeResult:
+    import time as _time
+
+    t0 = _time.monotonic()
+    try:
+        html = current_fetcher(probe.url)
+        value = parse_conference_board_current_value_html(
+            html,
+            source_url=probe.url,
+            series_id=probe.series_id,
+        )
+    except Exception as exc:
+        result.status = "http_error"
+        result.notes.append(f"{type(exc).__name__}: {exc}")
+        return result
+    result.http_elapsed_ms = (_time.monotonic() - t0) * 1000
+    result.status = "ok"
+    result.row_count = 1
+    result.sample_row = {
+        "series_id": value.series_id,
+        "reference_date": value.reference_date,
+        "actual": value.actual,
+        "previous": value.previous,
+        "index_level": value.index_level,
+        "source_url": value.source_url,
+    }
+    result.parse_attempts = 1
+    ok, msg = _try_project_conference_board_value(value)
+    if ok:
+        result.parse_successes = 1
+    else:
+        result.parse_error_samples.append(msg)
+    return result
+
+
+def run_conference_board_probe(
+    probe: ConferenceBoardProbe,
+    *,
+    schedule_fetcher=fetch_conference_board_calendar_json,
+    current_fetcher=fetch_conference_board_indicator_html,
+) -> ProbeResult:
+    """Execute one Conference Board public HTML/JSON probe."""
+    generic = Probe(
+        name=probe.name,
+        path=f"GET {probe.url}",
+        description=probe.description,
+        expected_shape="JSON/HTML -> Conference Board schedule entries / current values",
+        expected_fields=frozenset(),
+    )
+    result = ProbeResult(probe=generic, status="skipped")
+    result.request_path = generic.path
+    if probe.source == "schedule":
+        return _run_conference_board_schedule_probe(result, probe, schedule_fetcher)
+    if probe.source == "current":
+        return _run_conference_board_current_probe(result, probe, current_fetcher)
+    raise ValueError(f"unknown Conference Board probe source: {probe.source!r}")
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # ECB probe plan + runner
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -2547,10 +2764,16 @@ def run_nbs_probe(
 
 
 _OFFICIAL_PROVIDERS: frozenset[str] = frozenset(
-    {"bls", "bea", "census", "ism", "umich", "fed", "ecb", "nbs"}
+    {
+        "bls", "bea", "census", "ism", "umich", "conference-board",
+        "fed", "ecb", "nbs",
+    }
 )
 _OFFICIAL_PROVIDERS_WITH_PROBES: frozenset[str] = frozenset(
-    {"bls", "bea", "census", "ism", "umich", "ecb", "fed", "nbs"}
+    {
+        "bls", "bea", "census", "ism", "umich", "conference-board",
+        "ecb", "fed", "nbs",
+    }
 )
 
 
@@ -2560,12 +2783,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--provider",
         choices=[
             "te", "eodhd", "bls", "bea", "census", "ism", "umich",
-            "fed", "ecb", "nbs",
+            "conference-board", "fed", "ecb", "nbs",
         ],
         default="te",
         help=(
             "which acquisition lane to validate. "
-            "bls / bea / census / ism / umich / ecb / fed / nbs all have live probes."
+            "bls / bea / census / ism / umich / conference-board / "
+            "ecb / fed / nbs all have live probes."
         ),
     )
     ap.add_argument(
@@ -2629,6 +2853,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.provider == "umich":
         umich_probes = plan_umich_probes()
         return _run_umich(args, umich_probes)
+
+    if args.provider == "conference-board":
+        conference_board_probes = plan_conference_board_probes()
+        return _run_conference_board(args, conference_board_probes)
 
     if args.provider == "ecb":
         ecb_probes = plan_ecb_probes()
@@ -2946,6 +3174,55 @@ def _run_umich(args: argparse.Namespace, probes: list[UMichProbe]) -> int:
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / (
         f"calendar_acquisition_umich_"
+        f"{datetime.now(timezone.utc).date().isoformat()}.md"
+    )
+    report_path.write_text(report, encoding="utf-8")
+    print()
+    print(f"Report written: {report_path}")
+    return 0
+
+
+def _run_conference_board(
+    args: argparse.Namespace,
+    probes: list[ConferenceBoardProbe],
+) -> int:
+    """Dispatch the Conference Board public JSON/HTML probe flow."""
+    if not args.execute:
+        print("DRY RUN (conference-board) — pass --execute to actually hit upstream.")
+        print()
+        for i, p in enumerate(probes, 1):
+            print(f"{i}. {p.name}")
+            print(f"   url: {p.url}")
+            print(f"   purpose: {p.description}")
+        print()
+        print("Total planned requests: 3")
+        return 0
+
+    if not args.yes:
+        print(f"Planned Conference Board probes ({len(probes)}):")
+        for i, p in enumerate(probes, 1):
+            print(f"  {i}. {p.name} — {p.url}")
+        print("Estimated upstream requests: 3")
+        resp = input("Proceed with live run? [y/N] ").strip().lower()
+        if resp not in {"y", "yes"}:
+            print("Aborted.")
+            return 1
+
+    results: list[ProbeResult] = []
+    for probe in probes:
+        result = run_conference_board_probe(probe)
+        results.append(result)
+        _print_probe_summary(result)
+
+    report = render_report(
+        results,
+        requests_spent=3,
+        provider="conference-board",
+    )
+    report_dir = Path(args.report_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / (
+        f"calendar_acquisition_conference_board_"
         f"{datetime.now(timezone.utc).date().isoformat()}.md"
     )
     report_path.write_text(report, encoding="utf-8")

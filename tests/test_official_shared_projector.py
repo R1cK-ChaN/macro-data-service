@@ -95,6 +95,10 @@ def _iter_connectors():
     from ingestion.calendar.census_api.parser import (
         CensusCalendarEventRecord, PROVIDER as CENSUS_PROVIDER,
     )
+    from ingestion.calendar.conference_board_api.parser import (
+        ConferenceBoardCalendarEventRecord,
+        PROVIDER as CONFERENCE_BOARD_PROVIDER,
+    )
     from ingestion.calendar.ecb_api.parser import (
         ECBCalendarEventRecord, PROVIDER as ECB_PROVIDER,
     )
@@ -112,6 +116,11 @@ def _iter_connectors():
         ("bea", BEA_PROVIDER, BEACalendarEventRecord),
         ("census", CENSUS_PROVIDER, CensusCalendarEventRecord),
         ("umich", UMICH_PROVIDER, UMichCalendarEventRecord),
+        (
+            "conference_board",
+            CONFERENCE_BOARD_PROVIDER,
+            ConferenceBoardCalendarEventRecord,
+        ),
         ("ecb", ECB_PROVIDER, ECBCalendarEventRecord),
         ("fed", FED_PROVIDER, FedCalendarEventRecord),
         ("nbs", NBS_PROVIDER, NBSCalendarEventRecord),
@@ -286,6 +295,7 @@ def test_store_raw_idempotent_across_all_connectors(
         "bea": "BEACalendarRawRecord",
         "census": "CensusCalendarRawRecord",
         "umich": "UMichCalendarRawRecord",
+        "conference_board": "ConferenceBoardCalendarRawRecord",
         "ecb": "ECBCalendarRawRecord",
         "fed": "FedCalendarRawRecord",
         "nbs": "NBSCalendarRawRecord",

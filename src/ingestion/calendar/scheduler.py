@@ -53,6 +53,10 @@ _ECB_CRON_WINDOW_DAYS = 180
 from .bea_api import fetch_bea_calendar, schedule_bea_calendar
 from .bls_api import fetch_bls_calendar, schedule_bls_calendar
 from .census_api import fetch_census_calendar, schedule_census_calendar
+from .conference_board_api import (
+    fetch_conference_board_calendar,
+    schedule_conference_board_calendar,
+)
 from .ecb_api import fetch_ecb_calendar, schedule_ecb_calendar
 from .fed_api import (
     fetch_fed_calendar,
@@ -103,6 +107,10 @@ def _umich(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_umich_calendar(conn, dry_run=dry_run)
 
 
+def _conference_board(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return schedule_conference_board_calendar(conn, dry_run=dry_run)
+
+
 def _ecb(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_ecb_calendar(conn, dry_run=dry_run)
 
@@ -132,6 +140,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("census", _census),
     ("ism", _ism),
     ("umich", _umich),
+    ("conference-board", _conference_board),
     ("ecb", _ecb),
     ("fed-fomc", _fed_fomc),
     ("fed-releases", _fed_releases),
@@ -149,7 +158,8 @@ ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
 # calendar doesn't belong here either — the value-bearing Fed op is
 # ``fetch_fed_statement_values`` exposed as ``fed-values`` below.
 ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
-    "bls", "bea", "census", "ism", "umich", "ecb", "fed-values",
+    "bls", "bea", "census", "ism", "umich", "conference-board",
+    "ecb", "fed-values",
 )
 
 
@@ -680,6 +690,9 @@ def sweep_value_side(
     def _umich_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         return fetch_umich_calendar(conn, dry_run=dry_run)
 
+    def _conference_board_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        return fetch_conference_board_calendar(conn, dry_run=dry_run)
+
     def _ecb_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # ECB SDMX has no auth — plain HTTP against data-api.ecb.europa.eu.
         from ingestion.timeseries.sdmx.providers.ecb import ECBClient
@@ -702,6 +715,7 @@ def sweep_value_side(
         "census":     _census_values,
         "ism":        _ism_values,
         "umich":      _umich_values,
+        "conference-board": _conference_board_values,
         "ecb":        _ecb_values,
         "fed-values": _fed_values,
     }

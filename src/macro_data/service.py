@@ -1171,6 +1171,144 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    # -- Economic calendar - Conference Board connector (issue #13 P4) ----
+
+    def _op_calendar_econ_fetch_conference_board(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch current Conference Board indicator values."""
+        from ingestion.calendar.conference_board_api import (
+            fetch_conference_board_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list) and raw_series:
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            from ingestion.calendar.conference_board_api.fetcher import (
+                _resolve_series,
+            )
+            planned, unknown = _resolve_series(series_ids)
+            return {
+                "dry_run":        True,
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_conference_board_calendar(
+                connection,
+                series_ids=series_ids,
+                dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "series_unknown":     summary.series_unknown,
+            "series_failed":      summary.series_failed,
+            "observations_seen":  summary.observations_seen,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_error":        summary.fetch_error,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_schedule_conference_board(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape the Conference Board economic-indicator calendar."""
+        from ingestion.calendar.conference_board_api import (
+            schedule_conference_board_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list) and raw_series:
+            series_ids = [str(s) for s in raw_series]
+
+        def _opt_int(key: str) -> int | None:
+            raw = arguments.get(key)
+            if raw is None or raw == "":
+                return None
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return None
+
+        from_epoch_ms = _opt_int("from_epoch_ms")
+        to_epoch_ms = _opt_int("to_epoch_ms")
+
+        if dry_run:
+            from ingestion.calendar.conference_board_api.fetcher import (
+                _default_schedule_window,
+                _resolve_series,
+            )
+            planned, unknown = _resolve_series(series_ids)
+            default_from, default_to = _default_schedule_window()
+            return {
+                "dry_run":        True,
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "from_epoch_ms":  from_epoch_ms or default_from,
+                "to_epoch_ms":    to_epoch_ms or default_to,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = schedule_conference_board_calendar(
+                connection,
+                series_ids=series_ids,
+                dry_run=False,
+                from_epoch_ms=from_epoch_ms,
+                to_epoch_ms=to_epoch_ms,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "series_unknown":     summary.series_unknown,
+            "from_epoch_ms":      summary.from_epoch_ms,
+            "to_epoch_ms":        summary.to_epoch_ms,
+            "entries_parsed":     summary.entries_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "row_issues":         summary.row_issues,
+            "fetch_error":        summary.fetch_error,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Economic calendar — ECB connector (issue #9 P3) ─────────────────
 
     def _op_calendar_econ_fetch_ecb(
@@ -1501,7 +1639,8 @@ class LocalMacroDataService:
         Arguments:
           dry_run      — default True. No HTTP, no DB writes.
           connectors   — optional list subset of
-                         ``["bls", "bea", "census", "ism", "umich", "ecb", "fed-values"]``.
+                         ``["bls", "bea", "census", "ism", "umich",
+                         "conference-board", "ecb", "fed-values"]``.
           start_year   — optional int; default ``current_year − 1``.
                          Applied to BLS / BEA / Census.
           end_year     — optional int; default current year. BLS / BEA / Census.
@@ -1589,7 +1728,8 @@ class LocalMacroDataService:
 
         Daily-cron candidate for the recurring-fetch scheduler
         (:mod:`ingestion.calendar.scheduler`). Iterates BLS + BEA +
-        Census + ISM + U Michigan + ECB + Fed FOMC + Fed releasedates + NBS in order, isolating
+        Census + ISM + U Michigan + Conference Board + ECB + Fed FOMC
+        + Fed releasedates + NBS in order, isolating
         per-connector exceptions so one upstream outage (ECB 502, NBS
         timeout, …) doesn't roll back the rest. Each connector gets
         its own connection / commit / rollback lifecycle.
@@ -1597,7 +1737,9 @@ class LocalMacroDataService:
         Arguments:
           dry_run    — default True. No HTTP, no DB writes.
           connectors — optional list subset of
-                       ``["bls","bea","census","ism","umich","ecb","fed-fomc","fed-releases","nbs"]``;
+                       ``["bls","bea","census","ism","umich",
+                       "conference-board","ecb","fed-fomc",
+                       "fed-releases","nbs"]``;
                        omit to run the full roster.
 
         This slice ships only the schedule-side aggregator. The

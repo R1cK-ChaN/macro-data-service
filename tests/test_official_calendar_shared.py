@@ -267,7 +267,7 @@ def test_official_providers_have_higher_precedence_than_te(
             ).fetchall()
         )
     for provider in (
-        "bls", "bea", "census", "ism", "umich",
+        "bls", "bea", "census", "ism", "umich", "conference-board",
         "federal-reserve", "ecb", "nbs",
     ):
         assert rows[provider] == 100, f"{provider} precedence"
