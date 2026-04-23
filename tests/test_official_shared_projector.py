@@ -51,7 +51,7 @@ def _make_event(
     """Construct an *EventRecord dataclass for a given connector.
 
     Accepts the record class itself so the test can iterate across
-    BLS / BEA / Census / U Michigan / ECB / Fed / NBS record types without hard-coding
+    BLS / BEA / Census / U Michigan / NAR / ECB / Fed / NBS record types without hard-coding
     constructor signatures — every official-source connector
     defines an ``@dataclass(frozen=True)`` with the same 24
     fields, so the same kwargs work for every connector.
@@ -105,6 +105,9 @@ def _iter_connectors():
     from ingestion.calendar.fed_api.parser import (
         FedCalendarEventRecord, PROVIDER as FED_PROVIDER,
     )
+    from ingestion.calendar.nar_api.parser import (
+        NARCalendarEventRecord, PROVIDER as NAR_PROVIDER,
+    )
     from ingestion.calendar.nbs_api.parser import (
         NBSCalendarEventRecord, PROVIDER as NBS_PROVIDER,
     )
@@ -121,6 +124,7 @@ def _iter_connectors():
             CONFERENCE_BOARD_PROVIDER,
             ConferenceBoardCalendarEventRecord,
         ),
+        ("nar", NAR_PROVIDER, NARCalendarEventRecord),
         ("ecb", ECB_PROVIDER, ECBCalendarEventRecord),
         ("fed", FED_PROVIDER, FedCalendarEventRecord),
         ("nbs", NBS_PROVIDER, NBSCalendarEventRecord),
@@ -296,6 +300,7 @@ def test_store_raw_idempotent_across_all_connectors(
         "census": "CensusCalendarRawRecord",
         "umich": "UMichCalendarRawRecord",
         "conference_board": "ConferenceBoardCalendarRawRecord",
+        "nar": "NARCalendarRawRecord",
         "ecb": "ECBCalendarRawRecord",
         "fed": "FedCalendarRawRecord",
         "nbs": "NBSCalendarRawRecord",

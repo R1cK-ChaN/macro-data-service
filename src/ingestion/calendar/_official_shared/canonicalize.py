@@ -199,6 +199,10 @@ _ALIASES: dict[str, str] = {
     "leading index": "CB_LEADING_INDEX",
     "leading economic index": "CB_LEADING_INDEX",
     "conference board leading economic index": "CB_LEADING_INDEX",
+    "existing home sales": "EXISTING_HOME_SALES",
+    "existing-home sales": "EXISTING_HOME_SALES",
+    "pending home sales": "PENDING_HOME_SALES",
+    "pending home sales index": "PENDING_HOME_SALES",
     # NBS's ``cal_econ_event.title`` carries a ``"China "`` country
     # prefix on every indicator (so a multi-country display surface
     # can tell the origin at a glance). The parity harness

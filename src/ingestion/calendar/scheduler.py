@@ -9,11 +9,11 @@ Two driver entry points, one shared per-connector loop:
 
 - :func:`refresh_all_schedules` (P-sched-1) — schedule-side: invokes
   every connector's forward-looking schedule scrape (BLS / BEA / Census
-  / ISM / U Michigan / ECB / Fed FOMC / Fed releasedates / NBS).
+  / ISM / U Michigan / NAR / ECB / Fed FOMC / Fed releasedates / NBS).
   Daily-cron candidate.
 - :func:`sweep_value_side` (P-sched-2) — value-side: invokes every
   connector's value-bearing scrape (BLS / BEA / Census / ISM /
-  U Michigan / ECB / Fed-values).
+  U Michigan / NAR / ECB / Fed-values).
   NBS has no value-side op yet and is not in the plan. Frequent-cron
   candidate — repeatedly runs to pick up new values once the release
   crosses its scheduled time, so the calendar's ``actual`` fills
@@ -64,6 +64,7 @@ from .fed_api import (
     fetch_fed_statement_values,
 )
 from .ism_api import fetch_ism_calendar, schedule_ism_calendar
+from .nar_api import fetch_nar_calendar, schedule_nar_calendar
 from .nbs_api import fetch_nbs_calendar
 from .umich_api import fetch_umich_calendar, schedule_umich_calendar
 from .scheduler_state import (
@@ -111,6 +112,10 @@ def _conference_board(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_conference_board_calendar(conn, dry_run=dry_run)
 
 
+def _nar(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return schedule_nar_calendar(conn, dry_run=dry_run)
+
+
 def _ecb(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_ecb_calendar(conn, dry_run=dry_run)
 
@@ -141,6 +146,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("ism", _ism),
     ("umich", _umich),
     ("conference-board", _conference_board),
+    ("nar", _nar),
     ("ecb", _ecb),
     ("fed-fomc", _fed_fomc),
     ("fed-releases", _fed_releases),
@@ -159,7 +165,7 @@ ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
 # ``fetch_fed_statement_values`` exposed as ``fed-values`` below.
 ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "bls", "bea", "census", "ism", "umich", "conference-board",
-    "ecb", "fed-values",
+    "nar", "ecb", "fed-values",
 )
 
 
@@ -616,7 +622,7 @@ def sweep_value_side(
         the ECB op picks its own window.
     connectors:
         Optional subset of :data:`ALL_VALUE_SIDE_CONNECTORS`. Omit to
-        run all four.
+        run the full value-side plan.
     _connector_overrides:
         Test seam — swap in fake functions to exercise isolation +
         aggregation without hitting real upstreams.
@@ -693,6 +699,9 @@ def sweep_value_side(
     def _conference_board_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         return fetch_conference_board_calendar(conn, dry_run=dry_run)
 
+    def _nar_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        return fetch_nar_calendar(conn, dry_run=dry_run)
+
     def _ecb_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # ECB SDMX has no auth — plain HTTP against data-api.ecb.europa.eu.
         from ingestion.timeseries.sdmx.providers.ecb import ECBClient
@@ -716,6 +725,7 @@ def sweep_value_side(
         "ism":        _ism_values,
         "umich":      _umich_values,
         "conference-board": _conference_board_values,
+        "nar":        _nar_values,
         "ecb":        _ecb_values,
         "fed-values": _fed_values,
     }

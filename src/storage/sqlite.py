@@ -2617,6 +2617,7 @@ class SQLiteEngineStore:
                     ("ism",              "market_data",       "economic",  100, _now_iso, _now_iso),
                     ("umich",            "market_data",       "economic",  100, _now_iso, _now_iso),
                     ("conference-board",  "market_data",       "economic",  100, _now_iso, _now_iso),
+                    ("nar",              "market_data",       "economic",  100, _now_iso, _now_iso),
                     ("federal-reserve",  "central_bank",      "economic",  100, _now_iso, _now_iso),
                     ("ecb",              "central_bank",      "economic",  100, _now_iso, _now_iso),
                     ("nbs",              "government_agency", "economic",  100, _now_iso, _now_iso),
