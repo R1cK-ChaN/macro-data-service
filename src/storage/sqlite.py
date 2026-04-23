@@ -35,7 +35,12 @@ _CALENDAR_KEYWORD_ALIASES: dict[str, tuple[str, ...]] = {
     "cpi": ("consumer price index", "inflation rate"),
     "core cpi": ("consumer price index all items less food and energy",),
     "ppi": ("producer price index",),
-    "nfp": ("nonfarm payroll", "employment situation"),
+    "nfp": (
+        "nonfarm payroll",
+        "non farm payroll",
+        "non-farm payroll",
+        "employment situation",
+    ),
     "pmi": ("purchasing managers", "manufacturing pmi", "services pmi"),
     "gdp": ("gross domestic product",),
 }
@@ -67,7 +72,8 @@ def _calendar_keyword_pattern_sets(
     patterns.update(aliases)
     raw_patterns.update(aliases)
     if connection is not None:
-        for lookup_term in sorted({raw_keyword, base}):
+        lookup_terms = {raw_keyword, base, *aliases}
+        for lookup_term in sorted(term for term in lookup_terms if term):
             like = f"%{lookup_term}%"
             rows = connection.execute(
                 """

@@ -207,6 +207,7 @@ def test_legacy_calendar_read_helpers_use_economic_lane(
     store: SQLiteEngineStore,
 ) -> None:
     now = datetime.now(UTC)
+    released_at = now - timedelta(minutes=1)
     with store._connection(commit=True) as c:
         c.execute(
             """
@@ -222,13 +223,13 @@ def test_legacy_calendar_read_helpers_use_economic_lane(
                 'hash1', 1700000000000, '2026-04-01', '2026-04-01'
             )
             """,
-            (now.isoformat(),),
+            (released_at.isoformat(),),
         )
     store.upsert_calendar_event(
         StoredEventRecord(
             source="legacy",
             event_id="legacy-cpi",
-            timestamp=int(now.timestamp()),
+            timestamp=int(released_at.timestamp()),
             country="US",
             indicator="Legacy CPI",
             category="Inflation",
@@ -246,8 +247,56 @@ def test_legacy_calendar_read_helpers_use_economic_lane(
     assert latest is not None
     assert latest.source == "bls"
     assert latest.actual == "3.1"
-    assert latest.surprise == -0.1
+    assert latest.surprise == pytest.approx(-0.1)
     assert [event.event_id for event in trend] == ["bls:cpi-2026-03"]
+
+
+def test_calendar_keyword_patterns_expand_nfp_provider_spellings(
+    store: SQLiteEngineStore,
+) -> None:
+    store.seed_calendar_indicators()
+    with store._connection(commit=True) as c:
+        c.executemany(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                country_code, category, title, importance, actual, content_hash,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                ?, ?, '2026-04-10T12:30:00+00:00', 'datetime',
+                'US', 'Employment', ?, 'high', '1.0', ?,
+                1700000000000, '2026-04-23', '2026-04-23'
+            )
+            """,
+            [
+                (
+                    "tradingeconomics",
+                    "nfp-te",
+                    "Non Farm Payrolls",
+                    "nfp-te",
+                ),
+                (
+                    "forexfactory",
+                    "nfp-ff",
+                    "Non-Farm Payrolls",
+                    "nfp-ff",
+                ),
+                (
+                    "investing",
+                    "nfp-investing",
+                    "Nonfarm Payrolls",
+                    "nfp-investing",
+                ),
+            ],
+        )
+
+    events = store.list_indicator_releases(indicator_keyword="nfp", limit=10)
+
+    assert {event.event_id for event in events} == {
+        "tradingeconomics:nfp-te",
+        "forexfactory:nfp-ff",
+        "investing:nfp-investing",
+    }
 
 
 def test_calendar_keyword_patterns_match_raw_db_spellings_before_normalizing(
