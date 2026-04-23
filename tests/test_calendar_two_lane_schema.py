@@ -35,6 +35,14 @@ def _views(store: SQLiteEngineStore) -> set[str]:
         }
 
 
+def _indexes(store: SQLiteEngineStore, table: str) -> set[str]:
+    with store._connection(commit=False) as c:
+        return {
+            r[1]
+            for r in c.execute(f"PRAGMA index_list({table})").fetchall()
+        }
+
+
 def test_schema_creates_six_calendar_tables(store: SQLiteEngineStore) -> None:
     expected = {
         "cal_provider",
@@ -52,6 +60,22 @@ def test_schema_creates_unified_view(store: SQLiteEngineStore) -> None:
     with store._connection(commit=False) as c:
         rows = c.execute("SELECT * FROM v_calendar_item").fetchall()
     assert rows == []
+
+
+def test_schema_creates_calendar_time_expression_indexes(
+    store: SQLiteEngineStore,
+) -> None:
+    expected = {
+        "idx_cal_econ_event_datetime",
+        "idx_cal_econ_event_datetime_provider",
+        "idx_cal_econ_event_datetime_country",
+        "idx_cal_econ_event_datetime_indicator",
+        "idx_cal_econ_event_date",
+        "idx_cal_econ_event_date_provider",
+        "idx_cal_econ_event_date_country",
+        "idx_cal_econ_event_date_indicator",
+    }
+    assert expected <= _indexes(store, "cal_econ_event")
 
 
 def test_view_unions_both_lanes(store: SQLiteEngineStore) -> None:

@@ -2593,6 +2593,22 @@ class SQLiteEngineStore:
                 "ON cal_econ_event(indicator_id, datetime(event_time_utc))"
             )
             connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_econ_event_date "
+                "ON cal_econ_event(date(event_time_utc))"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_econ_event_date_provider "
+                "ON cal_econ_event(date(event_time_utc), provider_event_id)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_econ_event_date_country "
+                "ON cal_econ_event(country_code, date(event_time_utc))"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_econ_event_date_indicator "
+                "ON cal_econ_event(indicator_id, date(event_time_utc))"
+            )
+            connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS cal_econ_drops (
                     provider           TEXT NOT NULL,
