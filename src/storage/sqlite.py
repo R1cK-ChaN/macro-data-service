@@ -2520,6 +2520,22 @@ class SQLiteEngineStore:
                 "ON cal_econ_event(event_time_utc)"
             )
             connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_econ_event_datetime "
+                "ON cal_econ_event(datetime(event_time_utc))"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_econ_event_datetime_provider "
+                "ON cal_econ_event(datetime(event_time_utc), provider_event_id)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_econ_event_datetime_country "
+                "ON cal_econ_event(country_code, datetime(event_time_utc))"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_econ_event_datetime_indicator "
+                "ON cal_econ_event(indicator_id, datetime(event_time_utc))"
+            )
+            connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS cal_econ_drops (
                     provider           TEXT NOT NULL,
@@ -4147,13 +4163,13 @@ class SQLiteEngineStore:
                 SELECT * FROM cal_econ_event
                 WHERE {' AND '.join(conditions)}
                 ORDER BY
+                    datetime(event_time_utc) DESC,
                     CASE importance
                         WHEN 'high' THEN 3
                         WHEN 'medium' THEN 2
                         WHEN 'low' THEN 1
                         ELSE 0
                     END DESC,
-                    datetime(event_time_utc) DESC,
                     provider_event_id DESC
                 LIMIT 1
                 """,

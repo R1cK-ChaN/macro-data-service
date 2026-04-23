@@ -275,6 +275,35 @@ def test_legacy_calendar_range_helper_handles_date_precision_as_utc(
     assert events[0].event_id == "tradingeconomics:date-only"
 
 
+def test_latest_released_event_prefers_newest_before_importance(
+    store: SQLiteEngineStore,
+) -> None:
+    older = datetime(2026, 4, 22, 12, tzinfo=timezone.utc)
+    newer = datetime(2026, 4, 23, 12, tzinfo=timezone.utc)
+    with store._connection(commit=True) as c:
+        c.executemany(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                country_code, category, title, importance, actual, content_hash,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                ?, ?, ?, 'datetime', 'US', 'Inflation', ?, ?, '1.0', ?,
+                1700000000000, '2026-04-23', '2026-04-23'
+            )
+            """,
+            [
+                ("bls", "older-high", older.isoformat(), "CPI", "high", "h1"),
+                ("bea", "newer-low", newer.isoformat(), "GDP", "low", "h2"),
+            ],
+        )
+
+    latest = store.latest_released_event()
+
+    assert latest is not None
+    assert latest.event_id == "bea:newer-low"
+
+
 def test_fetch_live_calendar_op_is_retired(
     store: SQLiteEngineStore,
 ) -> None:
