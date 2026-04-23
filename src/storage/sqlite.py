@@ -31,6 +31,79 @@ def _matches_scope_tags(text: str, tags: list[str]) -> bool:
     return any(re.search(rf"\b{re.escape(tag.lower())}\b", lowered) for tag in tags)
 
 
+_CALENDAR_KEYWORD_ALIASES: dict[str, tuple[str, ...]] = {
+    "cpi": ("consumer price index", "inflation rate"),
+    "core cpi": ("consumer price index all items less food and energy",),
+    "ppi": ("producer price index",),
+    "nfp": ("nonfarm payroll", "employment situation"),
+    "pmi": ("purchasing managers", "manufacturing pmi", "services pmi"),
+    "gdp": ("gross domestic product",),
+}
+
+
+def _calendar_keyword_patterns(keyword: str) -> list[str]:
+    base = keyword.strip().lower()
+    if not base:
+        return []
+    patterns = {base}
+    patterns.update(_CALENDAR_KEYWORD_ALIASES.get(base, ()))
+    return sorted(patterns)
+
+
+def _add_calendar_keyword_filter(
+    conditions: list[str],
+    params: list[Any],
+    keyword: str | None,
+) -> None:
+    patterns = _calendar_keyword_patterns(keyword or "")
+    if not patterns:
+        return
+    clauses: list[str] = []
+    for pattern in patterns:
+        like = f"%{pattern}%"
+        clauses.extend((
+            "LOWER(title) LIKE ?",
+            "LOWER(COALESCE(indicator_id, '')) LIKE ?",
+            "LOWER(category) LIKE ?",
+        ))
+        params.extend((like, like, like))
+    conditions.append(f"({' OR '.join(clauses)})")
+
+
+def _calendar_numeric_value(value: str | None) -> float | None:
+    if value is None:
+        return None
+    cleaned = value.strip().replace(",", "")
+    if not cleaned:
+        return None
+    multiplier = 1.0
+    suffix_map = {
+        "K": 1_000.0,
+        "M": 1_000_000.0,
+        "B": 1_000_000_000.0,
+    }
+    suffix = cleaned[-1].upper()
+    if suffix in suffix_map:
+        multiplier = suffix_map[suffix]
+        cleaned = cleaned[:-1]
+    cleaned = cleaned.replace("%", "").strip()
+    try:
+        return float(cleaned) * multiplier
+    except ValueError:
+        return None
+
+
+def _calendar_surprise(
+    actual: str | None,
+    forecast: str | None,
+) -> float | None:
+    actual_value = _calendar_numeric_value(actual)
+    forecast_value = _calendar_numeric_value(forecast)
+    if actual_value is None or forecast_value is None:
+        return None
+    return round(actual_value - forecast_value, 4)
+
+
 @dataclass(frozen=True)
 class StoredEventRecord:
     source: str
@@ -3843,8 +3916,8 @@ class SQLiteEngineStore:
         country: str | None = None,
         category: str | None = None,
     ) -> list[StoredEventRecord]:
-        cutoff = int((utc_now() - timedelta(days=days)).timestamp())
-        conditions = ["timestamp >= ?"]
+        cutoff = (utc_now() - timedelta(days=days)).isoformat()
+        conditions = ["datetime(event_time_utc) >= datetime(?)"]
         params: list[Any] = [cutoff]
         if released_only:
             conditions.append("actual IS NOT NULL")
@@ -3852,24 +3925,23 @@ class SQLiteEngineStore:
             conditions.append("importance = ?")
             params.append(importance)
         if country:
-            conditions.append("country = ?")
+            conditions.append("country_code = ?")
             params.append(country)
         if category:
             conditions.append("category = ?")
             params.append(category)
         params.append(limit)
-        # Only fixed SQL fragments are appended here; user input stays parameterized.
         with self._connection(commit=False) as connection:
             rows = connection.execute(
                 f"""
-                SELECT * FROM calendar_events
+                SELECT * FROM cal_econ_event
                 WHERE {' AND '.join(conditions)}
-                ORDER BY timestamp DESC, id DESC
+                ORDER BY datetime(event_time_utc) DESC, provider_event_id DESC
                 LIMIT ?
                 """,
                 params,
             ).fetchall()
-        return [self._row_to_event(row) for row in rows]
+        return [self._row_to_econ_event(row) for row in rows]
 
     def list_upcoming_events(
         self,
@@ -3879,14 +3951,14 @@ class SQLiteEngineStore:
         country: str | None = None,
         category: str | None = None,
     ) -> list[StoredEventRecord]:
-        now_epoch = int(utc_now().timestamp())
-        conditions = ["timestamp >= ?"]
-        params: list[Any] = [now_epoch]
+        now_iso = utc_now().isoformat()
+        conditions = ["datetime(event_time_utc) >= datetime(?)"]
+        params: list[Any] = [now_iso]
         if importance:
             conditions.append("importance = ?")
             params.append(importance)
         if country:
-            conditions.append("country = ?")
+            conditions.append("country_code = ?")
             params.append(country)
         if category:
             conditions.append("category = ?")
@@ -3895,14 +3967,14 @@ class SQLiteEngineStore:
         with self._connection(commit=False) as connection:
             rows = connection.execute(
                 f"""
-                SELECT * FROM calendar_events
+                SELECT * FROM cal_econ_event
                 WHERE {' AND '.join(conditions)}
-                ORDER BY timestamp ASC, id ASC
+                ORDER BY datetime(event_time_utc) ASC, provider_event_id ASC
                 LIMIT ?
                 """,
                 params,
             ).fetchall()
-        return [self._row_to_event(row) for row in rows]
+        return [self._row_to_econ_event(row) for row in rows]
 
     def list_events_in_range(
         self,
@@ -3915,15 +3987,20 @@ class SQLiteEngineStore:
         category: str | None = None,
         released_only: bool = False,
     ) -> list[StoredEventRecord]:
-        conditions = ["timestamp >= ?", "timestamp <= ?"]
-        params: list[Any] = [date_from, date_to]
+        from_iso = datetime.fromtimestamp(date_from, tz=timezone.utc).isoformat()
+        to_iso = datetime.fromtimestamp(date_to, tz=timezone.utc).isoformat()
+        conditions = [
+            "datetime(event_time_utc) >= datetime(?)",
+            "datetime(event_time_utc) <= datetime(?)",
+        ]
+        params: list[Any] = [from_iso, to_iso]
         if released_only:
             conditions.append("actual IS NOT NULL")
         if importance:
             conditions.append("importance = ?")
             params.append(importance)
         if country:
-            conditions.append("country = ?")
+            conditions.append("country_code = ?")
             params.append(country)
         if category:
             conditions.append("category = ?")
@@ -3932,14 +4009,14 @@ class SQLiteEngineStore:
         with self._connection(commit=False) as connection:
             rows = connection.execute(
                 f"""
-                SELECT * FROM calendar_events
+                SELECT * FROM cal_econ_event
                 WHERE {' AND '.join(conditions)}
-                ORDER BY timestamp ASC, id ASC
+                ORDER BY datetime(event_time_utc) ASC, provider_event_id ASC
                 LIMIT ?
                 """,
                 params,
             ).fetchall()
-        return [self._row_to_event(row) for row in rows]
+        return [self._row_to_econ_event(row) for row in rows]
 
     def list_today_events(
         self,
@@ -3967,17 +4044,21 @@ class SQLiteEngineStore:
         indicator_keyword: str,
         limit: int = 12,
     ) -> list[StoredEventRecord]:
+        conditions = ["actual IS NOT NULL"]
+        params: list[Any] = []
+        _add_calendar_keyword_filter(conditions, params, indicator_keyword)
+        params.append(limit)
         with self._connection(commit=False) as connection:
             rows = connection.execute(
-                """
-                SELECT * FROM calendar_events
-                WHERE LOWER(indicator) LIKE ? AND actual IS NOT NULL
-                ORDER BY timestamp DESC, id DESC
+                f"""
+                SELECT * FROM cal_econ_event
+                WHERE {' AND '.join(conditions)}
+                ORDER BY datetime(event_time_utc) DESC, provider_event_id DESC
                 LIMIT ?
                 """,
-                (f"%{indicator_keyword.lower()}%", limit),
+                params,
             ).fetchall()
-        return [self._row_to_event(row) for row in rows]
+        return [self._row_to_econ_event(row) for row in rows]
 
     def latest_market_prices(self) -> list[MarketPriceRecord]:
         with self._connection(commit=False) as connection:
@@ -4059,21 +4140,61 @@ class SQLiteEngineStore:
     def latest_released_event(self, *, indicator_keyword: str | None = None) -> StoredEventRecord | None:
         params: list[Any] = []
         conditions = ["actual IS NOT NULL"]
-        if indicator_keyword:
-            conditions.append("LOWER(indicator) LIKE ?")
-            params.append(f"%{indicator_keyword.lower()}%")
-        # Only fixed SQL fragments are appended here; user input stays parameterized.
+        _add_calendar_keyword_filter(conditions, params, indicator_keyword)
         with self._connection(commit=False) as connection:
             row = connection.execute(
                 f"""
-                SELECT * FROM calendar_events
+                SELECT * FROM cal_econ_event
                 WHERE {' AND '.join(conditions)}
-                ORDER BY importance DESC, timestamp DESC, id DESC
+                ORDER BY
+                    CASE importance
+                        WHEN 'high' THEN 3
+                        WHEN 'medium' THEN 2
+                        WHEN 'low' THEN 1
+                        ELSE 0
+                    END DESC,
+                    datetime(event_time_utc) DESC,
+                    provider_event_id DESC
                 LIMIT 1
                 """,
                 params,
             ).fetchone()
-        return self._row_to_event(row) if row is not None else None
+        return self._row_to_econ_event(row) if row is not None else None
+
+    def _row_to_econ_event(self, row: sqlite3.Row) -> StoredEventRecord:
+        parsed_event_time = datetime.fromisoformat(
+            str(row["event_time_utc"]).replace("Z", "+00:00")
+        )
+        if parsed_event_time.tzinfo is None:
+            parsed_event_time = parsed_event_time.replace(tzinfo=timezone.utc)
+        timestamp = int(parsed_event_time.timestamp())
+        return StoredEventRecord(
+            source=row["provider"],
+            event_id=f"{row['provider']}:{row['provider_event_id']}",
+            timestamp=timestamp,
+            country=row["country_code"],
+            indicator=row["title"],
+            category=row["category"],
+            importance=row["importance"] or "medium",
+            actual=row["actual"],
+            forecast=row["forecast"] or row["consensus_forecast"],
+            previous=row["previous"],
+            revised_previous=row["revised"],
+            surprise=_calendar_surprise(
+                row["actual"],
+                row["forecast"] or row["consensus_forecast"],
+            ),
+            currency=row["currency"],
+            unit=row["unit"],
+            raw_json={
+                "provider_event_id": row["provider_event_id"],
+                "reference_date": row["reference_date"],
+                "reference_label": row["reference_label"],
+                "source_url": row["source_url"],
+                "content_hash": row["content_hash"],
+            },
+            indicator_id=row["indicator_id"],
+        )
 
     def _row_to_event(self, row: sqlite3.Row) -> StoredEventRecord:
         return StoredEventRecord(
@@ -7684,7 +7805,10 @@ class SQLiteEngineStore:
             "imf_vintages": ("indicator_vintages", "source = ?", ("imf",), "scraped_at"),
             "market": ("market_prices", "1 = 1", tuple(), "scraped_at"),
             "fed": ("central_bank_comms", "source = ?", ("fed",), "scraped_at"),
-            "calendar": ("calendar_events", "1 = 1", tuple(), "scraped_at"),
+            "calendar": (
+                "v_calendar_item", "1 = 1", tuple(),
+                "datetime(observed_at_epoch_ms / 1000, 'unixepoch')",
+            ),
             "news": ("news_articles", "source_feed NOT LIKE 'gov_%'", tuple(), "scraped_at"),
             "gov_reports": ("document", "1 = 1", tuple(), "updated_at"),
             "reddit_trends": ("trend_topics", "provider = ?", ("reddit",), "scraped_at"),
@@ -8172,14 +8296,14 @@ class SQLiteEngineStore:
         with self._connection(commit=False) as connection:
             rows = connection.execute(
                 """
-                SELECT * FROM calendar_events
+                SELECT * FROM cal_econ_event
                 WHERE indicator_id = ? AND actual IS NOT NULL
-                ORDER BY timestamp DESC, id DESC
+                ORDER BY datetime(event_time_utc) DESC, provider_event_id DESC
                 LIMIT ?
                 """,
                 (indicator_id, limit),
             ).fetchall()
-        return [self._row_to_event(row) for row in rows]
+        return [self._row_to_econ_event(row) for row in rows]
 
     def _row_to_calendar_indicator(self, row: sqlite3.Row) -> CalendarIndicatorRecord:
         return CalendarIndicatorRecord(

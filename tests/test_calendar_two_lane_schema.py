@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from storage.sqlite import SQLiteEngineStore
+from storage.sqlite import SQLiteEngineStore, StoredEventRecord
 
 
 @pytest.fixture()
@@ -172,6 +173,120 @@ def test_importance_check_constraint_rejects_integer(store: SQLiteEngineStore) -
                 )
                 """
             )
+
+
+def test_legacy_calendar_read_helpers_use_economic_lane(
+    store: SQLiteEngineStore,
+) -> None:
+    now = datetime.now(timezone.utc)
+    with store._connection(commit=True) as c:
+        c.execute(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                reference_date, reference_label, country_code, category, title,
+                importance, currency, unit, actual, previous, forecast,
+                content_hash, observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                'bls', 'cpi-2026-03', ?, 'datetime',
+                '2026-03-01', 'March 2026', 'US', 'Inflation', 'Consumer Price Index',
+                'high', 'USD', '%', '3.1', '3.0', '3.2',
+                'hash1', 1700000000000, '2026-04-01', '2026-04-01'
+            )
+            """,
+            (now.isoformat(),),
+        )
+    store.upsert_calendar_event(
+        StoredEventRecord(
+            source="legacy",
+            event_id="legacy-cpi",
+            timestamp=int(now.timestamp()),
+            country="US",
+            indicator="Legacy CPI",
+            category="Inflation",
+            importance="high",
+            actual="9.9",
+            raw_json={},
+        )
+    )
+
+    recent = store.list_recent_events(released_only=True, country="US")
+    latest = store.latest_released_event(indicator_keyword="cpi")
+    trend = store.list_indicator_releases(indicator_keyword="cpi")
+
+    assert [event.source for event in recent] == ["bls"]
+    assert latest is not None
+    assert latest.source == "bls"
+    assert latest.actual == "3.1"
+    assert latest.surprise == -0.1
+    assert [event.event_id for event in trend] == ["bls:cpi-2026-03"]
+
+
+def test_legacy_calendar_upcoming_helper_uses_economic_lane(
+    store: SQLiteEngineStore,
+) -> None:
+    tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
+    with store._connection(commit=True) as c:
+        c.execute(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                country_code, category, title, importance, content_hash,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                'bea', 'gdp-future', ?, 'datetime',
+                'US', 'Growth', 'GDP Growth Rate', 'high', 'hash2',
+                1700000000000, '2026-04-01', '2026-04-01'
+            )
+            """,
+            (tomorrow.isoformat(),),
+        )
+
+    events = store.list_upcoming_events(country="US", category="Growth")
+    assert [event.event_id for event in events] == ["bea:gdp-future"]
+
+
+def test_legacy_calendar_range_helper_handles_date_precision_as_utc(
+    store: SQLiteEngineStore,
+) -> None:
+    with store._connection(commit=True) as c:
+        c.execute(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                country_code, category, title, importance, actual, content_hash,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                'tradingeconomics', 'date-only', '2026-04-23', 'date',
+                'US', 'Calendar', 'Date Only Release', 'medium', '1.0', 'hash3',
+                1700000000000, '2026-04-23', '2026-04-23'
+            )
+            """
+        )
+    start = int(datetime(2026, 4, 23, tzinfo=timezone.utc).timestamp())
+    end = int(
+        datetime(2026, 4, 23, 23, 59, 59, tzinfo=timezone.utc).timestamp()
+    )
+
+    events = store.list_events_in_range(date_from=start, date_to=end)
+
+    assert len(events) == 1
+    assert events[0].timestamp == start
+    assert events[0].event_id == "tradingeconomics:date-only"
+
+
+def test_fetch_live_calendar_op_is_retired(
+    store: SQLiteEngineStore,
+) -> None:
+    from macro_data.service import LocalMacroDataService
+
+    result = LocalMacroDataService(store=store).invoke("fetch_live_calendar", {})
+    assert result["retired"] is True
+    assert result["total_fetched"] == 0
+    assert result["events"] == []
+    assert result["replacement"]["read"] == (
+        "GET /v1/calendar or service op list_calendar_items"
+    )
 
 
 def test_event_subtype_check_constraint(store: SQLiteEngineStore) -> None:

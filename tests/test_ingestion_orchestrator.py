@@ -221,6 +221,17 @@ class SourceFamilyTaggingTest(unittest.TestCase):
         self.assertEqual(by_name["reddit_trends"], "trend")
         self.assertEqual(by_name["rate_probability"], "signal")
 
+    def test_calendar_source_is_retired_noop(self) -> None:
+        orch = self._build_orchestrator()
+        report = orch.run_source("calendar")
+        self.assertEqual(report.source, "calendar")
+        self.assertEqual(report.stored, 0)
+        self.assertIsNone(report.fetched)
+        self.assertNotIn("calendar", orch._default_refresh_order)
+        orch.investing.fetch_range.assert_not_called()
+        orch.forexfactory.fetch.assert_not_called()
+        orch.tradingeconomics.fetch.assert_not_called()
+
     def test_registered_definition_picks_up_family_from_registry(self) -> None:
         orch = self._build_orchestrator()
         orch.register_source(

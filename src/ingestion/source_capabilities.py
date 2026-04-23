@@ -534,7 +534,7 @@ class SourceCapabilityManager:
         from ingestion.news_feeds import get_feeds
         from ingestion.scrapers.eia import EIAClient
         from ingestion.scrapers.treasury_fiscal import TreasuryFiscalClient
-        from ingestion.clients._trends import _REDDIT_TREND_SOURCES
+        from ingestion.trends.clients._trends import _REDDIT_TREND_SOURCES
 
         adapters: dict[str, SourceCapabilityAdapter] = {}
 
@@ -635,9 +635,18 @@ class SourceCapabilityManager:
 
         def _calendar_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
             entities = [
-                _entity("calendar", "investing", "provider", "Investing.com"),
-                _entity("calendar", "forexfactory", "provider", "ForexFactory"),
-                _entity("calendar", "tradingeconomics", "provider", "TradingEconomics"),
+                _entity("calendar", "tradingeconomics", "provider", "TradingEconomics", description="historical economic calendar"),
+                _entity("calendar", "eodhd", "provider", "EODHD", description="corporate calendar"),
+                _entity("calendar", "bls", "provider", "BLS"),
+                _entity("calendar", "bea", "provider", "BEA"),
+                _entity("calendar", "census", "provider", "Census"),
+                _entity("calendar", "ism", "provider", "ISM"),
+                _entity("calendar", "umich", "provider", "U Michigan"),
+                _entity("calendar", "conference-board", "provider", "Conference Board"),
+                _entity("calendar", "nar", "provider", "NAR"),
+                _entity("calendar", "federal-reserve", "provider", "Federal Reserve"),
+                _entity("calendar", "ecb", "provider", "ECB"),
+                _entity("calendar", "nbs", "provider", "NBS"),
             ]
             return _limit_items(entities, query, limit)
 
@@ -1054,10 +1063,10 @@ class SourceCapabilityManager:
             display_name="Economic Calendar",
             source_type="fixed-scope-complete",
             entity_type="provider",
-            description="Calendar providers with normalized event ingestion",
-            is_default_scheduled=True,
+            description="Unified calendar providers; legacy HTML refresh is retired",
+            supports_latest_sync=False,
+            is_default_scheduled=False,
             discover=_calendar_entities,
-            sync_latest=lambda entity_ids, limit: _run_job("calendar"),
         )
         adapters["fed"] = SourceCapabilityAdapter(
             source_id="fed",

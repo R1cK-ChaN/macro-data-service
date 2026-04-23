@@ -98,7 +98,7 @@ Two physical lanes behind one downstream contract (see `src/storage/STORAGE.md` 
 - **Corporate lane** — `cal_corp_raw` / `cal_corp_event`. EODHD earnings / IPOs / splits / dividends / earnings_trends.
 - **Unified view:** `v_calendar_item` `UNION ALL`s both lanes into the `CalendarItem` DTO shape. Downstream sees one target.
 - **Revision model:** content-hash over mutable fields; append-only raw; PIT projection as the queryable layer. Mirrors `obs_family` / `indicator_vintages`.
-- **Legacy `calendar_events`** (HTML-scraped) untouched until slice-2 API fetcher proves parity.
+- **Legacy `calendar_events`** compatibility table remains in schema for old DBs, but the HTML-scraped refresh path is retired. Legacy read helpers now read `cal_econ_event`, and public clients use `GET /v1/calendar` over `v_calendar_item`.
 
 Slice progress:
 
@@ -238,7 +238,7 @@ src/
 
 | Issue | Branch | Slice |
 |---|---|---|
-| #8 | `feat/issue-8-calendar-two-lane-schema` | P0 shipped (two-lane schema + DTO + view). P1 shipped (TE API scaffold + dry-run HTTP ops). P2 shipped (EODHD corporate scaffold + `calendar_corp_fetch` op, dry-run default). Slices P3–P5 pending (TE backfill execution, official sources, legacy retirement). |
+| #8 | `fix/issue-8-retire-legacy-calendar` | Final retirement slice: legacy HTML calendar source is inert, old read helpers point at `cal_econ_event`, and `/v1/calendar` is the downstream contract. |
 
 Closed recently (context only — the code is the source of truth):
 

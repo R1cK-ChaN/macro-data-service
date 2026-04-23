@@ -384,7 +384,6 @@ class IngestionOrchestrator:
         for definition in definitions:
             self.register_source(definition)
         self._default_refresh_order = [
-            "calendar",
             "fed",
             "market",
             "tiingo_market",
@@ -572,13 +571,7 @@ class IngestionOrchestrator:
     def _build_calendar_source(self) -> IngestionSourceDefinition:
         return IngestionSourceDefinition(
             name="calendar",
-            interval_seconds=3600,
-            prepare=self._ensure_calendar_indicator_seed,
-            fetch=self._fetch_calendar_events,
-            normalize=self._normalize_calendar_events,
-            validate=self._validate_calendar_events,
-            deduplicate=self._deduplicate_calendar_events,
-            store=self._store_calendar_events,
+            execute=lambda: 0,
         )
 
     def _fetch_calendar_events(self) -> list[StoredEventRecord]:
