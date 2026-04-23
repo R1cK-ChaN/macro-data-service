@@ -250,7 +250,7 @@ def test_legacy_calendar_read_helpers_use_economic_lane(
     assert [event.event_id for event in trend] == ["bls:cpi-2026-03"]
 
 
-def test_calendar_keyword_patterns_normalize_keyword_before_alias_lookup(
+def test_calendar_keyword_patterns_match_raw_db_spellings_before_normalizing(
     store: SQLiteEngineStore,
 ) -> None:
     store.seed_calendar_indicators()
@@ -266,6 +266,96 @@ def test_calendar_keyword_patterns_normalize_keyword_before_alias_lookup(
 
     assert "inflation rate mom" in seeded_aliases
     assert "inflation rate yoy" in seeded_aliases
+
+
+def test_calendar_keyword_filter_uses_raw_title_spellings(
+    store: SQLiteEngineStore,
+) -> None:
+    with store._connection(commit=True) as c:
+        c.executemany(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                country_code, category, title, importance, actual, content_hash,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                ?, ?, ?, 'datetime', 'US', 'Inflation', ?, 'high', '1.0', ?,
+                1700000000000, '2026-04-23', '2026-04-23'
+            )
+            """,
+            [
+                (
+                    "bls",
+                    "cpi-mar",
+                    "2026-04-10T12:30:00+00:00",
+                    "CPI (Mar)",
+                    "raw-title",
+                ),
+                (
+                    "bls",
+                    "retail-sales",
+                    "2026-04-11T12:30:00+00:00",
+                    "Retail Sales",
+                    "other-title",
+                ),
+            ],
+        )
+
+    latest = store.latest_released_event(indicator_keyword="CPI (Mar)")
+
+    assert latest is not None
+    assert latest.event_id == "bls:cpi-mar"
+
+
+def test_calendar_keyword_filter_preserves_normalized_alias_lookup(
+    store: SQLiteEngineStore,
+) -> None:
+    store.seed_calendar_indicators()
+    with store._connection(commit=True) as c:
+        c.execute(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                country_code, category, title, importance, actual, content_hash,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                'tradingeconomics', 'inflation-yoy',
+                '2026-04-11T12:30:00+00:00', 'datetime',
+                'US', 'Inflation', 'Inflation Rate YoY', 'high', '1.0',
+                'inflation-yoy', 1700000000000, '2026-04-23', '2026-04-23'
+            )
+            """
+        )
+
+    latest = store.latest_released_event(indicator_keyword="Inflation   Rate (Mar)")
+
+    assert latest is not None
+    assert latest.event_id == "tradingeconomics:inflation-yoy"
+
+
+def test_calendar_keyword_filter_keeps_normalized_base_title_match(
+    store: SQLiteEngineStore,
+) -> None:
+    with store._connection(commit=True) as c:
+        c.execute(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                country_code, category, title, importance, actual, content_hash,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                'census', 'retail-sales',
+                '2026-04-11T12:30:00+00:00', 'datetime',
+                'US', 'Growth', 'Retail Sales', 'high', '1.0',
+                'retail-sales', 1700000000000, '2026-04-23', '2026-04-23'
+            )
+            """
+        )
+
+    latest = store.latest_released_event(indicator_keyword="Retail Sales (Mar)")
+
+    assert latest is not None
+    assert latest.event_id == "census:retail-sales"
 
 
 def test_legacy_calendar_upcoming_helper_uses_economic_lane(

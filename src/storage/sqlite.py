@@ -46,33 +46,64 @@ def _calendar_keyword_patterns(
     *,
     connection: sqlite3.Connection | None = None,
 ) -> list[str]:
+    patterns, _ = _calendar_keyword_pattern_sets(keyword, connection=connection)
+    return sorted(patterns)
+
+
+def _calendar_keyword_pattern_sets(
+    keyword: str,
+    *,
+    connection: sqlite3.Connection | None = None,
+) -> tuple[set[str], set[str]]:
     from ingestion.scrapers._common import normalize_indicator_name
 
     base = normalize_indicator_name(keyword)
     if not base:
-        return []
+        return set(), set()
+    raw_keyword = keyword.strip()
     patterns = {base}
-    patterns.update(_CALENDAR_KEYWORD_ALIASES.get(base, ()))
+    raw_patterns = {raw_keyword, base}
+    aliases = _CALENDAR_KEYWORD_ALIASES.get(base, ())
+    patterns.update(aliases)
+    raw_patterns.update(aliases)
     if connection is not None:
-        like = f"%{base}%"
-        rows = connection.execute(
-            """
-            SELECT alias_normalized AS pattern FROM calendar_indicator_alias
-            WHERE alias_normalized LIKE ?
-            UNION
-            SELECT LOWER(canonical_name) AS pattern FROM calendar_indicator
-            WHERE LOWER(canonical_name) LIKE ?
-            UNION
-            SELECT indicator_id AS pattern FROM calendar_indicator
-            WHERE LOWER(indicator_id) LIKE ?
-            """,
-            (like, like, like),
-        ).fetchall()
-        for row in rows:
-            pattern = normalize_indicator_name(str(row["pattern"] or ""))
-            if pattern:
-                patterns.add(pattern)
-    return sorted(patterns)
+        for lookup_term in sorted({raw_keyword, base}):
+            like = f"%{lookup_term}%"
+            rows = connection.execute(
+                """
+                SELECT
+                    alias_original AS alias_raw,
+                    NULL AS canonical_raw,
+                    NULL AS indicator_raw
+                FROM calendar_indicator_alias
+                WHERE alias_original LIKE ?
+                UNION
+                SELECT
+                    NULL AS alias_raw,
+                    canonical_name AS canonical_raw,
+                    NULL AS indicator_raw
+                FROM calendar_indicator
+                WHERE canonical_name LIKE ?
+                UNION
+                SELECT
+                    NULL AS alias_raw,
+                    NULL AS canonical_raw,
+                    indicator_id AS indicator_raw
+                FROM calendar_indicator
+                WHERE indicator_id LIKE ?
+                """,
+                (like, like, like),
+            ).fetchall()
+            for row in rows:
+                for column in ("alias_raw", "canonical_raw", "indicator_raw"):
+                    raw_pattern = str(row[column] or "").strip()
+                    if not raw_pattern:
+                        continue
+                    raw_patterns.add(raw_pattern)
+                    pattern = normalize_indicator_name(raw_pattern)
+                    if pattern:
+                        patterns.add(pattern)
+    return patterns, raw_patterns
 
 
 def _add_calendar_keyword_filter(
@@ -82,16 +113,18 @@ def _add_calendar_keyword_filter(
     *,
     connection: sqlite3.Connection | None = None,
 ) -> None:
-    patterns = _calendar_keyword_patterns(keyword or "", connection=connection)
-    if not patterns:
+    _, raw_patterns = _calendar_keyword_pattern_sets(
+        keyword or "", connection=connection
+    )
+    if not raw_patterns:
         return
     clauses: list[str] = []
-    for pattern in patterns:
+    for pattern in sorted(raw_patterns):
         like = f"%{pattern}%"
         clauses.extend((
-            "LOWER(title) LIKE ?",
-            "LOWER(COALESCE(indicator_id, '')) LIKE ?",
-            "LOWER(category) LIKE ?",
+            "title LIKE ?",
+            "COALESCE(indicator_id, '') LIKE ?",
+            "category LIKE ?",
         ))
         params.extend((like, like, like))
     conditions.append(f"({' OR '.join(clauses)})")
