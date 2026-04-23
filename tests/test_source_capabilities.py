@@ -153,6 +153,23 @@ def test_sync_latest_records_checkpoint_and_run() -> None:
     assert runs[0]["status"] == "success"
 
 
+def test_default_calendar_capability_is_discovery_only() -> None:
+    store = _make_store()
+    manager = SourceCapabilityManager(store)
+
+    capability = store.get_source_capability("calendar")
+    assert capability is not None
+    assert capability["supports_latest_sync"] is False
+    assert capability["is_default_scheduled"] is False
+
+    entities = manager.list_entities("calendar", limit=20)["entities"]
+    ids = {entity["entity_id"] for entity in entities}
+    assert {"tradingeconomics", "eodhd", "bls", "nar"} <= ids
+    assert manager.sync_latest("calendar") == {
+        "error": "latest sync unavailable for calendar"
+    }
+
+
 def _make_manager_with_fake_adapter() -> SourceCapabilityManager:
     """Minimal manager for health-dashboard tests — one trivial adapter
     keeps the sources array non-empty so we exercise the calendar

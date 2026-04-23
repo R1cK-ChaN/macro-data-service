@@ -426,7 +426,7 @@ capability/catalog state describes what a source *can* expose, while
 
 | Table | Purpose |
 |-------|---------|
-| `calendar_events` | Economic calendar (Investing, ForexFactory, TradingEconomics) |
+| `calendar_events` | Legacy economic calendar compatibility table; HTML refresh retired |
 | `market_prices` | Asset price snapshots (yfinance) |
 | `central_bank_comms` | Fed speeches, statements, testimony (RSS feeds) |
 | `obs_source` | Observation data providers (FRED, EIA, Treasury Fiscal, NY Fed, rateprobability) |
@@ -567,14 +567,15 @@ phases for the current month) — no separate `cal_budget` table.
 `previous`, `forecast`, `consensus_forecast`, `source_url`,
 `last_update_epoch_ms`, `observed_at_epoch_ms`.
 
-Future HTTP surface: `GET /calendar?domain=economic&country=US&from=…` or
+HTTP surface: `GET /v1/calendar?domain=economic&country=US` or
 `?domain=corporate&ticker=AAPL&subtype=earnings` reads this view.
 
 ### Relationship to legacy `calendar_events`
 
-`calendar_events` (HTML-scraped via `scrapers/tradingeconomics.py`) is
-untouched in this slice. Retirement happens in slice 2 after the TE API
-fetcher writes through `cal_econ_*` with parity.
+`calendar_events` is retained as a compatibility table for old local DBs.
+The HTML-scraped live refresh path is retired; legacy read helpers use
+`cal_econ_event`, and new consumers read `v_calendar_item` through
+`GET /v1/calendar`.
 
 ## Running Tests
 

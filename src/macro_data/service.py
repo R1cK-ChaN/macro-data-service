@@ -2986,47 +2986,18 @@ class LocalMacroDataService:
         }
 
     def _op_fetch_live_calendar(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        from ingestion.scrapers import (
-            ForexFactoryCalendarClient,
-            InvestingCalendarClient,
-            TradingEconomicsCalendarClient,
-        )
-
-        source = (arguments.get("source") or "all").lower()
-        importance_filter = arguments.get("importance")
-        country_filter = arguments.get("country")
-        sources = ("investing", "forexfactory", "tradingeconomics") if source == "all" else (source,)
-        all_events: list[Any] = []
-        errors: list[str] = []
-        for item in sources:
-            try:
-                if item == "investing":
-                    all_events.extend(InvestingCalendarClient().fetch())
-                elif item == "forexfactory":
-                    all_events.extend(ForexFactoryCalendarClient().fetch())
-                elif item == "tradingeconomics":
-                    all_events.extend(TradingEconomicsCalendarClient().fetch())
-            except Exception as exc:
-                logger.warning("Live fetch from %s failed: %s", item, exc)
-                errors.append(f"{item}: {exc}")
-        for event in all_events:
-            try:
-                self._store.upsert_calendar_event(event)
-            except Exception:
-                logger.warning("Failed to persist live calendar event %s", getattr(event, "event_id", ""), exc_info=True)
-        filtered = all_events
-        if importance_filter:
-            filtered = [event for event in filtered if event.importance == importance_filter]
-        if country_filter:
-            filtered = [event for event in filtered if event.country == str(country_filter).upper()]
-        result: dict[str, Any] = {
-            "total_fetched": len(all_events),
-            "returned": len(filtered),
-            "events": [self._event_to_dict(event) for event in filtered],
+        del arguments
+        return {
+            "retired": True,
+            "total_fetched": 0,
+            "returned": 0,
+            "events": [],
+            "replacement": {
+                "read": "GET /v1/calendar or service op list_calendar_items",
+                "schedule_refresh": "calendar_econ_refresh_schedules",
+                "value_sweep": "calendar_econ_sweep_values",
+            },
         }
-        if errors:
-            result["errors"] = errors
-        return result
 
     def _op_fetch_live_news(self, arguments: dict[str, Any]) -> dict[str, Any]:
         raw_sources = (arguments.get("sources") or "all").lower().strip()
@@ -3421,7 +3392,12 @@ class LocalMacroDataService:
     def _event_to_dict(self, event: Any) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "source": event.source,
-            "event_id": event.event_id,
+            "event_id": (
+                f"{event.source}:{event.event_id}"
+                if ":" not in str(event.event_id)
+                else event.event_id
+            ),
+            "provider_event_id": event.event_id,
             "timestamp": event.timestamp,
             "datetime_utc": format_epoch_iso(event.timestamp),
             "country": event.country,
@@ -3436,6 +3412,14 @@ class LocalMacroDataService:
         indicator_id = getattr(event, "indicator_id", "")
         if indicator_id:
             payload["indicator_id"] = indicator_id
+        event_time_utc = getattr(event, "event_time_utc", "")
+        if event_time_utc:
+            payload["event_time_utc"] = event_time_utc
+            payload["event_time_precision"] = getattr(
+                event,
+                "event_time_precision",
+                "datetime",
+            )
         return payload
 
     def _price_to_dict(self, price: Any) -> dict[str, Any]:
