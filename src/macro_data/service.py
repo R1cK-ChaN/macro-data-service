@@ -944,6 +944,116 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    # ── Economic calendar — ISM connector (issue #13 P2) ────────────────
+
+    def _op_calendar_econ_fetch_ism(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch the current ISM Manufacturing PMI value."""
+        from ingestion.calendar.ism_api import fetch_ism_calendar
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list) and raw_series:
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            from ingestion.calendar.ism_api.fetcher import _resolve_series
+            planned, unknown = _resolve_series(series_ids)
+            return {
+                "dry_run":        True,
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_ism_calendar(
+                connection,
+                series_ids=series_ids,
+                dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "series_unknown":     summary.series_unknown,
+            "report_url":         summary.report_url,
+            "observations_seen":  summary.observations_seen,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_error":        summary.fetch_error,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_schedule_ism(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape the ISM Manufacturing PMI release calendar."""
+        from ingestion.calendar.ism_api import schedule_ism_calendar
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list) and raw_series:
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            from ingestion.calendar.ism_api.fetcher import _resolve_series
+            planned, unknown = _resolve_series(series_ids)
+            return {
+                "dry_run":        True,
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = schedule_ism_calendar(
+                connection,
+                series_ids=series_ids,
+                dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "series_unknown":     summary.series_unknown,
+            "entries_parsed":     summary.entries_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "row_issues":         summary.row_issues,
+            "fetch_error":        summary.fetch_error,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Economic calendar — ECB connector (issue #9 P3) ─────────────────
 
     def _op_calendar_econ_fetch_ecb(

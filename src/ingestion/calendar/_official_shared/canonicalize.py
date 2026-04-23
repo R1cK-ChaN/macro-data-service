@@ -182,6 +182,7 @@ _ALIASES: dict[str, str] = {
     "fixed asset investment": "FIXED_ASSET_INVESTMENT",
     "manufacturing pmi": "MFG_PMI",
     "non-manufacturing pmi": "NON_MFG_PMI",
+    "ism manufacturing pmi": "MFG_PMI",
     "nbs manufacturing pmi": "MFG_PMI",
     "nbs non-manufacturing pmi": "NON_MFG_PMI",
     # NBS's ``cal_econ_event.title`` carries a ``"China "`` country

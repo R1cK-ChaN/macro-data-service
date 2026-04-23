@@ -57,6 +57,7 @@ from .fed_api import (
     fetch_fed_releasedates,
     fetch_fed_statement_values,
 )
+from .ism_api import fetch_ism_calendar, schedule_ism_calendar
 from .nbs_api import fetch_nbs_calendar
 from .scheduler_state import (
     DAILY_BUDGET_CAPS,
@@ -91,6 +92,10 @@ def _census(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_census_calendar(conn, dry_run=dry_run)
 
 
+def _ism(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return schedule_ism_calendar(conn, dry_run=dry_run)
+
+
 def _ecb(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_ecb_calendar(conn, dry_run=dry_run)
 
@@ -118,6 +123,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("bls", _bls),
     ("bea", _bea),
     ("census", _census),
+    ("ism", _ism),
     ("ecb", _ecb),
     ("fed-fomc", _fed_fomc),
     ("fed-releases", _fed_releases),
@@ -135,7 +141,7 @@ ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
 # calendar doesn't belong here either — the value-bearing Fed op is
 # ``fetch_fed_statement_values`` exposed as ``fed-values`` below.
 ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
-    "bls", "bea", "census", "ecb", "fed-values",
+    "bls", "bea", "census", "ism", "ecb", "fed-values",
 )
 
 
@@ -660,6 +666,9 @@ def sweep_value_side(
             dry_run=dry_run,
         )
 
+    def _ism_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        return fetch_ism_calendar(conn, dry_run=dry_run)
+
     def _ecb_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # ECB SDMX has no auth — plain HTTP against data-api.ecb.europa.eu.
         from ingestion.timeseries.sdmx.providers.ecb import ECBClient
@@ -680,6 +689,7 @@ def sweep_value_side(
         "bls":        _bls_values,
         "bea":        _bea_values,
         "census":     _census_values,
+        "ism":        _ism_values,
         "ecb":        _ecb_values,
         "fed-values": _fed_values,
     }

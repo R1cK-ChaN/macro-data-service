@@ -265,7 +265,7 @@ def test_official_providers_have_higher_precedence_than_te(
                 "SELECT provider_id, precedence FROM cal_provider"
             ).fetchall()
         )
-    for provider in ("bls", "bea", "census", "federal-reserve", "ecb", "nbs"):
+    for provider in ("bls", "bea", "census", "ism", "federal-reserve", "ecb", "nbs"):
         assert rows[provider] == 100, f"{provider} precedence"
     assert rows["tradingeconomics"] == 10
     assert rows["eodhd"] == 10

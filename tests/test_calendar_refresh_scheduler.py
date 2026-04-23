@@ -71,7 +71,8 @@ def test_default_connectors_cover_every_official_source() -> None:
     (FOMC + releasedates) / NBS suite. Any future connector addition
     should show up here automatically."""
     assert ALL_CONNECTORS == (
-        "bls", "bea", "census", "ecb", "fed-fomc", "fed-releases", "nbs",
+        "bls", "bea", "census", "ism", "ecb", "fed-fomc",
+        "fed-releases", "nbs",
     )
 
 
@@ -94,7 +95,7 @@ def test_dry_run_plans_every_connector(store: SQLiteEngineStore) -> None:
     )
     assert summary.dry_run is True
     assert summary.connectors_planned == list(ALL_CONNECTORS)
-    assert summary.ok_count == 7
+    assert summary.ok_count == 8
     assert summary.failed_count == 0
     assert [c for c, _ in call_log] == list(ALL_CONNECTORS)
     # Per-connector summaries are flattened to dicts so the service op
@@ -132,7 +133,7 @@ def test_one_connector_raising_does_not_skip_the_rest(
     )
     assert call_log == list(ALL_CONNECTORS)  # every connector invoked
     assert summary.failed_count == 1
-    assert summary.ok_count == 6
+    assert summary.ok_count == 7
     ecb_result = next(r for r in summary.results if r.connector == "ecb")
     assert ecb_result.ok is False
     assert "simulated ECB outage" in (ecb_result.error or "")
@@ -254,7 +255,7 @@ def test_in_summary_fetch_error_flips_ok_to_false(
     assert "502" in (by_connector["bea"].error or "")
     assert by_connector["ecb"].ok is False
     assert "503" in (by_connector["ecb"].error or "")
-    assert summary.ok_count == 5
+    assert summary.ok_count == 6
     assert summary.failed_count == 2
 
 
@@ -444,7 +445,7 @@ def test_service_op_dry_run_returns_envelope(store: SQLiteEngineStore) -> None:
     # connector's summary dict is carried through. We don't assert on
     # specific fields (they vary by connector) but we do assert every
     # connector reported ok.
-    assert result["ok_count"] == 7
+    assert result["ok_count"] == 8
     assert result["failed_count"] == 0
 
 
@@ -467,11 +468,13 @@ def test_service_op_connectors_subset_narrows_the_run(
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def test_value_side_default_plan_covers_four_connectors() -> None:
+def test_value_side_default_plan_covers_connectors() -> None:
     """Value-side plan omits NBS (no value-side op shipped) and the
     two Fed schedule-side surfaces (``fed-fomc`` / ``fed-releases``)
     — the value-bearing Fed op lives under ``fed-values``."""
-    assert ALL_VALUE_SIDE_CONNECTORS == ("bls", "bea", "census", "ecb", "fed-values")
+    assert ALL_VALUE_SIDE_CONNECTORS == (
+        "bls", "bea", "census", "ism", "ecb", "fed-values",
+    )
 
 
 def test_value_side_dry_run_hits_every_connector(
@@ -494,7 +497,7 @@ def test_value_side_dry_run_hits_every_connector(
     assert summary.dry_run is True
     assert summary.connectors_planned == list(ALL_VALUE_SIDE_CONNECTORS)
     assert [c for c, _ in call_log] == list(ALL_VALUE_SIDE_CONNECTORS)
-    assert summary.ok_count == 5
+    assert summary.ok_count == 6
     assert summary.failed_count == 0
 
 
@@ -516,6 +519,7 @@ def test_value_side_missing_api_key_isolates_to_one_connector(
         "bls":        _no_key,
         "bea":        _ok("bea"),
         "census":     _ok("census"),
+        "ism":        _ok("ism"),
         "ecb":        _ok("ecb"),
         "fed-values": _ok("fed-values"),
     }
@@ -527,7 +531,7 @@ def test_value_side_missing_api_key_isolates_to_one_connector(
     bls_result = next(r for r in summary.results if r.connector == "bls")
     assert bls_result.ok is False
     assert "BLS_API_KEY" in (bls_result.error or "")
-    assert summary.ok_count == 4
+    assert summary.ok_count == 5
     assert summary.failed_count == 1
 
 
