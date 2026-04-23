@@ -10,7 +10,7 @@ import pytest
 from storage.sqlite import (
     SQLiteEngineStore,
     StoredEventRecord,
-    _calendar_keyword_patterns,
+    _calendar_keyword_patterns_and_raw,
 )
 
 
@@ -292,6 +292,7 @@ def test_calendar_keyword_patterns_expand_nfp_provider_spellings(
 
     events = store.list_indicator_releases(indicator_keyword="nfp", limit=10)
 
+    assert len(events) == 3
     assert {event.event_id for event in events} == {
         "tradingeconomics:nfp-te",
         "forexfactory:nfp-ff",
@@ -304,11 +305,11 @@ def test_calendar_keyword_patterns_match_raw_db_spellings_before_normalizing(
 ) -> None:
     store.seed_calendar_indicators()
 
-    direct_aliases = _calendar_keyword_patterns("CPI (Mar)")
+    direct_aliases, _ = _calendar_keyword_patterns_and_raw("CPI (Mar)")
     assert "consumer price index" in direct_aliases
 
     with store._connection(commit=False) as c:
-        seeded_aliases = _calendar_keyword_patterns(
+        seeded_aliases, _ = _calendar_keyword_patterns_and_raw(
             "Inflation   Rate (Mar)",
             connection=c,
         )
@@ -499,9 +500,11 @@ def test_fetch_live_calendar_op_is_retired(
     assert result["retired"] is True
     assert result["total_fetched"] == 0
     assert result["events"] == []
-    assert result["replacement"]["read"] == (
-        "GET /v1/calendar or service op list_calendar_items"
-    )
+    assert result["replacement"] == {
+        "read": "GET /v1/calendar or service op list_calendar_items",
+        "schedule_refresh": "calendar_econ_refresh_schedules",
+        "value_sweep": "calendar_econ_sweep_values",
+    }
 
 
 def test_event_subtype_check_constraint(store: SQLiteEngineStore) -> None:

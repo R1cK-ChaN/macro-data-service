@@ -46,16 +46,7 @@ _CALENDAR_KEYWORD_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _calendar_keyword_patterns(
-    keyword: str,
-    *,
-    connection: sqlite3.Connection | None = None,
-) -> list[str]:
-    patterns, _ = _calendar_keyword_pattern_sets(keyword, connection=connection)
-    return sorted(patterns)
-
-
-def _calendar_keyword_pattern_sets(
+def _calendar_keyword_patterns_and_raw(
     keyword: str,
     *,
     connection: sqlite3.Connection | None = None,
@@ -119,7 +110,7 @@ def _add_calendar_keyword_filter(
     *,
     connection: sqlite3.Connection | None = None,
 ) -> None:
-    _, raw_patterns = _calendar_keyword_pattern_sets(
+    _, raw_patterns = _calendar_keyword_patterns_and_raw(
         keyword or "", connection=connection
     )
     if not raw_patterns:
@@ -170,26 +161,15 @@ def _calendar_surprise(
     return round(actual_value - forecast_value, 4)
 
 
-def _event_time_lower_bound_clause() -> str:
-    return (
-        "((event_time_precision = 'date' AND date(event_time_utc) >= date(?)) "
-        "OR (event_time_precision != 'date' AND datetime(event_time_utc) >= datetime(?)))"
-    )
-
-
-def _event_time_upper_bound_clause() -> str:
-    return (
-        "((event_time_precision = 'date' AND date(event_time_utc) <= date(?)) "
-        "OR (event_time_precision != 'date' AND datetime(event_time_utc) <= datetime(?)))"
-    )
-
-
 def _add_event_time_lower_bound(
     conditions: list[str],
     params: list[Any],
     value: str,
 ) -> None:
-    conditions.append(_event_time_lower_bound_clause())
+    conditions.append(
+        "((event_time_precision = 'date' AND date(event_time_utc) >= date(?)) "
+        "OR (event_time_precision != 'date' AND datetime(event_time_utc) >= datetime(?)))"
+    )
     params.extend((value, value))
 
 
@@ -198,7 +178,10 @@ def _add_event_time_upper_bound(
     params: list[Any],
     value: str,
 ) -> None:
-    conditions.append(_event_time_upper_bound_clause())
+    conditions.append(
+        "((event_time_precision = 'date' AND date(event_time_utc) <= date(?)) "
+        "OR (event_time_precision != 'date' AND datetime(event_time_utc) <= datetime(?)))"
+    )
     params.extend((value, value))
 
 
