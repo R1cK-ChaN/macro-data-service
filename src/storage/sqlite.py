@@ -52,13 +52,13 @@ def _add_calendar_keyword_filter(
     keyword: str | None,
     *,
     connection: sqlite3.Connection | None = None,
-) -> None:
+) -> bool:
     from ingestion.scrapers._common import normalize_indicator_name
 
     raw_keyword = (keyword or "").strip()
     base = normalize_indicator_name(raw_keyword)
-    if not base:
-        return
+    if not base or not re.search(r"[0-9A-Za-z]", base):
+        return False
     aliases = _CALENDAR_KEYWORD_ALIASES.get(base, ())
     raw_patterns = {raw_keyword, base, *aliases}
     if connection is not None:
@@ -96,7 +96,7 @@ def _add_calendar_keyword_filter(
                     if raw_pattern:
                         raw_patterns.add(raw_pattern)
     if not raw_patterns:
-        return
+        return False
     clauses: list[str] = []
     for pattern in sorted(raw_patterns):
         like = f"%{pattern}%"
@@ -107,6 +107,7 @@ def _add_calendar_keyword_filter(
         ))
         params.extend((like, like, like))
     conditions.append(f"({' OR '.join(clauses)})")
+    return True
 
 
 def _calendar_numeric_value(value: str | None) -> float | None:
@@ -4014,9 +4015,11 @@ class SQLiteEngineStore:
         category: str | None = None,
     ) -> list[StoredEventRecord]:
         cutoff = (utc_now() - timedelta(days=days)).isoformat()
+        now_iso = utc_now().isoformat()
         conditions: list[str] = []
         params: list[Any] = []
         _add_event_time_lower_bound(conditions, params, cutoff)
+        _add_event_time_upper_bound(conditions, params, now_iso)
         if released_only:
             conditions.append("actual IS NOT NULL")
         if importance:
@@ -4145,9 +4148,11 @@ class SQLiteEngineStore:
         with self._connection(commit=False) as connection:
             conditions = ["actual IS NOT NULL"]
             params: list[Any] = []
-            _add_calendar_keyword_filter(
+            matched_keyword = _add_calendar_keyword_filter(
                 conditions, params, indicator_keyword, connection=connection
             )
+            if not matched_keyword:
+                return []
             params.append(limit)
             rows = connection.execute(
                 f"""
@@ -4241,9 +4246,11 @@ class SQLiteEngineStore:
         with self._connection(commit=False) as connection:
             params: list[Any] = []
             conditions = ["actual IS NOT NULL"]
-            _add_calendar_keyword_filter(
+            matched_keyword = _add_calendar_keyword_filter(
                 conditions, params, indicator_keyword, connection=connection
             )
+            if indicator_keyword is not None and not matched_keyword:
+                return None
             row = connection.execute(
                 f"""
                 SELECT * FROM cal_econ_event

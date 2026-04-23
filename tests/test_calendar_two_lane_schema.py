@@ -324,6 +324,34 @@ def test_calendar_keyword_filter_matches_acronym_aliases(
     assert [event.event_id for event in events] == ["bls:cpi-official"]
 
 
+def test_calendar_keyword_filter_invalid_keyword_fails_closed(
+    store: SQLiteEngineStore,
+) -> None:
+    with store._connection(commit=True) as c:
+        c.execute(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                country_code, category, title, importance, actual, content_hash,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                'bls', 'cpi-invalid-keyword-guard',
+                '2026-04-10T12:30:00+00:00', 'datetime',
+                'US', 'Inflation', 'Consumer Price Index', 'high', '1.0',
+                'invalid-keyword-guard', 1700000000000,
+                '2026-04-23', '2026-04-23'
+            )
+            """
+        )
+
+    assert store.list_indicator_releases(indicator_keyword="!!!", limit=10) == []
+    assert store.latest_released_event(indicator_keyword="!!!") is None
+    assert store.list_indicator_releases(indicator_keyword="%", limit=10) == []
+    assert store.latest_released_event(indicator_keyword="%") is None
+    assert store.list_indicator_releases(indicator_keyword="_", limit=10) == []
+    assert store.latest_released_event(indicator_keyword="_") is None
+
+
 def test_calendar_keyword_filter_uses_raw_title_spellings(
     store: SQLiteEngineStore,
 ) -> None:
@@ -387,6 +415,35 @@ def test_calendar_keyword_filter_preserves_normalized_alias_lookup(
 
     assert latest is not None
     assert latest.event_id == "tradingeconomics:inflation-yoy"
+
+
+def test_recent_events_excludes_future_scheduled_rows(
+    store: SQLiteEngineStore,
+) -> None:
+    past = datetime.now(UTC) - timedelta(hours=1)
+    future = datetime.now(UTC) + timedelta(hours=1)
+    with store._connection(commit=True) as c:
+        c.executemany(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                country_code, category, title, importance, content_hash,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                'bls', ?, ?, 'datetime',
+                'US', 'Inflation', ?, 'high', ?,
+                1700000000000, '2026-04-23', '2026-04-23'
+            )
+            """,
+            [
+                ("past-release", past.isoformat(), "Past CPI", "past-release"),
+                ("future-release", future.isoformat(), "Future CPI", "future-release"),
+            ],
+        )
+
+    events = store.list_recent_events(released_only=False, country="US")
+
+    assert [event.event_id for event in events] == ["bls:past-release"]
 
 
 def test_calendar_keyword_filter_keeps_normalized_base_title_match(
