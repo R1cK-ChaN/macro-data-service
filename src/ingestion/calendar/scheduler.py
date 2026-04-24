@@ -9,13 +9,13 @@ Two driver entry points, one shared per-connector loop:
 
 - :func:`refresh_all_schedules` (P-sched-1) — schedule-side: invokes
   every connector's forward-looking schedule scrape (BLS / BEA / Census
-  / ISM / U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / Fed FOMC /
+  / ISM / U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / INE / Fed FOMC /
   Fed releasedates / NBS / Statistics Bureau JP / BoJ / BoJ Tankan / MoF JP / CAO /
   CAO GDP / METI).
   Daily-cron candidate.
 - :func:`sweep_value_side` (P-sched-2) — value-side: invokes every
   connector's value-bearing scrape (BLS / BEA / Census / ISM /
-  U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / Fed-values / BoJ-values /
+  U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / INE / Fed-values / BoJ-values /
   Statistics Bureau JP-values / BoJ Tankan-values / MoF JP-values /
   CAO-values / CAO GDP-values / METI-values).
   Frequent-cron candidate — repeatedly runs to pick up new values once
@@ -76,6 +76,7 @@ from .conference_board_api import (
 from .ecb_api import fetch_ecb_calendar, schedule_ecb_calendar
 from .eurostat_api import fetch_eurostat_calendar, schedule_eurostat_calendar
 from .destatis_api import fetch_destatis_calendar, schedule_destatis_calendar
+from .ine_api import fetch_ine_calendar, schedule_ine_calendar
 from .fed_api import (
     fetch_fed_calendar,
     fetch_fed_releasedates,
@@ -146,6 +147,10 @@ def _destatis(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_destatis_calendar(conn, dry_run=dry_run)
 
 
+def _ine(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return schedule_ine_calendar(conn, dry_run=dry_run)
+
+
 def _fed_fomc(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_fed_calendar(conn, dry_run=dry_run)
 
@@ -204,6 +209,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("ecb", _ecb),
     ("eurostat", _eurostat),
     ("destatis", _destatis),
+    ("ine", _ine),
     ("fed-fomc", _fed_fomc),
     ("fed-releases", _fed_releases),
     ("nbs", _nbs),
@@ -237,6 +243,7 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "ecb",
     "eurostat",
     "destatis",
+    "ine",
     "fed-values",
     "stat-bureau-jp-values",
     "boj-values",
@@ -321,6 +328,8 @@ def _summary_is_total_outage(summary: Any) -> bool:
       partial.
     - BLS ``series_failed`` covering every planned series (no
       ``series_ok``).
+    - Auto-discovery value sweeps with ``pending_releases`` where
+      every due release failed and zero observations landed.
     - Fed-values ``meetings_fetched == 0`` when the plan had
       meetings — the op auto-discovers past FOMC rows; a planned
       run that failed on every URL is a statement-page outage.
@@ -345,6 +354,16 @@ def _summary_is_total_outage(summary: Any) -> bool:
     series_planned = getattr(summary, "series_planned", None)
     series_failed = getattr(summary, "series_failed", None)
     series_ok = getattr(summary, "series_ok", None)
+    pending_releases = getattr(summary, "pending_releases", None)
+    observations_seen = getattr(summary, "observations_seen", None)
+    if (
+        pending_releases is not None
+        and pending_releases > 0
+        and observations_seen == 0
+        and series_failed
+        and len(series_failed) >= pending_releases
+    ):
+        return True
     if series_failed and series_planned is not None:
         if not series_ok and len(series_failed) >= len(series_planned):
             return True
@@ -830,6 +849,9 @@ def sweep_value_side(
             dry_run=dry_run,
         )
 
+    def _ine_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        return fetch_ine_calendar(conn, dry_run=dry_run)
+
     def _fed_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # fetch_fed_statement_values auto-discovers past FOMC rows
         # with ``actual IS NULL`` — no year window needed.
@@ -893,6 +915,7 @@ def sweep_value_side(
         "ecb":        _ecb_values,
         "eurostat":   _eurostat_values,
         "destatis":   _destatis_values,
+        "ine":        _ine_values,
         "fed-values": _fed_values,
         "stat-bureau-jp-values": _stat_bureau_values,
         "boj-values": _boj_values,

@@ -646,6 +646,9 @@ class SourceCapabilityManager:
                 _entity("calendar", "nar", "provider", "NAR"),
                 _entity("calendar", "federal-reserve", "provider", "Federal Reserve"),
                 _entity("calendar", "ecb", "provider", "ECB"),
+                _entity("calendar", "eurostat", "provider", "Eurostat"),
+                _entity("calendar", "destatis", "provider", "Destatis"),
+                _entity("calendar", "ine", "provider", "INE Spain"),
                 _entity("calendar", "nbs", "provider", "NBS"),
             ]
             return _limit_items(entities, query, limit)
