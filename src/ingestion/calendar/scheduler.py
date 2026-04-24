@@ -61,6 +61,7 @@ from .cao_api import (
     fetch_cao_calendar,
     fetch_cao_consumer_confidence_values,
 )
+from .cao_gdp_api import fetch_cao_gdp_calendar, fetch_cao_gdp_values
 from .mof_api import fetch_mof_calendar, fetch_mof_trade_values
 from .census_api import fetch_census_calendar, schedule_census_calendar
 from .conference_board_api import (
@@ -161,6 +162,10 @@ def _cao(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_cao_calendar(conn, dry_run=dry_run)
 
 
+def _cao_gdp(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return fetch_cao_gdp_calendar(conn, dry_run=dry_run)
+
+
 # Sequencing matters for operator inspection — BLS first (highest
 # trader impact, cheapest surface), Fed / ECB in the middle, NBS last
 # (most upstream-fragile so a failure there is easiest to triage at
@@ -181,6 +186,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("boj-tankan", _boj_tankan),
     ("mof-jp", _mof),
     ("cao", _cao),
+    ("cao-gdp", _cao_gdp),
 )
 
 ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
@@ -196,7 +202,7 @@ ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
 ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "bls", "bea", "census", "ism", "umich", "conference-board",
     "nar", "ecb", "fed-values", "boj-values", "boj-tankan-values",
-    "mof-jp-values", "cao-values",
+    "mof-jp-values", "cao-values", "cao-gdp-values",
 )
 
 
@@ -798,6 +804,12 @@ def sweep_value_side(
         # in-sweep schedule seed isn't required.
         return fetch_cao_consumer_confidence_values(conn, dry_run=dry_run)
 
+    def _cao_gdp_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # The SNA archive is past-only, so seed the staged GDP rows
+        # from the archive before discovering pending CSV values.
+        fetch_cao_gdp_calendar(conn, dry_run=dry_run)
+        return fetch_cao_gdp_values(conn, dry_run=dry_run)
+
     value_side_map: dict[ConnectorName, _ConnectorFn] = {
         "bls":        _bls_values,
         "bea":        _bea_values,
@@ -812,6 +824,7 @@ def sweep_value_side(
         "boj-tankan-values": _boj_tankan_values,
         "mof-jp-values": _mof_values,
         "cao-values": _cao_values,
+        "cao-gdp-values": _cao_gdp_values,
     }
 
     requested = (

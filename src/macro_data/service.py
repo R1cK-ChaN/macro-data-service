@@ -2181,6 +2181,124 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    def _op_calendar_econ_fetch_cao_gdp(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape Cabinet Office / ESRI GDP archive pages.
+
+        Arguments:
+          dry_run       — default True. No HTTP, no DB writes.
+          archive_years — optional list of integer archive years.
+
+        Execute mode fetches the ESRI SNA archive index, picks the
+        latest archive years, parses first and second preliminary GDP
+        releases, and upserts staged schedule rows under provider
+        ``cao``.
+        """
+        from ingestion.calendar.cao_gdp_api import (
+            ALL_INDICATORS,
+            fetch_cao_gdp_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_years = arguments.get("archive_years") or []
+        archive_years = [int(y) for y in raw_years] if raw_years else None
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": list(ALL_INDICATORS),
+                "archive_years_planned": archive_years or [],
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_cao_gdp_calendar(
+                connection,
+                dry_run=False,
+                archive_years=archive_years,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "archive_years_planned": summary.archive_years_planned,
+            "archive_pages_fetched": summary.archive_pages_fetched,
+            "releases_parsed":    summary.releases_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_cao_gdp_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape CAO GDP report CSVs and fill ``actual``.
+
+        Arguments:
+          dry_run          — default True. No HTTP, no DB writes.
+          reference_dates  — optional list of ISO quarter-end dates
+                             (``["2025-09-30"]``). When omitted, the
+                             op auto-discovers past staged GDP rows
+                             whose ``actual`` is still NULL.
+        """
+        from datetime import date
+        from ingestion.calendar.cao_gdp_api import (
+            ALL_INDICATORS,
+            fetch_cao_gdp_values,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_refs = arguments.get("reference_dates") or []
+        reference_dates: list[date] | None
+        if raw_refs:
+            reference_dates = [date.fromisoformat(str(d)) for d in raw_refs]
+        else:
+            reference_dates = None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_cao_gdp_values(
+                connection,
+                dry_run=dry_run,
+                reference_dates=reference_dates,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "releases_planned":   summary.releases_planned,
+            "releases_fetched":   summary.releases_fetched,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Cross-connector recurring refresh (issue #9 P-sched-1 / P-sched-2) ──
 
     def _op_calendar_econ_sweep_values(
@@ -2200,7 +2318,7 @@ class LocalMacroDataService:
           connectors   — optional list subset of
                          ``["bls", "bea", "census", "ism", "umich",
                          "conference-board", "nar", "ecb", "fed-values",
-                         "boj-values"]``.
+                         "boj-values", "cao-gdp-values"]``.
           start_year   — optional int; default ``current_year − 1``.
                          Applied to BLS / BEA / Census.
           end_year     — optional int; default current year. BLS / BEA / Census.
