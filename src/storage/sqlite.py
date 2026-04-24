@@ -48,6 +48,11 @@ _CALENDAR_KEYWORD_ALIASES: dict[str, tuple[str, ...]] = {
         "zew economic sentiment index",
         "zew indicator of economic sentiment",
     ),
+    "ifo": (
+        "ifo business climate",
+        "ifo business climate index",
+        "germany ifo business climate index",
+    ),
 }
 
 
@@ -1058,6 +1063,7 @@ _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
     ("eurostat",        "eurostat",        "Eurostat",                         "government_agency", "EU", "https://ec.europa.eu/eurostat",                                  "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data"),
     ("destatis",        "destatis",        "German Federal Statistical Office","government_agency", "DE", "https://www.destatis.de",                                         "https://www-genesis.destatis.de/genesisWS/rest/2020"),
     ("zew",             "zew",             "ZEW Leibniz Centre for European Economic Research","market_data", "DE", "https://www.zew.de",                         "https://www.zew.de/en/press/latest-press-releases"),
+    ("ifo",             "ifo",             "ifo Institute",                    "market_data",       "DE", "https://www.ifo.de",                                              "https://www.ifo.de/en/press"),
     ("insee",           "insee",           "French National Institute of Statistics and Economic Studies","government_agency", "FR", "https://www.insee.fr",              "https://www.insee.fr/en/agenda-diffusion"),
     ("ine",             "ine",             "Instituto Nacional de Estadistica","government_agency", "ES", "https://www.ine.es",                                              "https://www.ine.es/dyngs/Prensa"),
     ("istat",           "istat",           "Italian National Institute of Statistics","government_agency", "IT", "https://www.istat.it",                                      "https://www.istat.it/en/press-release"),
@@ -2876,6 +2882,7 @@ class SQLiteEngineStore:
                     ("eurostat",         "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("destatis",         "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("zew",              "market_data",       "economic",  100, _now_iso, _now_iso),
+                    ("ifo",              "market_data",       "economic",  100, _now_iso, _now_iso),
                     ("insee",            "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("ine",              "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("istat",            "government_agency", "economic",  100, _now_iso, _now_iso),
