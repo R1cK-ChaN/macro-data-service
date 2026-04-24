@@ -9,13 +9,13 @@ Two driver entry points, one shared per-connector loop:
 
 - :func:`refresh_all_schedules` (P-sched-1) — schedule-side: invokes
   every connector's forward-looking schedule scrape (BLS / BEA / Census
-  / ISM / U Michigan / Conference Board / NAR / ECB / Fed FOMC /
+  / ISM / U Michigan / Conference Board / NAR / ECB / Eurostat / Fed FOMC /
   Fed releasedates / NBS / Statistics Bureau JP / BoJ / BoJ Tankan / MoF JP / CAO /
   CAO GDP / METI).
   Daily-cron candidate.
 - :func:`sweep_value_side` (P-sched-2) — value-side: invokes every
   connector's value-bearing scrape (BLS / BEA / Census / ISM /
-  U Michigan / Conference Board / NAR / ECB / Fed-values / BoJ-values /
+  U Michigan / Conference Board / NAR / ECB / Eurostat / Fed-values / BoJ-values /
   Statistics Bureau JP-values / BoJ Tankan-values / MoF JP-values /
   CAO-values / CAO GDP-values / METI-values).
   Frequent-cron candidate — repeatedly runs to pick up new values once
@@ -74,6 +74,7 @@ from .conference_board_api import (
     schedule_conference_board_calendar,
 )
 from .ecb_api import fetch_ecb_calendar, schedule_ecb_calendar
+from .eurostat_api import fetch_eurostat_calendar, schedule_eurostat_calendar
 from .fed_api import (
     fetch_fed_calendar,
     fetch_fed_releasedates,
@@ -136,6 +137,10 @@ def _ecb(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_ecb_calendar(conn, dry_run=dry_run)
 
 
+def _eurostat(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return schedule_eurostat_calendar(conn, dry_run=dry_run)
+
+
 def _fed_fomc(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_fed_calendar(conn, dry_run=dry_run)
 
@@ -192,6 +197,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("conference-board", _conference_board),
     ("nar", _nar),
     ("ecb", _ecb),
+    ("eurostat", _eurostat),
     ("fed-fomc", _fed_fomc),
     ("fed-releases", _fed_releases),
     ("nbs", _nbs),
@@ -223,6 +229,7 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "conference-board",
     "nar",
     "ecb",
+    "eurostat",
     "fed-values",
     "stat-bureau-jp-values",
     "boj-values",
@@ -697,8 +704,8 @@ def sweep_value_side(
         skips recomputing settled rows while any just-published
         observation lands.
     start_period / end_period:
-        Optional SDMX-period strings forwarded to ECB. ``None`` means
-        the ECB op picks its own window.
+        Optional SDMX-period strings forwarded to ECB and Eurostat.
+        ``None`` means the driver picks its recent window.
     connectors:
         Optional subset of :data:`ALL_VALUE_SIDE_CONNECTORS`. Omit to
         run the full value-side plan.
@@ -792,6 +799,18 @@ def sweep_value_side(
             dry_run=dry_run,
         )
 
+    def _eurostat_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # Eurostat JSON-stat has no auth.
+        from ingestion.timeseries.sdmx.providers.eurostat import EurostatClient
+        client = EurostatClient()
+        return fetch_eurostat_calendar(
+            conn,
+            client,
+            start_period=resolved_start_period,
+            end_period=resolved_end_period,
+            dry_run=dry_run,
+        )
+
     def _fed_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # fetch_fed_statement_values auto-discovers past FOMC rows
         # with ``actual IS NULL`` — no year window needed.
@@ -853,6 +872,7 @@ def sweep_value_side(
         "conference-board": _conference_board_values,
         "nar":        _nar_values,
         "ecb":        _ecb_values,
+        "eurostat":   _eurostat_values,
         "fed-values": _fed_values,
         "stat-bureau-jp-values": _stat_bureau_values,
         "boj-values": _boj_values,
