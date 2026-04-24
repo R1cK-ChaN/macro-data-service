@@ -69,6 +69,9 @@ _CALENDAR_COUNTRY_ALIASES: dict[str, str] = {
     "SPAIN": "ES",
     "ESPANA": "ES",
     "ESPAÑA": "ES",
+    "IT": "IT",
+    "ITALY": "IT",
+    "ITALIA": "IT",
 }
 
 _CALENDAR_COUNTRY_DISPLAY: dict[str, str] = {
@@ -79,6 +82,7 @@ _CALENDAR_COUNTRY_DISPLAY: dict[str, str] = {
     "EU": "Euro Area",
     "DE": "Germany",
     "ES": "Spain",
+    "IT": "Italy",
 }
 
 
@@ -1046,6 +1050,7 @@ _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
     ("eurostat",        "eurostat",        "Eurostat",                         "government_agency", "EU", "https://ec.europa.eu/eurostat",                                  "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data"),
     ("destatis",        "destatis",        "German Federal Statistical Office","government_agency", "DE", "https://www.destatis.de",                                         "https://www-genesis.destatis.de/genesisWS/rest/2020"),
     ("ine",             "ine",             "Instituto Nacional de Estadistica","government_agency", "ES", "https://www.ine.es",                                              "https://www.ine.es/dyngs/Prensa"),
+    ("istat",           "istat",           "Italian National Institute of Statistics","government_agency", "IT", "https://www.istat.it",                                      "https://www.istat.it/en/press-release"),
     ("bis",             "bis",             "Bank for International Settlements","data_aggregator",  "CH", "https://www.bis.org",                                           "https://stats.bis.org/api/v2"),
     ("ecb",             "ecb",             "European Central Bank",             "central_bank",     "EU", "https://www.ecb.europa.eu",                                      "https://data-api.ecb.europa.eu/service/data"),
     ("oecd",            "oecd",            "Organisation for Economic Co-operation", "data_aggregator", "XX", "https://www.oecd.org",                                      "https://sdmx.oecd.org/public/rest/v2"),
@@ -2861,6 +2866,7 @@ class SQLiteEngineStore:
                     ("eurostat",         "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("destatis",         "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("ine",              "government_agency", "economic",  100, _now_iso, _now_iso),
+                    ("istat",            "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("nbs",              "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("boj",              "central_bank",      "economic",  100, _now_iso, _now_iso),
                     ("mof-jp",           "government_agency", "economic",  100, _now_iso, _now_iso),

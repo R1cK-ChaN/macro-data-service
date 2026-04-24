@@ -9,14 +9,14 @@ Two driver entry points, one shared per-connector loop:
 
 - :func:`refresh_all_schedules` (P-sched-1) — schedule-side: invokes
   every connector's forward-looking schedule scrape (BLS / BEA / Census
-  / ISM / U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / INE / Fed FOMC /
-  Fed releasedates / NBS / Statistics Bureau JP / BoJ / BoJ Tankan / MoF JP / CAO /
+  / ISM / U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / INE /
+  ISTAT / Fed FOMC / Fed releasedates / NBS / Statistics Bureau JP / BoJ / BoJ Tankan / MoF JP / CAO /
   CAO GDP / METI).
   Daily-cron candidate.
 - :func:`sweep_value_side` (P-sched-2) — value-side: invokes every
   connector's value-bearing scrape (BLS / BEA / Census / ISM /
-  U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / INE / Fed-values / BoJ-values /
-  Statistics Bureau JP-values / BoJ Tankan-values / MoF JP-values /
+  U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / INE /
+  ISTAT / Fed-values / BoJ-values / Statistics Bureau JP-values / BoJ Tankan-values / MoF JP-values /
   CAO-values / CAO GDP-values / METI-values).
   Frequent-cron candidate — repeatedly runs to pick up new values once
   the release crosses its scheduled time, so the calendar's ``actual``
@@ -77,6 +77,7 @@ from .ecb_api import fetch_ecb_calendar, schedule_ecb_calendar
 from .eurostat_api import fetch_eurostat_calendar, schedule_eurostat_calendar
 from .destatis_api import fetch_destatis_calendar, schedule_destatis_calendar
 from .ine_api import fetch_ine_calendar, schedule_ine_calendar
+from .istat_api import fetch_istat_calendar, schedule_istat_calendar
 from .fed_api import (
     fetch_fed_calendar,
     fetch_fed_releasedates,
@@ -151,6 +152,10 @@ def _ine(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_ine_calendar(conn, dry_run=dry_run)
 
 
+def _istat(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return schedule_istat_calendar(conn, dry_run=dry_run)
+
+
 def _fed_fomc(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_fed_calendar(conn, dry_run=dry_run)
 
@@ -210,6 +215,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("eurostat", _eurostat),
     ("destatis", _destatis),
     ("ine", _ine),
+    ("istat", _istat),
     ("fed-fomc", _fed_fomc),
     ("fed-releases", _fed_releases),
     ("nbs", _nbs),
@@ -244,6 +250,7 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "eurostat",
     "destatis",
     "ine",
+    "istat",
     "fed-values",
     "stat-bureau-jp-values",
     "boj-values",
@@ -852,6 +859,9 @@ def sweep_value_side(
     def _ine_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         return fetch_ine_calendar(conn, dry_run=dry_run)
 
+    def _istat_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        return fetch_istat_calendar(conn, dry_run=dry_run)
+
     def _fed_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # fetch_fed_statement_values auto-discovers past FOMC rows
         # with ``actual IS NULL`` — no year window needed.
@@ -916,6 +926,7 @@ def sweep_value_side(
         "eurostat":   _eurostat_values,
         "destatis":   _destatis_values,
         "ine":        _ine_values,
+        "istat":      _istat_values,
         "fed-values": _fed_values,
         "stat-bureau-jp-values": _stat_bureau_values,
         "boj-values": _boj_values,
