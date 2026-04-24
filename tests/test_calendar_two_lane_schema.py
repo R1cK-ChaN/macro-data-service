@@ -160,10 +160,18 @@ def test_cal_provider_seeded(store: SQLiteEngineStore) -> None:
         ("cao",              "government_agency", "economic",  100),
         ("census",           "government_agency", "economic",  100),
         ("conference-board",  "market_data",       "economic",  100),
+        ("destatis",          "government_agency", "economic",  100),
         ("ecb",              "central_bank",      "economic",  100),
         ("eodhd",            "data_aggregator",   "corporate", 10),
+        ("eurostat",         "government_agency", "economic",  100),
         ("federal-reserve",  "central_bank",      "economic",  100),
+        ("gfk",              "market_data",       "economic",  100),
+        ("hcob",             "market_data",       "economic",  100),
+        ("ifo",              "market_data",       "economic",  100),
+        ("ine",              "government_agency", "economic",  100),
+        ("insee",            "government_agency", "economic",  100),
         ("ism",              "market_data",       "economic",  100),
+        ("istat",            "government_agency", "economic",  100),
         ("meti",             "government_agency", "economic",  100),
         ("mof-jp",           "government_agency", "economic",  100),
         ("nar",              "market_data",       "economic",  100),
@@ -171,6 +179,7 @@ def test_cal_provider_seeded(store: SQLiteEngineStore) -> None:
         ("stat-bureau-jp",   "government_agency", "economic",  100),
         ("tradingeconomics", "data_aggregator",   "economic",  10),
         ("umich",            "market_data",       "economic",  100),
+        ("zew",              "market_data",       "economic",  100),
     ]
 
 
@@ -181,7 +190,7 @@ def test_cal_provider_seed_idempotent(tmp_path: Path) -> None:
     second = SQLiteEngineStore(db_path=db)
     with second._connection(commit=False) as c:
         n = c.execute("SELECT COUNT(*) FROM cal_provider").fetchone()[0]
-    assert n == 17
+    assert n == 26
 
 
 def test_importance_flows_through_view_as_enum_string(store: SQLiteEngineStore) -> None:
@@ -324,6 +333,49 @@ def test_calendar_keyword_patterns_expand_nfp_provider_spellings(
         "nfp-ff",
         "nfp-investing",
     }
+
+
+def test_calendar_keyword_zew_filters_to_zew_specific_titles(
+    store: SQLiteEngineStore,
+) -> None:
+    with store._connection(commit=True) as c:
+        c.executemany(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                country_code, category, title, importance, actual, content_hash,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                ?, ?, ?, 'datetime',
+                ?, ?, ?, 'high', '1.0', ?,
+                1700000000000, '2026-04-23', '2026-04-23'
+            )
+            """,
+            [
+                (
+                    "tradingeconomics",
+                    "zew-germany",
+                    "2026-04-21T09:05:00+00:00",
+                    "DE",
+                    "Zew Economic Sentiment Index",
+                    "ZEW Economic Sentiment Index",
+                    "zew-germany",
+                ),
+                (
+                    "tradingeconomics",
+                    "eu-economic-sentiment",
+                    "2026-04-21T09:00:00+00:00",
+                    "EU",
+                    "Economic Optimism Index",
+                    "Economic Sentiment",
+                    "eu-economic-sentiment",
+                ),
+            ],
+        )
+
+    events = store.list_indicator_releases(indicator_keyword="zew", limit=10)
+
+    assert [event.event_id for event in events] == ["zew-germany"]
 
 
 def test_calendar_keyword_filter_matches_acronym_aliases(
@@ -496,7 +548,32 @@ def test_calendar_country_filter_accepts_iso_codes_outside_aliases(
     events = store.list_recent_events(released_only=True, country="DE")
 
     assert [event.event_id for event in events] == ["de-cpi"]
-    assert events[0].country == "DE"
+
+
+def test_calendar_country_filter_accepts_germany_alias(
+    store: SQLiteEngineStore,
+) -> None:
+    past = datetime.now(UTC) - timedelta(hours=1)
+    with store._connection(commit=True) as c:
+        c.execute(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                country_code, category, title, importance, actual, content_hash,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                'destatis', 'de-gdp', ?, 'datetime',
+                'DE', 'GDP Growth', 'Germany GDP Flash QoQ', 'high', '0.2', 'de-gdp',
+                1700000000000, '2026-04-23', '2026-04-23'
+            )
+            """,
+            (past.isoformat(),),
+        )
+
+    events = store.list_recent_events(released_only=True, country="Germany")
+
+    assert [event.event_id for event in events] == ["de-gdp"]
+    assert events[0].country == "Germany"
 
 
 def test_calendar_keyword_filter_keeps_normalized_base_title_match(

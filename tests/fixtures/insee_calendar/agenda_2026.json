@@ -1,0 +1,78 @@
+{
+  "status": 0,
+  "numFounds": 5,
+  "start": 0,
+  "documents": [
+    {
+      "id": 8718000,
+      "famille": {
+        "id": 110,
+        "facetteConjoncture": {
+          "libelleFr": "Construction de logements",
+          "libelleEn": "Housing starts"
+        }
+      },
+      "embargo": "2026-04-28T06:45:00.000+00:00",
+      "typeProduit": "calendrier",
+      "periodeReference": "mars 2026",
+      "periodeReferenceEn": "March 2026"
+    },
+    {
+      "id": 8719824,
+      "famille": {
+        "id": 1251,
+        "facetteConjoncture": {
+          "libelleFr": "Comptes nationaux trimestriels - première estimation",
+          "libelleEn": "Quarterly national accounts - first estimate"
+        }
+      },
+      "embargo": "2026-01-30T06:30:00.000+00:00",
+      "typeProduit": "calendrier",
+      "periodeReference": "quatrième trimestre 2025",
+      "periodeReferenceEn": "fourth quarter 2025"
+    },
+    {
+      "id": 8718731,
+      "famille": {
+        "id": 1250,
+        "facetteConjoncture": {
+          "libelleFr": "Indice des prix à la consommation - résultats provisoires",
+          "libelleEn": "Consumer price index - provisional results"
+        }
+      },
+      "embargo": "2026-03-31T06:45:00.000+00:00",
+      "typeProduit": "calendrier",
+      "periodeReference": "mars 2026",
+      "periodeReferenceEn": "March 2026"
+    },
+    {
+      "id": 8719826,
+      "famille": {
+        "id": 1251,
+        "facetteConjoncture": {
+          "libelleFr": "Comptes nationaux trimestriels - première estimation",
+          "libelleEn": "Quarterly national accounts - first estimate"
+        }
+      },
+      "embargo": "2026-04-30T05:30:00.000+00:00",
+      "typeProduit": "calendrier",
+      "periodeReference": "premier trimestre 2026",
+      "periodeReferenceEn": "first quarter 2026"
+    },
+    {
+      "id": 8718733,
+      "famille": {
+        "id": 1250,
+        "facetteConjoncture": {
+          "libelleFr": "Indice des prix à la consommation - résultats provisoires",
+          "libelleEn": "Consumer price index - provisional results"
+        }
+      },
+      "embargo": "2026-04-30T06:45:00.000+00:00",
+      "typeProduit": "calendrier",
+      "periodeReference": "avril 2026",
+      "periodeReferenceEn": "April 2026"
+    }
+  ],
+  "facetsField": []
+}

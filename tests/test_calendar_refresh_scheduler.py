@@ -70,7 +70,8 @@ def test_default_connectors_cover_every_official_source() -> None:
     """The default plan is the full official-source suite."""
     assert ALL_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
-        "nar", "ecb", "fed-fomc", "fed-releases", "nbs", "stat-bureau-jp", "boj",
+        "nar", "ecb", "eurostat", "destatis", "zew", "ifo", "gfk", "hcob", "insee", "ine", "istat",
+        "fed-fomc", "fed-releases", "nbs", "stat-bureau-jp", "boj",
         "boj-tankan", "mof-jp", "cao", "cao-gdp", "meti",
     )
 
@@ -94,7 +95,7 @@ def test_dry_run_plans_every_connector(store: SQLiteEngineStore) -> None:
     )
     assert summary.dry_run is True
     assert summary.connectors_planned == list(ALL_CONNECTORS)
-    assert summary.ok_count == 18
+    assert summary.ok_count == 27
     assert summary.failed_count == 0
     assert [c for c, _ in call_log] == list(ALL_CONNECTORS)
     # Per-connector summaries are flattened to dicts so the service op
@@ -132,7 +133,7 @@ def test_one_connector_raising_does_not_skip_the_rest(
     )
     assert call_log == list(ALL_CONNECTORS)  # every connector invoked
     assert summary.failed_count == 1
-    assert summary.ok_count == 17
+    assert summary.ok_count == 26
     ecb_result = next(r for r in summary.results if r.connector == "ecb")
     assert ecb_result.ok is False
     assert "simulated ECB outage" in (ecb_result.error or "")
@@ -177,6 +178,15 @@ def test_failed_connector_rolls_back_without_touching_successes(
         "conference-board": _writer("conference-board", "kept-conference-board"),
         "nar":          _writer("nar",          "kept-nar"),
         "ecb":          _raise_after_write,
+        "eurostat":     _writer("eurostat",     "kept-eurostat"),
+        "destatis":     _writer("destatis",     "kept-destatis"),
+        "zew":          _writer("zew",          "kept-zew"),
+        "ifo":          _writer("ifo",          "kept-ifo"),
+        "gfk":          _writer("gfk",          "kept-gfk"),
+        "hcob":         _writer("hcob",         "kept-hcob"),
+        "insee":        _writer("insee",        "kept-insee"),
+        "ine":           _writer("ine",          "kept-ine"),
+        "istat":        _writer("istat",        "kept-istat"),
         "fed-fomc":     _writer("federal-reserve", "kept-fed-fomc"),
         "fed-releases": _writer("federal-reserve", "kept-fed-releases"),
         "nbs":          _writer("nbs",          "kept-nbs"),
@@ -209,6 +219,15 @@ def test_failed_connector_rolls_back_without_touching_successes(
     assert "kept-umich" in ids
     assert "kept-conference-board" in ids
     assert "kept-nar" in ids
+    assert "kept-eurostat" in ids
+    assert "kept-destatis" in ids
+    assert "kept-zew" in ids
+    assert "kept-ifo" in ids
+    assert "kept-gfk" in ids
+    assert "kept-hcob" in ids
+    assert "kept-insee" in ids
+    assert "kept-ine" in ids
+    assert "kept-istat" in ids
     assert "kept-fed-fomc" in ids
     assert "kept-fed-releases" in ids
     assert "kept-nbs" in ids
@@ -276,7 +295,7 @@ def test_in_summary_fetch_error_flips_ok_to_false(
     assert "502" in (by_connector["bea"].error or "")
     assert by_connector["ecb"].ok is False
     assert "503" in (by_connector["ecb"].error or "")
-    assert summary.ok_count == 16
+    assert summary.ok_count == 25
     assert summary.failed_count == 2
 
 
@@ -466,7 +485,7 @@ def test_service_op_dry_run_returns_envelope(store: SQLiteEngineStore) -> None:
     # connector's summary dict is carried through. We don't assert on
     # specific fields (they vary by connector) but we do assert every
     # connector reported ok.
-    assert result["ok_count"] == 18
+    assert result["ok_count"] == 27
     assert result["failed_count"] == 0
 
 
@@ -495,7 +514,8 @@ def test_value_side_default_plan_covers_connectors() -> None:
     — the value-bearing Fed op lives under ``fed-values``."""
     assert ALL_VALUE_SIDE_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
-        "nar", "ecb", "fed-values", "stat-bureau-jp-values", "boj-values", "boj-tankan-values",
+        "nar", "ecb", "eurostat", "destatis", "zew", "ifo", "gfk", "insee", "ine", "istat",
+        "fed-values", "stat-bureau-jp-values", "boj-values", "boj-tankan-values",
         "mof-jp-values", "cao-values", "cao-gdp-values", "meti-values",
     )
 
@@ -520,7 +540,7 @@ def test_value_side_dry_run_hits_every_connector(
     assert summary.dry_run is True
     assert summary.connectors_planned == list(ALL_VALUE_SIDE_CONNECTORS)
     assert [c for c, _ in call_log] == list(ALL_VALUE_SIDE_CONNECTORS)
-    assert summary.ok_count == 16
+    assert summary.ok_count == 24
     assert summary.failed_count == 0
 
 
@@ -547,6 +567,14 @@ def test_value_side_missing_api_key_isolates_to_one_connector(
         "conference-board": _ok("conference-board"),
         "nar":        _ok("nar"),
         "ecb":        _ok("ecb"),
+        "eurostat":   _ok("eurostat"),
+        "destatis":   _ok("destatis"),
+        "zew":        _ok("zew"),
+        "ifo":        _ok("ifo"),
+        "gfk":        _ok("gfk"),
+        "insee":      _ok("insee"),
+        "ine":        _ok("ine"),
+        "istat":      _ok("istat"),
         "fed-values": _ok("fed-values"),
         "stat-bureau-jp-values": _ok("stat-bureau-jp-values"),
         "boj-values": _ok("boj-values"),
@@ -564,7 +592,7 @@ def test_value_side_missing_api_key_isolates_to_one_connector(
     bls_result = next(r for r in summary.results if r.connector == "bls")
     assert bls_result.ok is False
     assert "BLS_API_KEY" in (bls_result.error or "")
-    assert summary.ok_count == 15
+    assert summary.ok_count == 23
     assert summary.failed_count == 1
 
 
@@ -1058,6 +1086,48 @@ def test_circuit_breaker_total_series_failure_trips(
 
     with store.get_connection() as conn:
         state = get_connector_state(conn, "bls")
+    assert state.consecutive_failures == FAILURE_THRESHOLD
+    assert state.cooling_until_ms is not None
+
+
+def test_circuit_breaker_pending_release_total_trips(
+    store: SQLiteEngineStore,
+) -> None:
+    """Auto-discovery value sweeps may plan a registry but attempt only
+    due releases. If every due release fails and zero values land, the
+    breaker treats the attempted batch as a connector-wide outage."""
+
+    @dataclass
+    class _PendingTotalFailureSummary:
+        dry_run: bool
+        series_planned: list[str]
+        series_ok: list[str]
+        series_empty: list[str]
+        series_failed: list[tuple[str, str]]
+        pending_releases: int
+        observations_seen: int
+
+    def _ine_total(conn, dry_run):
+        return _PendingTotalFailureSummary(
+            dry_run=dry_run,
+            series_planned=["INE_CPI_ADVANCE_YOY", "INE_GDP_ADVANCE_QOQ"],
+            series_ok=[],
+            series_empty=["INE_GDP_ADVANCE_QOQ"],
+            series_failed=[("INE_CPI_ADVANCE_YOY", "HTTP 503")],
+            pending_releases=1,
+            observations_seen=0,
+        )
+
+    for _ in range(FAILURE_THRESHOLD):
+        sweep_value_side(
+            store.get_connection,
+            dry_run=False,
+            connectors=["ine"],
+            _connector_overrides={"ine": _ine_total},
+        )
+
+    with store.get_connection() as conn:
+        state = get_connector_state(conn, "ine")
     assert state.consecutive_failures == FAILURE_THRESHOLD
     assert state.cooling_until_ms is not None
 

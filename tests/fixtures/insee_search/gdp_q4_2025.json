@@ -1,0 +1,15 @@
+{
+  "status": 0,
+  "numFounds": 1,
+  "start": 0,
+  "documents": [
+    {
+      "id": 8733403,
+      "titre": "GDP slowed down in Q4 2025 (+0.2% after +0.5%); on average in 2025, it increased by 0.9%",
+      "sousTitre": "Quarterly national accounts - first estimate - fourth quarter 2025",
+      "famille": {"id": 1251},
+      "embargo": "2026-01-30T06:30:00.000+00:00",
+      "dateDiffusion": "2026-01-30T06:30:00.000+00:00"
+    }
+  ]
+}

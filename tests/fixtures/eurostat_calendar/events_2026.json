@@ -1,0 +1,55 @@
+[
+  {
+    "recordid": "22486538",
+    "allDay": true,
+    "unit": "C4",
+    "period": "February 2026",
+    "types": [
+      {"label": "Data release", "order": 1},
+      {"label": "Euro indicators release", "order": 2}
+    ],
+    "euroind": true,
+    "euroindAuthor": "estat",
+    "start": "2026-03-03T11:00Z",
+    "datasetCodes": "prc_hicp_fp,prc_hicp_manr",
+    "theme": "Economy and finance",
+    "preliminary": false,
+    "title": "Flash estimate inflation euro area"
+  },
+  {
+    "recordid": "22487004",
+    "allDay": true,
+    "period": "Q1/2026",
+    "types": [
+      {"label": "Data release", "order": 1},
+      {"label": "Euro indicators release", "order": 2}
+    ],
+    "euroind": true,
+    "start": "2026-04-30T11:00Z",
+    "datasetCodes": "namq_10_gdp",
+    "theme": "Economy and finance",
+    "title": "Preliminary flash estimate GDP - EU and euro area"
+  },
+  {
+    "recordid": "unemp-1",
+    "allDay": true,
+    "period": "March 2026",
+    "types": [
+      {"label": "Data release", "order": 1},
+      {"label": "Euro indicators release", "order": 2}
+    ],
+    "euroind": true,
+    "start": "2026-04-30T11:00Z",
+    "datasetCodes": "une_rt_m",
+    "theme": "Economy and finance",
+    "title": "Euro area unemployment rate"
+  },
+  {
+    "recordid": "final-hicp",
+    "allDay": true,
+    "period": "March 2026",
+    "start": "2026-04-16T11:00Z",
+    "datasetCodes": "prc_hicp_manr",
+    "title": "Inflation (HICP)"
+  }
+]

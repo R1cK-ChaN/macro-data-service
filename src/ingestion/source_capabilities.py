@@ -646,6 +646,15 @@ class SourceCapabilityManager:
                 _entity("calendar", "nar", "provider", "NAR"),
                 _entity("calendar", "federal-reserve", "provider", "Federal Reserve"),
                 _entity("calendar", "ecb", "provider", "ECB"),
+                _entity("calendar", "eurostat", "provider", "Eurostat"),
+                _entity("calendar", "destatis", "provider", "Destatis"),
+                _entity("calendar", "zew", "provider", "ZEW Germany"),
+                _entity("calendar", "ifo", "provider", "Ifo Germany"),
+                _entity("calendar", "gfk", "provider", "GfK / NIM Germany"),
+                _entity("calendar", "hcob", "provider", "HCOB / S&P Global Germany PMI"),
+                _entity("calendar", "insee", "provider", "INSEE France"),
+                _entity("calendar", "ine", "provider", "INE Spain"),
+                _entity("calendar", "istat", "provider", "ISTAT Italy"),
                 _entity("calendar", "nbs", "provider", "NBS"),
             ]
             return _limit_items(entities, query, limit)

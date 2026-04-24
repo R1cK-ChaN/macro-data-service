@@ -103,7 +103,16 @@ def test_provider_constants_align_with_parser_ids() -> None:
     from ingestion.calendar.conference_board_api.parser import (
         PROVIDER as CONFERENCE_BOARD,
     )
+    from ingestion.calendar.destatis_api.parser import PROVIDER as DESTATIS
     from ingestion.calendar.ecb_api.parser import PROVIDER as ECB
+    from ingestion.calendar.eurostat_api.parser import PROVIDER as EUROSTAT
+    from ingestion.calendar.zew_api.parser import PROVIDER as ZEW
+    from ingestion.calendar.ifo_api.parser import PROVIDER as IFO
+    from ingestion.calendar.gfk_api.parser import PROVIDER as GFK
+    from ingestion.calendar.hcob_api.parser import PROVIDER as HCOB
+    from ingestion.calendar.insee_api.parser import PROVIDER as INSEE
+    from ingestion.calendar.ine_api.parser import PROVIDER as INE
+    from ingestion.calendar.istat_api.parser import PROVIDER as ISTAT
     from ingestion.calendar.fed_api.parser import PROVIDER as FED
     from ingestion.calendar.ism_api.parser import PROVIDER as ISM
     from ingestion.calendar.nar_api.parser import PROVIDER as NAR
@@ -116,8 +125,9 @@ def test_provider_constants_align_with_parser_ids() -> None:
 
     assert TE_PROVIDER == TE_FROM_PARSER
     assert set(OFFICIAL_PROVIDERS) == {
-        BLS, BEA, CENSUS, ISM, UMICH, CONFERENCE_BOARD, NAR, ECB, FED, NBS,
-        MOF_JP, CAO, METI, STAT_BUREAU,
+        BLS, BEA, CENSUS, ISM, UMICH, CONFERENCE_BOARD, NAR, ECB, EUROSTAT,
+        DESTATIS, ZEW, IFO, GFK, HCOB, INSEE, INE, ISTAT, FED, NBS, MOF_JP, CAO, METI,
+        STAT_BUREAU,
     }
 
 
@@ -166,6 +176,41 @@ def test_te_and_official_match_on_same_bucket(
     assert summary.official_only_count == 0
     assert summary.match_percentage == 100.0
     assert summary.indicators[0].canonical_indicator == "CPI"
+
+
+def test_zew_te_title_matches_official_bucket(
+    store: SQLiteEngineStore,
+) -> None:
+    _insert_event(
+        store,
+        provider=TE_PROVIDER,
+        provider_event_id="te-zew-1",
+        country_code="DE",
+        title="ZEW Economic Sentiment Index",
+        reference_date="2026-04-30T00:00:00",
+        event_time_utc="2026-04-21T09:05:00+00:00",
+    )
+    _insert_event(
+        store,
+        provider="zew",
+        provider_event_id="zew-1",
+        country_code="DE",
+        title="Germany ZEW Economic Sentiment Index",
+        reference_date="2026-04-01",
+        event_time_utc="2026-04-21T09:05:00+00:00",
+    )
+
+    with store.get_connection() as conn:
+        summary = calendar_econ_parity(
+            conn,
+            from_date="2026-04-01",
+            to_date="2026-04-30",
+        )
+
+    assert summary.matched == 1
+    assert summary.te_only_count == 0
+    assert summary.official_only_count == 0
+    assert summary.indicators[0].canonical_indicator == "ZEW_SENTIMENT"
 
 
 def test_te_only_gap_is_actionable_signal(

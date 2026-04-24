@@ -105,6 +105,21 @@ def _iter_connectors():
     from ingestion.calendar.fed_api.parser import (
         FedCalendarEventRecord, PROVIDER as FED_PROVIDER,
     )
+    from ingestion.calendar.insee_api.parser import (
+        INSEECalendarEventRecord, PROVIDER as INSEE_PROVIDER,
+    )
+    from ingestion.calendar.zew_api.parser import (
+        ZEWCalendarEventRecord, PROVIDER as ZEW_PROVIDER,
+    )
+    from ingestion.calendar.ifo_api.parser import (
+        IfoCalendarEventRecord, PROVIDER as IFO_PROVIDER,
+    )
+    from ingestion.calendar.gfk_api.parser import (
+        GfKCalendarEventRecord, PROVIDER as GFK_PROVIDER,
+    )
+    from ingestion.calendar.hcob_api.parser import (
+        HCOBCalendarEventRecord, PROVIDER as HCOB_PROVIDER,
+    )
     from ingestion.calendar.nar_api.parser import (
         NARCalendarEventRecord, PROVIDER as NAR_PROVIDER,
     )
@@ -133,6 +148,11 @@ def _iter_connectors():
         ("nar", NAR_PROVIDER, NARCalendarEventRecord),
         ("ecb", ECB_PROVIDER, ECBCalendarEventRecord),
         ("fed", FED_PROVIDER, FedCalendarEventRecord),
+        ("zew", ZEW_PROVIDER, ZEWCalendarEventRecord),
+        ("ifo", IFO_PROVIDER, IfoCalendarEventRecord),
+        ("gfk", GFK_PROVIDER, GfKCalendarEventRecord),
+        ("hcob", HCOB_PROVIDER, HCOBCalendarEventRecord),
+        ("insee", INSEE_PROVIDER, INSEECalendarEventRecord),
         ("nbs", NBS_PROVIDER, NBSCalendarEventRecord),
         ("meti", METI_PROVIDER, MetiCalendarEventRecord),
         ("stat_bureau", STAT_BUREAU_PROVIDER, StatBureauCalendarEventRecord),
@@ -311,6 +331,11 @@ def test_store_raw_idempotent_across_all_connectors(
         "nar": "NARCalendarRawRecord",
         "ecb": "ECBCalendarRawRecord",
         "fed": "FedCalendarRawRecord",
+        "zew": "ZEWCalendarRawRecord",
+        "ifo": "IfoCalendarRawRecord",
+        "gfk": "GfKCalendarRawRecord",
+        "hcob": "HCOBCalendarRawRecord",
+        "insee": "INSEECalendarRawRecord",
         "nbs": "NBSCalendarRawRecord",
         "meti": "MetiCalendarRawRecord",
         "stat_bureau": "StatBureauCalendarRawRecord",

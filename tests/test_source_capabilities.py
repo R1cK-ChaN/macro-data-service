@@ -162,9 +162,9 @@ def test_default_calendar_capability_is_discovery_only() -> None:
     assert capability["supports_latest_sync"] is False
     assert capability["is_default_scheduled"] is False
 
-    entities = manager.list_entities("calendar", limit=20)["entities"]
+    entities = manager.list_entities("calendar", limit=50)["entities"]
     ids = {entity["entity_id"] for entity in entities}
-    assert {"tradingeconomics", "eodhd", "bls", "nar"} <= ids
+    assert {"tradingeconomics", "eodhd", "bls", "nar", "zew", "insee", "hcob"} <= ids
     assert manager.sync_latest("calendar") == {
         "error": "latest sync unavailable for calendar"
     }
