@@ -114,6 +114,9 @@ def _iter_connectors():
     from ingestion.calendar.meti_api.parser import (
         MetiCalendarEventRecord, PROVIDER as METI_PROVIDER,
     )
+    from ingestion.calendar.stat_bureau_api.parser import (
+        StatBureauCalendarEventRecord, PROVIDER as STAT_BUREAU_PROVIDER,
+    )
     from ingestion.calendar.umich_api.parser import (
         UMichCalendarEventRecord, PROVIDER as UMICH_PROVIDER,
     )
@@ -132,6 +135,7 @@ def _iter_connectors():
         ("fed", FED_PROVIDER, FedCalendarEventRecord),
         ("nbs", NBS_PROVIDER, NBSCalendarEventRecord),
         ("meti", METI_PROVIDER, MetiCalendarEventRecord),
+        ("stat_bureau", STAT_BUREAU_PROVIDER, StatBureauCalendarEventRecord),
     ]
 
 
@@ -309,6 +313,7 @@ def test_store_raw_idempotent_across_all_connectors(
         "fed": "FedCalendarRawRecord",
         "nbs": "NBSCalendarRawRecord",
         "meti": "MetiCalendarRawRecord",
+        "stat_bureau": "StatBureauCalendarRawRecord",
     }.items():
         if module_name == label:
             mod = __import__(

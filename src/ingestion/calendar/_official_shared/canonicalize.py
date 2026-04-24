@@ -89,10 +89,12 @@ _ALIASES: dict[str, str] = {
     "cpi-u": "CPI",
     "inflation rate": "CPI",
     "core cpi": "CORE_CPI",
+    "japan core cpi": "CORE_CPI",
     "consumer price index all items less food and energy": "CORE_CPI",
     "cpi less food and energy": "CORE_CPI",
     "cpi ex food and energy": "CORE_CPI",
     "core inflation rate": "CORE_CPI",
+    "japan core inflation rate": "CORE_CPI",
     "ppi": "PPI",
     "producer price index": "PPI",
     "producer price index final demand": "PPI",
@@ -109,6 +111,7 @@ _ALIASES: dict[str, str] = {
     "non farm payrolls": "NFP",           # TE title
     "nfp": "NFP",
     "unemployment rate": "UNEMPLOYMENT_RATE",
+    "japan unemployment rate": "UNEMPLOYMENT_RATE",
     "average hourly earnings": "AHE",
     "average hourly earnings total private": "AHE",   # BLS long-form title
     "average weekly hours": "AWH",
@@ -251,6 +254,8 @@ _ALIASES: dict[str, str] = {
     # gaps even when reference dates align.
     "china gdp": "GDP",
     "china consumer price index": "CPI",
+    "japan consumer price index": "CPI",
+    "japan inflation rate": "CPI",
     "china producer price index": "PPI",
     "china industrial production": "INDUSTRIAL_PRODUCTION",
     "china fixed asset investment": "FIXED_ASSET_INVESTMENT",

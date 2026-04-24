@@ -2299,7 +2299,122 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    # ── Statistics Bureau / e-Stat Core CPI + Unemployment (issue #14 P2) ──
+
+    def _op_calendar_econ_fetch_stat_bureau(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape Statistics Bureau schedule surfaces for CPI and LFS.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+        """
+        from ingestion.calendar.stat_bureau_api import (
+            ALL_INDICATORS,
+            fetch_stat_bureau_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": list(ALL_INDICATORS),
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_stat_bureau_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "releases_parsed":    summary.releases_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_stat_bureau_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch e-Stat scalar values and fill ``actual``.
+
+        Arguments:
+          dry_run          — default True. No HTTP, no DB writes.
+          reference_dates  — optional list of ISO reference dates
+                             (``["2026-03-01"]``). When omitted, the
+                             op auto-discovers past Statistics Bureau
+                             rows whose ``actual`` is still NULL.
+          app_id           — optional e-Stat application id. When
+                             omitted, ``ESTAT_APP_ID`` is read from
+                             the environment.
+        """
+        from datetime import date
+        from ingestion.calendar.stat_bureau_api import (
+            ALL_INDICATORS,
+            fetch_stat_bureau_values,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_refs = arguments.get("reference_dates") or []
+        reference_dates: list[date] | None
+        if raw_refs:
+            reference_dates = [date.fromisoformat(str(d)) for d in raw_refs]
+        else:
+            reference_dates = None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        app_id_raw = arguments.get("app_id")
+        app_id = str(app_id_raw).strip() if app_id_raw else None
+
+        connection = get_conn()
+        try:
+            summary = fetch_stat_bureau_values(
+                connection,
+                dry_run=dry_run,
+                reference_dates=reference_dates,
+                app_id=app_id,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "releases_planned":   summary.releases_planned,
+            "releases_fetched":   summary.releases_fetched,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── METI Industrial Production + Retail Sales (issue #14 P5) ────────
+
 
     def _op_calendar_econ_fetch_meti(
         self, arguments: dict[str, Any],
@@ -2426,7 +2541,7 @@ class LocalMacroDataService:
           connectors   — optional list subset of
                          ``["bls", "bea", "census", "ism", "umich",
                          "conference-board", "nar", "ecb", "fed-values",
-                         "boj-values", "boj-tankan-values",
+                         "stat-bureau-jp-values", "boj-values", "boj-tankan-values",
                          "mof-jp-values", "cao-values",
                          "cao-gdp-values", "meti-values"]``.
           start_year   — optional int; default ``current_year − 1``.
@@ -2517,7 +2632,7 @@ class LocalMacroDataService:
         (:mod:`ingestion.calendar.scheduler`). Iterates BLS + BEA +
         Census + ISM + U Michigan + Conference Board + NAR + ECB +
         Fed FOMC + Fed releasedates + NBS + BoJ + BoJ Tankan +
-        MoF JP + CAO + CAO GDP + METI in order, isolating
+        Statistics Bureau JP + MoF JP + CAO + CAO GDP + METI in order, isolating
         per-connector exceptions so one upstream outage rolls back
         only that connector. Each connector gets its own connection /
         commit / rollback lifecycle.
@@ -2527,7 +2642,7 @@ class LocalMacroDataService:
           connectors — optional list subset of
                        ``["bls","bea","census","ism","umich",
                        "conference-board","nar","ecb","fed-fomc",
-                       "fed-releases","nbs","boj","boj-tankan",
+                       "fed-releases","nbs","stat-bureau-jp","boj","boj-tankan",
                        "mof-jp","cao","cao-gdp","meti"]``;
                        omit to run the full roster.
         """

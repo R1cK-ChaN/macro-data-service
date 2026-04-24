@@ -268,7 +268,8 @@ def test_official_providers_have_higher_precedence_than_te(
         )
     for provider in (
         "bls", "bea", "census", "ism", "umich", "conference-board",
-        "nar", "federal-reserve", "ecb", "nbs",
+        "nar", "federal-reserve", "ecb", "nbs", "boj", "mof-jp",
+        "cao", "meti", "stat-bureau-jp",
     ):
         assert rows[provider] == 100, f"{provider} precedence"
     assert rows["tradingeconomics"] == 10

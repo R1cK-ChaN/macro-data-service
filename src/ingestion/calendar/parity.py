@@ -57,7 +57,7 @@ TE_PROVIDER = "tradingeconomics"
 OFFICIAL_PROVIDERS: tuple[str, ...] = (
     "bls", "bea", "census", "ism", "umich", "conference-board",
     "nar", "ecb", "federal-reserve", "nbs", "mof-jp", "cao",
-    "meti",
+    "meti", "stat-bureau-jp",
 )
 
 

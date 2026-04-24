@@ -1,0 +1,27 @@
+{
+  "GET_STATS_DATA": {
+    "RESULT": {
+      "STATUS": 0,
+      "ERROR_MSG": "Normal end"
+    },
+    "STATISTICAL_DATA": {
+      "TABLE_INF": {
+        "@id": "0003005865",
+        "STAT_NAME": "Labour Force Survey",
+        "TITLE": "1-1-5 Labour force participation rate, employment rate and unemployment rate"
+      },
+      "DATA_INF": {
+        "VALUE": {
+          "@tab": "02",
+          "@cat01": "000",
+          "@cat02": "08",
+          "@cat03": "0",
+          "@area": "00000",
+          "@time": "2026000202",
+          "@unit": "%",
+          "$": "2.6"
+        }
+      }
+    }
+  }
+}
