@@ -2077,6 +2077,110 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    def _op_calendar_econ_fetch_cao(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape the Cabinet Office / ESRI release-schedule page.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+
+        Dry-run returns the indicator plan only. Execute mode fetches
+        ``esri.cao.go.jp/en/stat/stat-schedule-e.html`` once, parses
+        the Consumer Confidence column into one ``(raw, event)`` tuple
+        per future release, and upserts via
+        :func:`project_schedule_events` so the value-side writer can
+        fill ``actual`` in a later pass without losing rows.
+        """
+        from ingestion.calendar.cao_api import (
+            ALL_INDICATORS,
+            fetch_cao_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": list(ALL_INDICATORS),
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_cao_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "releases_parsed":    summary.releases_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_cao_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape the Consumer Confidence landing page and fill ``actual``.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+
+        One GET per invocation — CAO overwrites ``shouhi-e.html`` on
+        each release, so the op always reads the release currently
+        on-screen. ``provider_event_id`` matches the schedule-side
+        write exactly so the SA-series headline upserts onto the
+        pending schedule row via the shared projector's merge CASE.
+        """
+        from ingestion.calendar.cao_api import (
+            ALL_INDICATORS,
+            fetch_cao_consumer_confidence_values,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_cao_consumer_confidence_values(
+                connection, dry_run=dry_run,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "releases_planned":   summary.releases_planned,
+            "releases_fetched":   summary.releases_fetched,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "overdue_references": summary.overdue_references,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Cross-connector recurring refresh (issue #9 P-sched-1 / P-sched-2) ──
 
     def _op_calendar_econ_sweep_values(

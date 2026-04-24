@@ -221,6 +221,16 @@ _ALIASES: dict[str, str] = {
     "consumer confidence": "CB_CONSUMER_CONFIDENCE",
     "consumer confidence index": "CB_CONSUMER_CONFIDENCE",
     "conference board consumer confidence": "CB_CONSUMER_CONFIDENCE",
+    # ── Japan (Cabinet Office / ESRI, issue #14 P3) ─────────────
+    # Reuses ``CB_CONSUMER_CONFIDENCE`` — the ``CB_`` prefix is a
+    # historical artefact (Conference Board was the first user of
+    # the canonical). Country disambiguation lives in
+    # ``provider_event_id`` so US CB and JP CAO rows sharing the
+    # token is the intended shape. Same pattern as MoF reusing
+    # BEA's ``TRADE_BALANCE``.
+    "consumer confidence survey": "CB_CONSUMER_CONFIDENCE",
+    "cao consumer confidence": "CB_CONSUMER_CONFIDENCE",
+    "japan consumer confidence": "CB_CONSUMER_CONFIDENCE",
     "cb leading index": "CB_LEADING_INDEX",
     "leading index": "CB_LEADING_INDEX",
     "leading economic index": "CB_LEADING_INDEX",

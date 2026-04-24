@@ -2850,6 +2850,7 @@ class SQLiteEngineStore:
                     ("nbs",              "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("boj",              "central_bank",      "economic",  100, _now_iso, _now_iso),
                     ("mof-jp",           "government_agency", "economic",  100, _now_iso, _now_iso),
+                    ("cao",              "government_agency", "economic",  100, _now_iso, _now_iso),
                 ],
             )
 
