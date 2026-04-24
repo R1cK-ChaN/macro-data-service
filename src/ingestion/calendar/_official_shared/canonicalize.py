@@ -190,6 +190,15 @@ _ALIASES: dict[str, str] = {
     "tankan large enterprise non-manufacturing index": "TANKAN_LARGE_NONMFG",
     "tankan large non-manufacturing index": "TANKAN_LARGE_NONMFG",
     "tankan_large_nonmfg": "TANKAN_LARGE_NONMFG",
+    # ── Japan (MoF trade statistics, issue #14 P4) ──────────────
+    # Reuses the pre-existing ``TRADE_BALANCE`` canonical (see the
+    # BEA alias ``international trade in goods and services`` above).
+    # Country disambiguation lives in ``provider_event_id``, so a
+    # US trade balance and a JP trade balance sharing the same token
+    # is the intended shape.
+    "balance of trade": "TRADE_BALANCE",
+    "value of exports and imports": "TRADE_BALANCE",
+    "balance_of_trade": "TRADE_BALANCE",
     "beige book": "BEIGE_BOOK",
     "h.4.1": "FED_H41",
     "h.8": "FED_H8",

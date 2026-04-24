@@ -56,7 +56,7 @@ TE_PROVIDER = "tradingeconomics"
 # form because ``cal_provider`` carries the kebab-case id.
 OFFICIAL_PROVIDERS: tuple[str, ...] = (
     "bls", "bea", "census", "ism", "umich", "conference-board",
-    "nar", "ecb", "federal-reserve", "nbs",
+    "nar", "ecb", "federal-reserve", "nbs", "mof-jp",
 )
 
 

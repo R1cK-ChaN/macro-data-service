@@ -57,6 +57,7 @@ from .boj_tankan_api import (
     fetch_boj_tankan_calendar,
     fetch_boj_tankan_outlines,
 )
+from .mof_api import fetch_mof_calendar, fetch_mof_trade_values
 from .census_api import fetch_census_calendar, schedule_census_calendar
 from .conference_board_api import (
     fetch_conference_board_calendar,
@@ -148,6 +149,10 @@ def _boj_tankan(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_boj_tankan_calendar(conn, dry_run=dry_run)
 
 
+def _mof(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return fetch_mof_calendar(conn, dry_run=dry_run)
+
+
 # Sequencing matters for operator inspection — BLS first (highest
 # trader impact, cheapest surface), Fed / ECB in the middle, NBS last
 # (most upstream-fragile so a failure there is easiest to triage at
@@ -166,6 +171,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("nbs", _nbs),
     ("boj", _boj),
     ("boj-tankan", _boj_tankan),
+    ("mof-jp", _mof),
 )
 
 ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
@@ -181,6 +187,7 @@ ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
 ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "bls", "bea", "census", "ism", "umich", "conference-board",
     "nar", "ecb", "fed-values", "boj-values", "boj-tankan-values",
+    "mof-jp-values",
 )
 
 
@@ -763,6 +770,14 @@ def sweep_value_side(
         fetch_boj_tankan_calendar(conn, dry_run=dry_run)
         return fetch_boj_tankan_outlines(conn, dry_run=dry_run)
 
+    def _mof_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # Auto-discovers past Balance-of-Trade rows with
+        # ``actual IS NULL`` and fetches each release's XML feed.
+        # Unlike Tankan, MoF's schedule page is forward-looking —
+        # calendar rows exist well before the release — so no
+        # in-sweep seed is needed.
+        return fetch_mof_trade_values(conn, dry_run=dry_run)
+
     value_side_map: dict[ConnectorName, _ConnectorFn] = {
         "bls":        _bls_values,
         "bea":        _bea_values,
@@ -775,6 +790,7 @@ def sweep_value_side(
         "fed-values": _fed_values,
         "boj-values": _boj_values,
         "boj-tankan-values": _boj_tankan_values,
+        "mof-jp-values": _mof_values,
     }
 
     requested = (

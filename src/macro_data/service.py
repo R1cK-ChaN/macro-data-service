@@ -1961,6 +1961,122 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    # ── MoF Balance of Trade connector (issue #14 P4) ──────────────────
+
+    def _op_calendar_econ_fetch_mof(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape the MoF trade-statistics release calendar.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+
+        Dry-run returns the indicator plan only. Execute mode fetches
+        ``customs.go.jp/toukei/calendar/calend_e.htm`` once, parses
+        each Monthly Data release row, emits a ``(raw, event)``
+        tuple per month, and upserts via
+        :func:`project_schedule_events` so the value-side writer can
+        fill ``actual`` in a later pass without losing rows.
+        """
+        from ingestion.calendar.mof_api import (
+            ALL_INDICATORS,
+            fetch_mof_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": list(ALL_INDICATORS),
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_mof_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "releases_parsed":    summary.releases_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_mof_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape MoF trade-report XMLs and fill ``actual`` on existing rows.
+
+        Arguments:
+          dry_run          — default True. No HTTP, no DB writes.
+          reference_dates  — optional list of ISO reference dates
+                             (``["2026-03-01"]``). When omitted, the op
+                             auto-discovers past Balance-of-Trade rows
+                             whose ``actual`` is still NULL.
+
+        ``provider_event_id`` matches the schedule-side write exactly
+        so the DI upserts onto the existing schedule row via the
+        shared projector's merge CASE.
+        """
+        from datetime import date
+        from ingestion.calendar.mof_api import (
+            ALL_INDICATORS,
+            fetch_mof_trade_values,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_refs = arguments.get("reference_dates") or []
+        reference_dates: list[date] | None
+        if raw_refs:
+            reference_dates = [date.fromisoformat(str(d)) for d in raw_refs]
+        else:
+            reference_dates = None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_mof_trade_values(
+                connection,
+                dry_run=dry_run,
+                reference_dates=reference_dates,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "releases_planned":   summary.releases_planned,
+            "releases_fetched":   summary.releases_fetched,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Cross-connector recurring refresh (issue #9 P-sched-1 / P-sched-2) ──
 
     def _op_calendar_econ_sweep_values(
