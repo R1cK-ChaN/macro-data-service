@@ -1732,6 +1732,116 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    # ── BoJ connector (issue #14 P1) ───────────────────────────────────
+
+    def _op_calendar_econ_fetch_boj(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape the BoJ Monetary Policy Meeting calendar.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+
+        Dry-run returns the indicator plan only. Execute mode fetches
+        ``boj.or.jp/en/mopo/mpmsche_minu/`` once, parses each MPM row
+        into a ``BOJ_RATE`` event, and upserts via the shared merge-
+        rule projector.
+        """
+        from ingestion.calendar.boj_api import fetch_boj_calendar
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": ["BOJ_RATE"],
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_boj_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "meetings_parsed":    summary.meetings_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_boj_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape BoJ statement pages and fill ``actual`` on existing rows.
+
+        Arguments:
+          dry_run       — default True. No HTTP, no DB writes.
+          closing_dates — optional list of ISO closing dates
+                          (``["2025-03-19"]``). When omitted, the op
+                          auto-discovers past MPM rows from
+                          ``cal_econ_event`` whose ``actual`` is still
+                          NULL.
+
+        The ``provider_event_id`` written by this op matches the one
+        from :func:`calendar_econ_fetch_boj` exactly (same closing-date
+        ISO anchor), so the policy-rate value upserts onto the
+        existing schedule row via the shared projector's merge CASE.
+        """
+        from datetime import date
+        from ingestion.calendar.boj_api import fetch_boj_statement_values
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_closings = arguments.get("closing_dates") or []
+        closing_dates: list[date] | None
+        if raw_closings:
+            closing_dates = [date.fromisoformat(str(d)) for d in raw_closings]
+        else:
+            closing_dates = None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_boj_statement_values(
+                connection,
+                dry_run=dry_run,
+                closing_dates=closing_dates,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "meetings_planned":   summary.meetings_planned,
+            "meetings_fetched":   summary.meetings_fetched,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Cross-connector recurring refresh (issue #9 P-sched-1 / P-sched-2) ──
 
     def _op_calendar_econ_sweep_values(
@@ -1750,7 +1860,8 @@ class LocalMacroDataService:
           dry_run      — default True. No HTTP, no DB writes.
           connectors   — optional list subset of
                          ``["bls", "bea", "census", "ism", "umich",
-                         "conference-board", "nar", "ecb", "fed-values"]``.
+                         "conference-board", "nar", "ecb", "fed-values",
+                         "boj-values"]``.
           start_year   — optional int; default ``current_year − 1``.
                          Applied to BLS / BEA / Census.
           end_year     — optional int; default current year. BLS / BEA / Census.
@@ -1839,7 +1950,7 @@ class LocalMacroDataService:
         Daily-cron candidate for the recurring-fetch scheduler
         (:mod:`ingestion.calendar.scheduler`). Iterates BLS + BEA +
         Census + ISM + U Michigan + Conference Board + NAR + ECB +
-        Fed FOMC + Fed releasedates + NBS in order, isolating
+        Fed FOMC + Fed releasedates + NBS + BoJ in order, isolating
         per-connector exceptions so one upstream outage (ECB 502, NBS
         timeout, …) doesn't roll back the rest. Each connector gets
         its own connection / commit / rollback lifecycle.
@@ -1849,7 +1960,7 @@ class LocalMacroDataService:
           connectors — optional list subset of
                        ``["bls","bea","census","ism","umich",
                        "conference-board","nar","ecb","fed-fomc",
-                       "fed-releases","nbs"]``;
+                       "fed-releases","nbs","boj"]``;
                        omit to run the full roster.
 
         This slice ships only the schedule-side aggregator. The

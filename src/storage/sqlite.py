@@ -2848,6 +2848,7 @@ class SQLiteEngineStore:
                     ("federal-reserve",  "central_bank",      "economic",  100, _now_iso, _now_iso),
                     ("ecb",              "central_bank",      "economic",  100, _now_iso, _now_iso),
                     ("nbs",              "government_agency", "economic",  100, _now_iso, _now_iso),
+                    ("boj",              "central_bank",      "economic",  100, _now_iso, _now_iso),
                 ],
             )
 

@@ -52,6 +52,7 @@ _ECB_CRON_WINDOW_DAYS = 180
 
 from .bea_api import fetch_bea_calendar, schedule_bea_calendar
 from .bls_api import fetch_bls_calendar, schedule_bls_calendar
+from .boj_api import fetch_boj_calendar, fetch_boj_statement_values
 from .census_api import fetch_census_calendar, schedule_census_calendar
 from .conference_board_api import (
     fetch_conference_board_calendar,
@@ -135,6 +136,10 @@ def _nbs(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_nbs_calendar(conn, calendar_url=None, dry_run=dry_run)
 
 
+def _boj(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return fetch_boj_calendar(conn, dry_run=dry_run)
+
+
 # Sequencing matters for operator inspection — BLS first (highest
 # trader impact, cheapest surface), Fed / ECB in the middle, NBS last
 # (most upstream-fragile so a failure there is easiest to triage at
@@ -151,6 +156,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("fed-fomc", _fed_fomc),
     ("fed-releases", _fed_releases),
     ("nbs", _nbs),
+    ("boj", _boj),
 )
 
 ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
@@ -165,7 +171,7 @@ ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
 # ``fetch_fed_statement_values`` exposed as ``fed-values`` below.
 ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "bls", "bea", "census", "ism", "umich", "conference-board",
-    "nar", "ecb", "fed-values",
+    "nar", "ecb", "fed-values", "boj-values",
 )
 
 
@@ -718,6 +724,11 @@ def sweep_value_side(
         # with ``actual IS NULL`` — no year window needed.
         return fetch_fed_statement_values(conn, dry_run=dry_run)
 
+    def _boj_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # Auto-discovers past BoJ MPM rows with ``actual IS NULL`` —
+        # mirrors the Fed-values shape, no year window needed.
+        return fetch_boj_statement_values(conn, dry_run=dry_run)
+
     value_side_map: dict[ConnectorName, _ConnectorFn] = {
         "bls":        _bls_values,
         "bea":        _bea_values,
@@ -728,6 +739,7 @@ def sweep_value_side(
         "nar":        _nar_values,
         "ecb":        _ecb_values,
         "fed-values": _fed_values,
+        "boj-values": _boj_values,
     }
 
     requested = (
