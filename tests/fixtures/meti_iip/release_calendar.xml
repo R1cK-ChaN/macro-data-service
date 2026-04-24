@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<releaseCalendar>
+  <release>
+    <statistics>Indices of Industrial Production</statistics>
+    <reportType>Preliminary Report</reportType>
+    <referenceMonth>February 2026</referenceMonth>
+    <releaseDate>March 31, 2026</releaseDate>
+    <releaseTime>8:50 a.m.</releaseTime>
+  </release>
+  <release>
+    <statistics>Indices of Industrial Production</statistics>
+    <reportType>Preliminary Report</reportType>
+    <referenceMonth>March 2026</referenceMonth>
+    <releaseDate>April 30, 2026</releaseDate>
+    <releaseTime>8:50 a.m.</releaseTime>
+  </release>
+  <release>
+    <statistics>Indices of Industrial Production</statistics>
+    <reportType>Revised Report</reportType>
+    <referenceMonth>February 2026</referenceMonth>
+    <releaseDate>April 14, 2026</releaseDate>
+    <releaseTime>13:30</releaseTime>
+  </release>
+</releaseCalendar>

@@ -2299,6 +2299,114 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    # ── METI Industrial Production + Retail Sales (issue #14 P5) ────────
+
+    def _op_calendar_econ_fetch_meti(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape METI schedule surfaces for IIP and Retail Sales.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+        """
+        from ingestion.calendar.meti_api import (
+            ALL_INDICATORS,
+            fetch_meti_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": list(ALL_INDICATORS),
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_meti_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "releases_parsed":    summary.releases_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_meti_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape METI value reports and fill ``actual``.
+
+        Arguments:
+          dry_run          — default True. No HTTP, no DB writes.
+          reference_dates  — optional list of ISO reference dates
+                             (``["2026-02-01"]``). When omitted, the
+                             op auto-discovers past METI rows whose
+                             ``actual`` is still NULL.
+        """
+        from datetime import date
+        from ingestion.calendar.meti_api import (
+            ALL_INDICATORS,
+            fetch_meti_values,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_refs = arguments.get("reference_dates") or []
+        reference_dates: list[date] | None
+        if raw_refs:
+            reference_dates = [date.fromisoformat(str(d)) for d in raw_refs]
+        else:
+            reference_dates = None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_meti_values(
+                connection,
+                dry_run=dry_run,
+                reference_dates=reference_dates,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "releases_planned":   summary.releases_planned,
+            "releases_fetched":   summary.releases_fetched,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "stale_references":   summary.stale_references,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Cross-connector recurring refresh (issue #9 P-sched-1 / P-sched-2) ──
 
     def _op_calendar_econ_sweep_values(
@@ -2318,16 +2426,17 @@ class LocalMacroDataService:
           connectors   — optional list subset of
                          ``["bls", "bea", "census", "ism", "umich",
                          "conference-board", "nar", "ecb", "fed-values",
-                         "boj-values", "cao-gdp-values"]``.
+                         "boj-values", "boj-tankan-values",
+                         "mof-jp-values", "cao-values",
+                         "cao-gdp-values", "meti-values"]``.
           start_year   — optional int; default ``current_year − 1``.
                          Applied to BLS / BEA / Census.
           end_year     — optional int; default current year. BLS / BEA / Census.
           start_period — optional SDMX period string (ECB only).
           end_period   — optional SDMX period string (ECB only).
 
-        NBS is not in the plan — the yearly calendar scraper is
-        schedule-only; per-release value scraping for NBS indicators
-        is a future slice.
+        NBS currently contributes schedule-side rows; per-release value
+        scraping for NBS indicators is a future slice.
         """
         from ingestion.calendar.scheduler import (
             ALL_VALUE_SIDE_CONNECTORS,
@@ -2407,24 +2516,20 @@ class LocalMacroDataService:
         Daily-cron candidate for the recurring-fetch scheduler
         (:mod:`ingestion.calendar.scheduler`). Iterates BLS + BEA +
         Census + ISM + U Michigan + Conference Board + NAR + ECB +
-        Fed FOMC + Fed releasedates + NBS + BoJ in order, isolating
-        per-connector exceptions so one upstream outage (ECB 502, NBS
-        timeout, …) doesn't roll back the rest. Each connector gets
-        its own connection / commit / rollback lifecycle.
+        Fed FOMC + Fed releasedates + NBS + BoJ + BoJ Tankan +
+        MoF JP + CAO + CAO GDP + METI in order, isolating
+        per-connector exceptions so one upstream outage rolls back
+        only that connector. Each connector gets its own connection /
+        commit / rollback lifecycle.
 
         Arguments:
           dry_run    — default True. No HTTP, no DB writes.
           connectors — optional list subset of
                        ``["bls","bea","census","ism","umich",
                        "conference-board","nar","ecb","fed-fomc",
-                       "fed-releases","nbs","boj"]``;
+                       "fed-releases","nbs","boj","boj-tankan",
+                       "mof-jp","cao","cao-gdp","meti"]``;
                        omit to run the full roster.
-
-        This slice ships only the schedule-side aggregator. The
-        value-side sweep (triggered after each expected release
-        crosses its scheduled time), budget guards / circuit breakers,
-        and health-telemetry wiring are follow-up slices under the
-        P-sched umbrella.
         """
         from ingestion.calendar.scheduler import (
             ALL_CONNECTORS,

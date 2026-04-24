@@ -255,6 +255,10 @@ _ALIASES: dict[str, str] = {
     "china industrial production": "INDUSTRIAL_PRODUCTION",
     "china fixed asset investment": "FIXED_ASSET_INVESTMENT",
     "china retail sales": "RETAIL_SALES",
+    "industrial production index": "INDUSTRIAL_PRODUCTION",
+    "indices of industrial production": "INDUSTRIAL_PRODUCTION",
+    "japan industrial production": "INDUSTRIAL_PRODUCTION",
+    "japan retail sales": "RETAIL_SALES",
     "china manufacturing pmi": "MFG_PMI",
     "china non-manufacturing pmi": "NON_MFG_PMI",
 }

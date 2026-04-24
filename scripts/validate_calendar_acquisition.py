@@ -2962,7 +2962,7 @@ def run_nbs_probe(
 _OFFICIAL_PROVIDERS: frozenset[str] = frozenset(
     {
         "bls", "bea", "census", "ism", "umich", "conference-board",
-        "nar", "fed", "ecb", "nbs",
+        "nar", "fed", "ecb", "nbs", "meti",
     }
 )
 _OFFICIAL_PROVIDERS_WITH_PROBES: frozenset[str] = frozenset(
@@ -2979,13 +2979,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--provider",
         choices=[
             "te", "eodhd", "bls", "bea", "census", "ism", "umich",
-            "conference-board", "nar", "fed", "ecb", "nbs",
+            "conference-board", "nar", "fed", "ecb", "nbs", "meti",
         ],
         default="te",
         help=(
             "which acquisition lane to validate. "
             "bls / bea / census / ism / umich / conference-board / "
-            "nar / ecb / fed / nbs all have live probes."
+            "nar / ecb / fed / nbs have live probes; meti has a "
+            "registered scaffold."
         ),
     )
     ap.add_argument(
@@ -3017,16 +3018,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     # Official-source connectors with no probe body yet land on the
-    # scaffold-only stub. After P5c, every official provider has a
-    # live probe; ``unwired`` is empty on the current tree but the
-    # branch is kept as a safety net for any future provider seeded
-    # into ``_OFFICIAL_PROVIDERS`` before its probe ships.
+    # scaffold-only stub. METI ships its connector before its live
+    # acquisition probe, so it stays in this set for issue #14 P5.
     unwired = _OFFICIAL_PROVIDERS - _OFFICIAL_PROVIDERS_WITH_PROBES
     if args.provider in unwired:
         print(
-            f"--provider {args.provider}: scaffold registered (issue #9 P0). "
-            f"Probe bodies land in the phase that ships the {args.provider} "
-            f"connector live probe. No HTTP, no report written."
+            f"--provider {args.provider}: scaffold registered. "
+            f"Probe bodies land with the {args.provider} live-probe phase. "
+            f"Dry-run stub completed."
         )
         return 0
 

@@ -9,15 +9,18 @@ Two driver entry points, one shared per-connector loop:
 
 - :func:`refresh_all_schedules` (P-sched-1) — schedule-side: invokes
   every connector's forward-looking schedule scrape (BLS / BEA / Census
-  / ISM / U Michigan / NAR / ECB / Fed FOMC / Fed releasedates / NBS).
+  / ISM / U Michigan / Conference Board / NAR / ECB / Fed FOMC /
+  Fed releasedates / NBS / BoJ / BoJ Tankan / MoF JP / CAO /
+  CAO GDP / METI).
   Daily-cron candidate.
 - :func:`sweep_value_side` (P-sched-2) — value-side: invokes every
   connector's value-bearing scrape (BLS / BEA / Census / ISM /
-  U Michigan / NAR / ECB / Fed-values).
-  NBS has no value-side op yet and is not in the plan. Frequent-cron
-  candidate — repeatedly runs to pick up new values once the release
-  crosses its scheduled time, so the calendar's ``actual`` fills
-  within minutes of publication.
+  U Michigan / Conference Board / NAR / ECB / Fed-values / BoJ-values /
+  BoJ Tankan-values / MoF JP-values / CAO-values / CAO GDP-values /
+  METI-values).
+  Frequent-cron candidate — repeatedly runs to pick up new values once
+  the release crosses its scheduled time, so the calendar's ``actual``
+  fills within minutes of publication.
 
 Each connector gets its own connection lifecycle so a failure inside
 one connector rolls back only that connector's partial writes — the
@@ -63,6 +66,7 @@ from .cao_api import (
 )
 from .cao_gdp_api import fetch_cao_gdp_calendar, fetch_cao_gdp_values
 from .mof_api import fetch_mof_calendar, fetch_mof_trade_values
+from .meti_api import fetch_meti_calendar, fetch_meti_values
 from .census_api import fetch_census_calendar, schedule_census_calendar
 from .conference_board_api import (
     fetch_conference_board_calendar,
@@ -166,6 +170,10 @@ def _cao_gdp(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_cao_gdp_calendar(conn, dry_run=dry_run)
 
 
+def _meti(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return fetch_meti_calendar(conn, dry_run=dry_run)
+
+
 # Sequencing matters for operator inspection — BLS first (highest
 # trader impact, cheapest surface), Fed / ECB in the middle, NBS last
 # (most upstream-fragile so a failure there is easiest to triage at
@@ -187,6 +195,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("mof-jp", _mof),
     ("cao", _cao),
     ("cao-gdp", _cao_gdp),
+    ("meti", _meti),
 )
 
 ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
@@ -200,9 +209,21 @@ ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
 # calendar doesn't belong here either — the value-bearing Fed op is
 # ``fetch_fed_statement_values`` exposed as ``fed-values`` below.
 ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
-    "bls", "bea", "census", "ism", "umich", "conference-board",
-    "nar", "ecb", "fed-values", "boj-values", "boj-tankan-values",
-    "mof-jp-values", "cao-values", "cao-gdp-values",
+    "bls",
+    "bea",
+    "census",
+    "ism",
+    "umich",
+    "conference-board",
+    "nar",
+    "ecb",
+    "fed-values",
+    "boj-values",
+    "boj-tankan-values",
+    "mof-jp-values",
+    "cao-values",
+    "cao-gdp-values",
+    "meti-values",
 )
 
 
@@ -810,6 +831,9 @@ def sweep_value_side(
         fetch_cao_gdp_calendar(conn, dry_run=dry_run)
         return fetch_cao_gdp_values(conn, dry_run=dry_run)
 
+    def _meti_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        return fetch_meti_values(conn, dry_run=dry_run)
+
     value_side_map: dict[ConnectorName, _ConnectorFn] = {
         "bls":        _bls_values,
         "bea":        _bea_values,
@@ -825,6 +849,7 @@ def sweep_value_side(
         "mof-jp-values": _mof_values,
         "cao-values": _cao_values,
         "cao-gdp-values": _cao_gdp_values,
+        "meti-values": _meti_values,
     }
 
     requested = (
