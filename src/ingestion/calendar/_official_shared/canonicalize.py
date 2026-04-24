@@ -256,6 +256,28 @@ _ALIASES: dict[str, str] = {
     "germany gfk consumer confidence": "GFK_CONSUMER_CLIMATE",
     "nim consumer climate": "GFK_CONSUMER_CLIMATE",
     "nim consumer climate powered by gfk": "GFK_CONSUMER_CLIMATE",
+    # HCOB Germany PMIs. Note that the shared `_MODIFIER_SUFFIXES`
+    # table strips a trailing " flash" before alias lookup, so TE labels
+    # like "HCOB Manufacturing PMI Flash" collapse to
+    # `HCOB_MANUFACTURING_PMI` — i.e. TE's Flash-Manufacturing sits in
+    # the same canonical bucket as the final Manufacturing release. Our
+    # P5 schedule-side ships a single combined `HCOB Flash PMI` row on
+    # the Flash release day; a future P5-values slice can split out
+    # per-component flash rows to match TE's three-row shape. Today
+    # TE-only parity gaps on the flash day are expected and documented.
+    "hcob flash pmi": "HCOB_FLASH_PMI",
+    "hcob germany flash pmi": "HCOB_FLASH_PMI",
+    "germany hcob flash pmi": "HCOB_FLASH_PMI",
+    "hcob flash germany pmi": "HCOB_FLASH_PMI",
+    "hcob manufacturing pmi": "HCOB_MANUFACTURING_PMI",
+    "hcob germany manufacturing pmi": "HCOB_MANUFACTURING_PMI",
+    "germany hcob manufacturing pmi": "HCOB_MANUFACTURING_PMI",
+    "hcob services pmi": "HCOB_SERVICES_PMI",
+    "hcob germany services pmi": "HCOB_SERVICES_PMI",
+    "germany hcob services pmi": "HCOB_SERVICES_PMI",
+    "s&p global flash germany pmi": "HCOB_FLASH_PMI",
+    "s&p global germany manufacturing pmi": "HCOB_MANUFACTURING_PMI",
+    "s&p global germany services pmi": "HCOB_SERVICES_PMI",
     "beige book": "BEIGE_BOOK",
     "h.4.1": "FED_H41",
     "h.8": "FED_H8",

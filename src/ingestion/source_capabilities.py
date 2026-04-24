@@ -651,6 +651,7 @@ class SourceCapabilityManager:
                 _entity("calendar", "zew", "provider", "ZEW Germany"),
                 _entity("calendar", "ifo", "provider", "Ifo Germany"),
                 _entity("calendar", "gfk", "provider", "GfK / NIM Germany"),
+                _entity("calendar", "hcob", "provider", "HCOB / S&P Global Germany PMI"),
                 _entity("calendar", "insee", "provider", "INSEE France"),
                 _entity("calendar", "ine", "provider", "INE Spain"),
                 _entity("calendar", "istat", "provider", "ISTAT Italy"),
