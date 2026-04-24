@@ -62,6 +62,9 @@ _CALENDAR_COUNTRY_ALIASES: dict[str, str] = {
     "EURO AREA": "EU",
     "EUROZONE": "EU",
     "EUROPEAN UNION": "EU",
+    "DE": "DE",
+    "GERMANY": "DE",
+    "DEUTSCHLAND": "DE",
 }
 
 _CALENDAR_COUNTRY_DISPLAY: dict[str, str] = {
@@ -70,6 +73,7 @@ _CALENDAR_COUNTRY_DISPLAY: dict[str, str] = {
     "JP": "Japan",
     "UK": "United Kingdom",
     "EU": "Euro Area",
+    "DE": "Germany",
 }
 
 
@@ -1035,6 +1039,7 @@ _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
     ("rateprobability", "rateprobability", "rateprobability.com",              "market_data",       "US", "https://rateprobability.com",                                    "https://rateprobability.com/api"),
     ("imf",             "imf",             "International Monetary Fund",      "data_aggregator",   "US", "https://www.imf.org",                                           "https://api.imf.org/external/sdmx/3.0"),
     ("eurostat",        "eurostat",        "Eurostat",                         "government_agency", "EU", "https://ec.europa.eu/eurostat",                                  "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data"),
+    ("destatis",        "destatis",        "German Federal Statistical Office","government_agency", "DE", "https://www.destatis.de",                                         "https://www-genesis.destatis.de/genesisWS/rest/2020"),
     ("bis",             "bis",             "Bank for International Settlements","data_aggregator",  "CH", "https://www.bis.org",                                           "https://stats.bis.org/api/v2"),
     ("ecb",             "ecb",             "European Central Bank",             "central_bank",     "EU", "https://www.ecb.europa.eu",                                      "https://data-api.ecb.europa.eu/service/data"),
     ("oecd",            "oecd",            "Organisation for Economic Co-operation", "data_aggregator", "XX", "https://www.oecd.org",                                      "https://sdmx.oecd.org/public/rest/v2"),
@@ -2848,6 +2853,7 @@ class SQLiteEngineStore:
                     ("federal-reserve",  "central_bank",      "economic",  100, _now_iso, _now_iso),
                     ("ecb",              "central_bank",      "economic",  100, _now_iso, _now_iso),
                     ("eurostat",         "government_agency", "economic",  100, _now_iso, _now_iso),
+                    ("destatis",         "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("nbs",              "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("boj",              "central_bank",      "economic",  100, _now_iso, _now_iso),
                     ("mof-jp",           "government_agency", "economic",  100, _now_iso, _now_iso),

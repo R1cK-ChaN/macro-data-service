@@ -160,6 +160,7 @@ def test_cal_provider_seeded(store: SQLiteEngineStore) -> None:
         ("cao",              "government_agency", "economic",  100),
         ("census",           "government_agency", "economic",  100),
         ("conference-board",  "market_data",       "economic",  100),
+        ("destatis",          "government_agency", "economic",  100),
         ("ecb",              "central_bank",      "economic",  100),
         ("eodhd",            "data_aggregator",   "corporate", 10),
         ("eurostat",         "government_agency", "economic",  100),
@@ -182,7 +183,7 @@ def test_cal_provider_seed_idempotent(tmp_path: Path) -> None:
     second = SQLiteEngineStore(db_path=db)
     with second._connection(commit=False) as c:
         n = c.execute("SELECT COUNT(*) FROM cal_provider").fetchone()[0]
-    assert n == 18
+    assert n == 19
 
 
 def test_importance_flows_through_view_as_enum_string(store: SQLiteEngineStore) -> None:
@@ -497,7 +498,32 @@ def test_calendar_country_filter_accepts_iso_codes_outside_aliases(
     events = store.list_recent_events(released_only=True, country="DE")
 
     assert [event.event_id for event in events] == ["de-cpi"]
-    assert events[0].country == "DE"
+
+
+def test_calendar_country_filter_accepts_germany_alias(
+    store: SQLiteEngineStore,
+) -> None:
+    past = datetime.now(UTC) - timedelta(hours=1)
+    with store._connection(commit=True) as c:
+        c.execute(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                country_code, category, title, importance, actual, content_hash,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                'destatis', 'de-gdp', ?, 'datetime',
+                'DE', 'GDP Growth', 'Germany GDP Flash QoQ', 'high', '0.2', 'de-gdp',
+                1700000000000, '2026-04-23', '2026-04-23'
+            )
+            """,
+            (past.isoformat(),),
+        )
+
+    events = store.list_recent_events(released_only=True, country="Germany")
+
+    assert [event.event_id for event in events] == ["de-gdp"]
+    assert events[0].country == "Germany"
 
 
 def test_calendar_keyword_filter_keeps_normalized_base_title_match(
