@@ -9,13 +9,13 @@ Two driver entry points, one shared per-connector loop:
 
 - :func:`refresh_all_schedules` (P-sched-1) — schedule-side: invokes
   every connector's forward-looking schedule scrape (BLS / BEA / Census
-  / ISM / U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / ZEW / Ifo / INSEE / INE /
+  / ISM / U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / ZEW / Ifo / GfK / INSEE / INE /
   ISTAT / Fed FOMC / Fed releasedates / NBS / Statistics Bureau JP / BoJ / BoJ Tankan / MoF JP / CAO /
   CAO GDP / METI).
   Daily-cron candidate.
 - :func:`sweep_value_side` (P-sched-2) — value-side: invokes every
   connector's value-bearing scrape (BLS / BEA / Census / ISM /
-  U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / ZEW / Ifo / INSEE / INE /
+  U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / ZEW / Ifo / GfK / INSEE / INE /
   ISTAT / Fed-values / BoJ-values / Statistics Bureau JP-values / BoJ Tankan-values / MoF JP-values /
   CAO-values / CAO GDP-values / METI-values).
   Frequent-cron candidate — repeatedly runs to pick up new values once
@@ -78,6 +78,7 @@ from .eurostat_api import fetch_eurostat_calendar, schedule_eurostat_calendar
 from .destatis_api import fetch_destatis_calendar, schedule_destatis_calendar
 from .zew_api import fetch_zew_calendar, schedule_zew_calendar
 from .ifo_api import fetch_ifo_calendar, schedule_ifo_calendar
+from .gfk_api import fetch_gfk_calendar, schedule_gfk_calendar
 from .insee_api import fetch_insee_calendar, schedule_insee_calendar
 from .ine_api import fetch_ine_calendar, schedule_ine_calendar
 from .istat_api import fetch_istat_calendar, schedule_istat_calendar
@@ -159,6 +160,10 @@ def _ifo(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_ifo_calendar(conn, dry_run=dry_run)
 
 
+def _gfk(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return schedule_gfk_calendar(conn, dry_run=dry_run)
+
+
 def _insee(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_insee_calendar(conn, dry_run=dry_run)
 
@@ -231,6 +236,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("destatis", _destatis),
     ("zew", _zew),
     ("ifo", _ifo),
+    ("gfk", _gfk),
     ("insee", _insee),
     ("ine", _ine),
     ("istat", _istat),
@@ -269,6 +275,7 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "destatis",
     "zew",
     "ifo",
+    "gfk",
     "insee",
     "ine",
     "istat",
@@ -759,7 +766,7 @@ def sweep_value_side(
         observation lands.
     start_period / end_period:
         Optional SDMX-period strings forwarded to ECB and Eurostat.
-        Destatis uses the resolved year bounds; ZEW / Ifo / INSEE / INE / ISTAT
+        Destatis uses the resolved year bounds; ZEW / Ifo / GfK / INSEE / INE / ISTAT
         auto-discover due rows from ``cal_econ_event``.
         ``None`` means the driver picks its recent window.
     connectors:
@@ -884,6 +891,9 @@ def sweep_value_side(
     def _ifo_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         return fetch_ifo_calendar(conn, dry_run=dry_run)
 
+    def _gfk_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        return fetch_gfk_calendar(conn, dry_run=dry_run)
+
     def _insee_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         return fetch_insee_calendar(conn, dry_run=dry_run)
 
@@ -958,6 +968,7 @@ def sweep_value_side(
         "destatis":   _destatis_values,
         "zew":        _zew_values,
         "ifo":        _ifo_values,
+        "gfk":        _gfk_values,
         "insee":      _insee_values,
         "ine":        _ine_values,
         "istat":      _istat_values,

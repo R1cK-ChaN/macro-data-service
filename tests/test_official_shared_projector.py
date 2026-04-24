@@ -114,6 +114,9 @@ def _iter_connectors():
     from ingestion.calendar.ifo_api.parser import (
         IfoCalendarEventRecord, PROVIDER as IFO_PROVIDER,
     )
+    from ingestion.calendar.gfk_api.parser import (
+        GfKCalendarEventRecord, PROVIDER as GFK_PROVIDER,
+    )
     from ingestion.calendar.nar_api.parser import (
         NARCalendarEventRecord, PROVIDER as NAR_PROVIDER,
     )
@@ -144,6 +147,7 @@ def _iter_connectors():
         ("fed", FED_PROVIDER, FedCalendarEventRecord),
         ("zew", ZEW_PROVIDER, ZEWCalendarEventRecord),
         ("ifo", IFO_PROVIDER, IfoCalendarEventRecord),
+        ("gfk", GFK_PROVIDER, GfKCalendarEventRecord),
         ("insee", INSEE_PROVIDER, INSEECalendarEventRecord),
         ("nbs", NBS_PROVIDER, NBSCalendarEventRecord),
         ("meti", METI_PROVIDER, MetiCalendarEventRecord),
@@ -325,6 +329,7 @@ def test_store_raw_idempotent_across_all_connectors(
         "fed": "FedCalendarRawRecord",
         "zew": "ZEWCalendarRawRecord",
         "ifo": "IfoCalendarRawRecord",
+        "gfk": "GfKCalendarRawRecord",
         "insee": "INSEECalendarRawRecord",
         "nbs": "NBSCalendarRawRecord",
         "meti": "MetiCalendarRawRecord",
