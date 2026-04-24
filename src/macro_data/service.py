@@ -1732,6 +1732,796 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    # ── BoJ connector (issue #14 P1) ───────────────────────────────────
+
+    def _op_calendar_econ_fetch_boj(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape the BoJ Monetary Policy Meeting calendar.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+
+        Dry-run returns the indicator plan only. Execute mode fetches
+        ``boj.or.jp/en/mopo/mpmsche_minu/`` once, parses each MPM row
+        into a ``BOJ_RATE`` event, and upserts via the shared merge-
+        rule projector.
+        """
+        from ingestion.calendar.boj_api import fetch_boj_calendar
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": ["BOJ_RATE"],
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_boj_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "meetings_parsed":    summary.meetings_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_boj_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape BoJ statement pages and fill ``actual`` on existing rows.
+
+        Arguments:
+          dry_run       — default True. No HTTP, no DB writes.
+          closing_dates — optional list of ISO closing dates
+                          (``["2025-03-19"]``). When omitted, the op
+                          auto-discovers past MPM rows from
+                          ``cal_econ_event`` whose ``actual`` is still
+                          NULL.
+
+        The ``provider_event_id`` written by this op matches the one
+        from :func:`calendar_econ_fetch_boj` exactly (same closing-date
+        ISO anchor), so the policy-rate value upserts onto the
+        existing schedule row via the shared projector's merge CASE.
+        """
+        from datetime import date
+        from ingestion.calendar.boj_api import fetch_boj_statement_values
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_closings = arguments.get("closing_dates") or []
+        closing_dates: list[date] | None
+        if raw_closings:
+            closing_dates = [date.fromisoformat(str(d)) for d in raw_closings]
+        else:
+            closing_dates = None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_boj_statement_values(
+                connection,
+                dry_run=dry_run,
+                closing_dates=closing_dates,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "meetings_planned":   summary.meetings_planned,
+            "meetings_fetched":   summary.meetings_fetched,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    # ── BoJ Tankan connector (issue #14 P1a) ───────────────────────────
+
+    def _op_calendar_econ_fetch_boj_tankan(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape the BoJ Tankan yoshi-index page.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+
+        Dry-run returns the indicator plan only. Execute mode fetches
+        ``boj.or.jp/en/statistics/tk/yoshi/index.htm`` once, parses
+        each release row into two ``(raw, event)`` tuples (Large
+        Manufacturers + Large Non-Manufacturers DI), and upserts via
+        :func:`project_schedule_events` so the value-side writer can
+        fill ``actual`` in a later pass without losing rows.
+        """
+        from ingestion.calendar.boj_tankan_api import (
+            ALL_INDICATORS,
+            fetch_boj_tankan_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": list(ALL_INDICATORS),
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_boj_tankan_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "releases_parsed":    summary.releases_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_boj_tankan_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape Tankan outline pages and fill ``actual`` on existing rows.
+
+        Arguments:
+          dry_run          — default True. No HTTP, no DB writes.
+          reference_dates  — optional list of ISO reference dates
+                             (``["2026-03-01"]``). When omitted, the op
+                             auto-discovers past Tankan rows from
+                             ``cal_econ_event`` whose ``actual`` is
+                             still NULL.
+
+        The ``provider_event_id`` written by this op matches the one
+        from :func:`calendar_econ_fetch_boj_tankan` exactly (same
+        ``(indicator, reference_date)`` anchor), so the DI upserts
+        onto the existing schedule row through the shared projector's
+        merge CASE.
+        """
+        from datetime import date
+        from ingestion.calendar.boj_tankan_api import (
+            ALL_INDICATORS,
+            fetch_boj_tankan_outlines,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_refs = arguments.get("reference_dates") or []
+        reference_dates: list[date] | None
+        if raw_refs:
+            reference_dates = [date.fromisoformat(str(d)) for d in raw_refs]
+        else:
+            reference_dates = None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_boj_tankan_outlines(
+                connection,
+                dry_run=dry_run,
+                reference_dates=reference_dates,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "releases_planned":   summary.releases_planned,
+            "releases_fetched":   summary.releases_fetched,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    # ── MoF Balance of Trade connector (issue #14 P4) ──────────────────
+
+    def _op_calendar_econ_fetch_mof(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape the MoF trade-statistics release calendar.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+
+        Dry-run returns the indicator plan only. Execute mode fetches
+        ``customs.go.jp/toukei/calendar/calend_e.htm`` once, parses
+        each Monthly Data release row, emits a ``(raw, event)``
+        tuple per month, and upserts via
+        :func:`project_schedule_events` so the value-side writer can
+        fill ``actual`` in a later pass without losing rows.
+        """
+        from ingestion.calendar.mof_api import (
+            ALL_INDICATORS,
+            fetch_mof_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": list(ALL_INDICATORS),
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_mof_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "releases_parsed":    summary.releases_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_mof_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape MoF trade-report XMLs and fill ``actual`` on existing rows.
+
+        Arguments:
+          dry_run          — default True. No HTTP, no DB writes.
+          reference_dates  — optional list of ISO reference dates
+                             (``["2026-03-01"]``). When omitted, the op
+                             auto-discovers past Balance-of-Trade rows
+                             whose ``actual`` is still NULL.
+
+        ``provider_event_id`` matches the schedule-side write exactly
+        so the DI upserts onto the existing schedule row via the
+        shared projector's merge CASE.
+        """
+        from datetime import date
+        from ingestion.calendar.mof_api import (
+            ALL_INDICATORS,
+            fetch_mof_trade_values,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_refs = arguments.get("reference_dates") or []
+        reference_dates: list[date] | None
+        if raw_refs:
+            reference_dates = [date.fromisoformat(str(d)) for d in raw_refs]
+        else:
+            reference_dates = None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_mof_trade_values(
+                connection,
+                dry_run=dry_run,
+                reference_dates=reference_dates,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "releases_planned":   summary.releases_planned,
+            "releases_fetched":   summary.releases_fetched,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_cao(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape the Cabinet Office / ESRI release-schedule page.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+
+        Dry-run returns the indicator plan only. Execute mode fetches
+        ``esri.cao.go.jp/en/stat/stat-schedule-e.html`` once, parses
+        the Consumer Confidence column into one ``(raw, event)`` tuple
+        per future release, and upserts via
+        :func:`project_schedule_events` so the value-side writer can
+        fill ``actual`` in a later pass without losing rows.
+        """
+        from ingestion.calendar.cao_api import (
+            ALL_INDICATORS,
+            fetch_cao_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": list(ALL_INDICATORS),
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_cao_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "releases_parsed":    summary.releases_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_cao_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape the Consumer Confidence landing page and fill ``actual``.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+
+        One GET per invocation — CAO overwrites ``shouhi-e.html`` on
+        each release, so the op always reads the release currently
+        on-screen. ``provider_event_id`` matches the schedule-side
+        write exactly so the SA-series headline upserts onto the
+        pending schedule row via the shared projector's merge CASE.
+        """
+        from ingestion.calendar.cao_api import (
+            ALL_INDICATORS,
+            fetch_cao_consumer_confidence_values,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_cao_consumer_confidence_values(
+                connection, dry_run=dry_run,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "releases_planned":   summary.releases_planned,
+            "releases_fetched":   summary.releases_fetched,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "overdue_references": summary.overdue_references,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_cao_gdp(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape Cabinet Office / ESRI GDP archive pages.
+
+        Arguments:
+          dry_run       — default True. No HTTP, no DB writes.
+          archive_years — optional list of integer archive years.
+
+        Execute mode fetches the ESRI SNA archive index, picks the
+        latest archive years, parses first and second preliminary GDP
+        releases, and upserts staged schedule rows under provider
+        ``cao``.
+        """
+        from ingestion.calendar.cao_gdp_api import (
+            ALL_INDICATORS,
+            fetch_cao_gdp_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_years = arguments.get("archive_years") or []
+        archive_years = [int(y) for y in raw_years] if raw_years else None
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": list(ALL_INDICATORS),
+                "archive_years_planned": archive_years or [],
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_cao_gdp_calendar(
+                connection,
+                dry_run=False,
+                archive_years=archive_years,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "archive_years_planned": summary.archive_years_planned,
+            "archive_pages_fetched": summary.archive_pages_fetched,
+            "releases_parsed":    summary.releases_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_cao_gdp_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape CAO GDP report CSVs and fill ``actual``.
+
+        Arguments:
+          dry_run          — default True. No HTTP, no DB writes.
+          reference_dates  — optional list of ISO quarter-end dates
+                             (``["2025-09-30"]``). When omitted, the
+                             op auto-discovers past staged GDP rows
+                             whose ``actual`` is still NULL.
+        """
+        from datetime import date
+        from ingestion.calendar.cao_gdp_api import (
+            ALL_INDICATORS,
+            fetch_cao_gdp_values,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_refs = arguments.get("reference_dates") or []
+        reference_dates: list[date] | None
+        if raw_refs:
+            reference_dates = [date.fromisoformat(str(d)) for d in raw_refs]
+        else:
+            reference_dates = None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_cao_gdp_values(
+                connection,
+                dry_run=dry_run,
+                reference_dates=reference_dates,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "releases_planned":   summary.releases_planned,
+            "releases_fetched":   summary.releases_fetched,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    # ── Statistics Bureau / e-Stat Core CPI + Unemployment (issue #14 P2) ──
+
+    def _op_calendar_econ_fetch_stat_bureau(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape Statistics Bureau schedule surfaces for CPI and LFS.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+        """
+        from ingestion.calendar.stat_bureau_api import (
+            ALL_INDICATORS,
+            fetch_stat_bureau_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": list(ALL_INDICATORS),
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_stat_bureau_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "releases_parsed":    summary.releases_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_stat_bureau_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch e-Stat scalar values and fill ``actual``.
+
+        Arguments:
+          dry_run          — default True. No HTTP, no DB writes.
+          reference_dates  — optional list of ISO reference dates
+                             (``["2026-03-01"]``). When omitted, the
+                             op auto-discovers past Statistics Bureau
+                             rows whose ``actual`` is still NULL.
+          app_id           — optional e-Stat application id. When
+                             omitted, ``ESTAT_APP_ID`` is read from
+                             the environment.
+        """
+        from datetime import date
+        from ingestion.calendar.stat_bureau_api import (
+            ALL_INDICATORS,
+            fetch_stat_bureau_values,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_refs = arguments.get("reference_dates") or []
+        reference_dates: list[date] | None
+        if raw_refs:
+            reference_dates = [date.fromisoformat(str(d)) for d in raw_refs]
+        else:
+            reference_dates = None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        app_id_raw = arguments.get("app_id")
+        app_id = str(app_id_raw).strip() if app_id_raw else None
+
+        connection = get_conn()
+        try:
+            summary = fetch_stat_bureau_values(
+                connection,
+                dry_run=dry_run,
+                reference_dates=reference_dates,
+                app_id=app_id,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "releases_planned":   summary.releases_planned,
+            "releases_fetched":   summary.releases_fetched,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    # ── METI Industrial Production + Retail Sales (issue #14 P5) ────────
+
+
+    def _op_calendar_econ_fetch_meti(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape METI schedule surfaces for IIP and Retail Sales.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+        """
+        from ingestion.calendar.meti_api import (
+            ALL_INDICATORS,
+            fetch_meti_calendar,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        if dry_run:
+            return {
+                "dry_run":            True,
+                "indicators_planned": list(ALL_INDICATORS),
+                "stopped_reason":     "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_meti_calendar(connection, dry_run=False)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "indicators_planned": summary.indicators_planned,
+            "releases_parsed":    summary.releases_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_meti_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Scrape METI value reports and fill ``actual``.
+
+        Arguments:
+          dry_run          — default True. No HTTP, no DB writes.
+          reference_dates  — optional list of ISO reference dates
+                             (``["2026-02-01"]``). When omitted, the
+                             op auto-discovers past METI rows whose
+                             ``actual`` is still NULL.
+        """
+        from datetime import date
+        from ingestion.calendar.meti_api import (
+            ALL_INDICATORS,
+            fetch_meti_values,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_refs = arguments.get("reference_dates") or []
+        reference_dates: list[date] | None
+        if raw_refs:
+            reference_dates = [date.fromisoformat(str(d)) for d in raw_refs]
+        else:
+            reference_dates = None
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_meti_values(
+                connection,
+                dry_run=dry_run,
+                reference_dates=reference_dates,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "releases_planned":   summary.releases_planned,
+            "releases_fetched":   summary.releases_fetched,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_failures":     summary.fetch_failures,
+            "parse_failures":     summary.parse_failures,
+            "stale_references":   summary.stale_references,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # ── Cross-connector recurring refresh (issue #9 P-sched-1 / P-sched-2) ──
 
     def _op_calendar_econ_sweep_values(
@@ -1750,16 +2540,18 @@ class LocalMacroDataService:
           dry_run      — default True. No HTTP, no DB writes.
           connectors   — optional list subset of
                          ``["bls", "bea", "census", "ism", "umich",
-                         "conference-board", "nar", "ecb", "fed-values"]``.
+                         "conference-board", "nar", "ecb", "fed-values",
+                         "stat-bureau-jp-values", "boj-values", "boj-tankan-values",
+                         "mof-jp-values", "cao-values",
+                         "cao-gdp-values", "meti-values"]``.
           start_year   — optional int; default ``current_year − 1``.
                          Applied to BLS / BEA / Census.
           end_year     — optional int; default current year. BLS / BEA / Census.
           start_period — optional SDMX period string (ECB only).
           end_period   — optional SDMX period string (ECB only).
 
-        NBS is not in the plan — the yearly calendar scraper is
-        schedule-only; per-release value scraping for NBS indicators
-        is a future slice.
+        NBS currently contributes schedule-side rows; per-release value
+        scraping for NBS indicators is a future slice.
         """
         from ingestion.calendar.scheduler import (
             ALL_VALUE_SIDE_CONNECTORS,
@@ -1839,24 +2631,20 @@ class LocalMacroDataService:
         Daily-cron candidate for the recurring-fetch scheduler
         (:mod:`ingestion.calendar.scheduler`). Iterates BLS + BEA +
         Census + ISM + U Michigan + Conference Board + NAR + ECB +
-        Fed FOMC + Fed releasedates + NBS in order, isolating
-        per-connector exceptions so one upstream outage (ECB 502, NBS
-        timeout, …) doesn't roll back the rest. Each connector gets
-        its own connection / commit / rollback lifecycle.
+        Fed FOMC + Fed releasedates + NBS + BoJ + BoJ Tankan +
+        Statistics Bureau JP + MoF JP + CAO + CAO GDP + METI in order, isolating
+        per-connector exceptions so one upstream outage rolls back
+        only that connector. Each connector gets its own connection /
+        commit / rollback lifecycle.
 
         Arguments:
           dry_run    — default True. No HTTP, no DB writes.
           connectors — optional list subset of
                        ``["bls","bea","census","ism","umich",
                        "conference-board","nar","ecb","fed-fomc",
-                       "fed-releases","nbs"]``;
+                       "fed-releases","nbs","stat-bureau-jp","boj","boj-tankan",
+                       "mof-jp","cao","cao-gdp","meti"]``;
                        omit to run the full roster.
-
-        This slice ships only the schedule-side aggregator. The
-        value-side sweep (triggered after each expected release
-        crosses its scheduled time), budget guards / circuit breakers,
-        and health-telemetry wiring are follow-up slices under the
-        P-sched umbrella.
         """
         from ingestion.calendar.scheduler import (
             ALL_CONNECTORS,

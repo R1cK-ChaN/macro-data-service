@@ -89,10 +89,12 @@ _ALIASES: dict[str, str] = {
     "cpi-u": "CPI",
     "inflation rate": "CPI",
     "core cpi": "CORE_CPI",
+    "japan core cpi": "CORE_CPI",
     "consumer price index all items less food and energy": "CORE_CPI",
     "cpi less food and energy": "CORE_CPI",
     "cpi ex food and energy": "CORE_CPI",
     "core inflation rate": "CORE_CPI",
+    "japan core inflation rate": "CORE_CPI",
     "ppi": "PPI",
     "producer price index": "PPI",
     "producer price index final demand": "PPI",
@@ -109,6 +111,7 @@ _ALIASES: dict[str, str] = {
     "non farm payrolls": "NFP",           # TE title
     "nfp": "NFP",
     "unemployment rate": "UNEMPLOYMENT_RATE",
+    "japan unemployment rate": "UNEMPLOYMENT_RATE",
     "average hourly earnings": "AHE",
     "average hourly earnings total private": "AHE",   # BLS long-form title
     "average weekly hours": "AWH",
@@ -128,6 +131,9 @@ _ALIASES: dict[str, str] = {
     "gdp": "GDP",
     "gross domestic product": "GDP",
     "gdp growth rate": "GDP",
+    "japan gdp": "GDP",
+    "japan gross domestic product": "GDP",
+    "japan gdp growth rate": "GDP",
     "real gdp": "GDP",
     "real gross domestic product": "GDP",
     "personal income and outlays": "PERSONAL_INCOME",
@@ -173,6 +179,32 @@ _ALIASES: dict[str, str] = {
     "monetary policy meeting": "ECB_MP_DECISION",
     "governing council monetary policy meeting": "ECB_MP_DECISION",
     "monetary policy statement": "ECB_PRESS_CONF",
+    "boj interest rate decision": "BOJ_RATE",
+    "boj rate decision": "BOJ_RATE",
+    "bank of japan interest rate decision": "BOJ_RATE",
+    "boj_rate": "BOJ_RATE",
+    # ── Japan (BoJ Tankan, issue #14 P1a) ───────────────────────
+    "tankan": "TANKAN_LARGE_MFG",
+    "tankan large manufacturers index": "TANKAN_LARGE_MFG",
+    "tankan large manufacturing index": "TANKAN_LARGE_MFG",
+    "tankan large enterprise manufacturing index": "TANKAN_LARGE_MFG",
+    "tankan large manufacturers diffusion index": "TANKAN_LARGE_MFG",
+    "tankan_large_mfg": "TANKAN_LARGE_MFG",
+    "tankan large non-manufacturers index": "TANKAN_LARGE_NONMFG",
+    "tankan large nonmanufacturers index": "TANKAN_LARGE_NONMFG",
+    "tankan large non manufacturers index": "TANKAN_LARGE_NONMFG",
+    "tankan large enterprise non-manufacturing index": "TANKAN_LARGE_NONMFG",
+    "tankan large non-manufacturing index": "TANKAN_LARGE_NONMFG",
+    "tankan_large_nonmfg": "TANKAN_LARGE_NONMFG",
+    # ── Japan (MoF trade statistics, issue #14 P4) ──────────────
+    # Reuses the pre-existing ``TRADE_BALANCE`` canonical (see the
+    # BEA alias ``international trade in goods and services`` above).
+    # Country disambiguation lives in ``provider_event_id``, so a
+    # US trade balance and a JP trade balance sharing the same token
+    # is the intended shape.
+    "balance of trade": "TRADE_BALANCE",
+    "value of exports and imports": "TRADE_BALANCE",
+    "balance_of_trade": "TRADE_BALANCE",
     "beige book": "BEIGE_BOOK",
     "h.4.1": "FED_H41",
     "h.8": "FED_H8",
@@ -195,6 +227,16 @@ _ALIASES: dict[str, str] = {
     "consumer confidence": "CB_CONSUMER_CONFIDENCE",
     "consumer confidence index": "CB_CONSUMER_CONFIDENCE",
     "conference board consumer confidence": "CB_CONSUMER_CONFIDENCE",
+    # ── Japan (Cabinet Office / ESRI, issue #14 P3) ─────────────
+    # Reuses ``CB_CONSUMER_CONFIDENCE`` — the ``CB_`` prefix is a
+    # historical artefact (Conference Board was the first user of
+    # the canonical). Country disambiguation lives in
+    # ``provider_event_id`` so US CB and JP CAO rows sharing the
+    # token is the intended shape. Same pattern as MoF reusing
+    # BEA's ``TRADE_BALANCE``.
+    "consumer confidence survey": "CB_CONSUMER_CONFIDENCE",
+    "cao consumer confidence": "CB_CONSUMER_CONFIDENCE",
+    "japan consumer confidence": "CB_CONSUMER_CONFIDENCE",
     "cb leading index": "CB_LEADING_INDEX",
     "leading index": "CB_LEADING_INDEX",
     "leading economic index": "CB_LEADING_INDEX",
@@ -212,10 +254,16 @@ _ALIASES: dict[str, str] = {
     # gaps even when reference dates align.
     "china gdp": "GDP",
     "china consumer price index": "CPI",
+    "japan consumer price index": "CPI",
+    "japan inflation rate": "CPI",
     "china producer price index": "PPI",
     "china industrial production": "INDUSTRIAL_PRODUCTION",
     "china fixed asset investment": "FIXED_ASSET_INVESTMENT",
     "china retail sales": "RETAIL_SALES",
+    "industrial production index": "INDUSTRIAL_PRODUCTION",
+    "indices of industrial production": "INDUSTRIAL_PRODUCTION",
+    "japan industrial production": "INDUSTRIAL_PRODUCTION",
+    "japan retail sales": "RETAIL_SALES",
     "china manufacturing pmi": "MFG_PMI",
     "china non-manufacturing pmi": "NON_MFG_PMI",
 }

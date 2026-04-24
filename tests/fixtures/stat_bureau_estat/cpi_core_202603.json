@@ -1,0 +1,25 @@
+{
+  "GET_STATS_DATA": {
+    "RESULT": {
+      "STATUS": 0,
+      "ERROR_MSG": "Normal end"
+    },
+    "STATISTICAL_DATA": {
+      "TABLE_INF": {
+        "@id": "0003427113",
+        "STAT_NAME": "Consumer Price Index",
+        "STATISTICS_NAME": "2020-Base Consumer Price Index"
+      },
+      "DATA_INF": {
+        "VALUE": {
+          "@tab": "3",
+          "@cat01": "0161",
+          "@area": "00000",
+          "@time": "2026000303",
+          "@unit": "%",
+          "$": "1.8"
+        }
+      }
+    }
+  }
+}

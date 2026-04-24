@@ -9,15 +9,18 @@ Two driver entry points, one shared per-connector loop:
 
 - :func:`refresh_all_schedules` (P-sched-1) — schedule-side: invokes
   every connector's forward-looking schedule scrape (BLS / BEA / Census
-  / ISM / U Michigan / NAR / ECB / Fed FOMC / Fed releasedates / NBS).
+  / ISM / U Michigan / Conference Board / NAR / ECB / Fed FOMC /
+  Fed releasedates / NBS / Statistics Bureau JP / BoJ / BoJ Tankan / MoF JP / CAO /
+  CAO GDP / METI).
   Daily-cron candidate.
 - :func:`sweep_value_side` (P-sched-2) — value-side: invokes every
   connector's value-bearing scrape (BLS / BEA / Census / ISM /
-  U Michigan / NAR / ECB / Fed-values).
-  NBS has no value-side op yet and is not in the plan. Frequent-cron
-  candidate — repeatedly runs to pick up new values once the release
-  crosses its scheduled time, so the calendar's ``actual`` fills
-  within minutes of publication.
+  U Michigan / Conference Board / NAR / ECB / Fed-values / BoJ-values /
+  Statistics Bureau JP-values / BoJ Tankan-values / MoF JP-values /
+  CAO-values / CAO GDP-values / METI-values).
+  Frequent-cron candidate — repeatedly runs to pick up new values once
+  the release crosses its scheduled time, so the calendar's ``actual``
+  fills within minutes of publication.
 
 Each connector gets its own connection lifecycle so a failure inside
 one connector rolls back only that connector's partial writes — the
@@ -52,6 +55,19 @@ _ECB_CRON_WINDOW_DAYS = 180
 
 from .bea_api import fetch_bea_calendar, schedule_bea_calendar
 from .bls_api import fetch_bls_calendar, schedule_bls_calendar
+from .boj_api import fetch_boj_calendar, fetch_boj_statement_values
+from .boj_tankan_api import (
+    fetch_boj_tankan_calendar,
+    fetch_boj_tankan_outlines,
+)
+from .cao_api import (
+    fetch_cao_calendar,
+    fetch_cao_consumer_confidence_values,
+)
+from .cao_gdp_api import fetch_cao_gdp_calendar, fetch_cao_gdp_values
+from .mof_api import fetch_mof_calendar, fetch_mof_trade_values
+from .meti_api import fetch_meti_calendar, fetch_meti_values
+from .stat_bureau_api import fetch_stat_bureau_calendar, fetch_stat_bureau_values
 from .census_api import fetch_census_calendar, schedule_census_calendar
 from .conference_board_api import (
     fetch_conference_board_calendar,
@@ -135,6 +151,34 @@ def _nbs(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_nbs_calendar(conn, calendar_url=None, dry_run=dry_run)
 
 
+def _boj(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return fetch_boj_calendar(conn, dry_run=dry_run)
+
+
+def _boj_tankan(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return fetch_boj_tankan_calendar(conn, dry_run=dry_run)
+
+
+def _mof(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return fetch_mof_calendar(conn, dry_run=dry_run)
+
+
+def _cao(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return fetch_cao_calendar(conn, dry_run=dry_run)
+
+
+def _cao_gdp(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return fetch_cao_gdp_calendar(conn, dry_run=dry_run)
+
+
+def _meti(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return fetch_meti_calendar(conn, dry_run=dry_run)
+
+
+def _stat_bureau(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return fetch_stat_bureau_calendar(conn, dry_run=dry_run)
+
+
 # Sequencing matters for operator inspection — BLS first (highest
 # trader impact, cheapest surface), Fed / ECB in the middle, NBS last
 # (most upstream-fragile so a failure there is easiest to triage at
@@ -151,6 +195,13 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("fed-fomc", _fed_fomc),
     ("fed-releases", _fed_releases),
     ("nbs", _nbs),
+    ("stat-bureau-jp", _stat_bureau),
+    ("boj", _boj),
+    ("boj-tankan", _boj_tankan),
+    ("mof-jp", _mof),
+    ("cao", _cao),
+    ("cao-gdp", _cao_gdp),
+    ("meti", _meti),
 )
 
 ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
@@ -164,8 +215,22 @@ ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
 # calendar doesn't belong here either — the value-bearing Fed op is
 # ``fetch_fed_statement_values`` exposed as ``fed-values`` below.
 ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
-    "bls", "bea", "census", "ism", "umich", "conference-board",
-    "nar", "ecb", "fed-values",
+    "bls",
+    "bea",
+    "census",
+    "ism",
+    "umich",
+    "conference-board",
+    "nar",
+    "ecb",
+    "fed-values",
+    "stat-bureau-jp-values",
+    "boj-values",
+    "boj-tankan-values",
+    "mof-jp-values",
+    "cao-values",
+    "cao-gdp-values",
+    "meti-values",
 )
 
 
@@ -275,6 +340,20 @@ def _summary_is_total_outage(summary: Any) -> bool:
         meetings_planned is not None
         and meetings_fetched == 0
         and meetings_planned > 0
+    ):
+        return True
+    # BoJ Tankan value-side mirrors the same shape but names the
+    # counters ``releases_*`` (the Tankan surface is "releases", not
+    # "meetings"). Without this branch, a run where every outline URL
+    # 404s would set ``ok=False`` via ``fetch_failures`` without
+    # tripping the breaker, and the frequent cron would keep polling
+    # the broken surface.
+    releases_planned = getattr(summary, "releases_planned", None)
+    releases_fetched = getattr(summary, "releases_fetched", None)
+    if (
+        releases_planned is not None
+        and releases_fetched == 0
+        and releases_planned > 0
     ):
         return True
     return False
@@ -718,6 +797,53 @@ def sweep_value_side(
         # with ``actual IS NULL`` — no year window needed.
         return fetch_fed_statement_values(conn, dry_run=dry_run)
 
+    def _stat_bureau_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        return fetch_stat_bureau_values(conn, dry_run=dry_run)
+
+    def _boj_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # Auto-discovers past BoJ MPM rows with ``actual IS NULL`` —
+        # mirrors the Fed-values shape, no year window needed.
+        return fetch_boj_statement_values(conn, dry_run=dry_run)
+
+    def _boj_tankan_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # Tankan's schedule source (``yoshi/index.htm``) is past-only
+        # — a newly-published release appears there only after
+        # 08:50 JST on release day. The daily schedule pass may
+        # therefore lag the release by several hours, which would
+        # leave the value-side sweep with no ``actual IS NULL`` row
+        # to discover. Seed the schedule side first so the same
+        # sweep that observes the release also fills its value.
+        fetch_boj_tankan_calendar(conn, dry_run=dry_run)
+        return fetch_boj_tankan_outlines(conn, dry_run=dry_run)
+
+    def _mof_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # Auto-discovers past Balance-of-Trade rows with
+        # ``actual IS NULL`` and fetches each release's XML feed.
+        # Unlike Tankan, MoF's schedule page is forward-looking —
+        # calendar rows exist well before the release — so no
+        # in-sweep seed is needed.
+        return fetch_mof_trade_values(conn, dry_run=dry_run)
+
+    def _cao_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # The ``shouhi-e.html`` landing page carries at most one
+        # release at a time — CAO overwrites it on each new
+        # publication. The value scraper does a single GET per
+        # sweep, parses the reference month + CCI value from the
+        # two deterministic sentences, and upserts onto the
+        # matching pending row. project_events' full upsert handles
+        # both the insert-new and update-existing paths, so an
+        # in-sweep schedule seed isn't required.
+        return fetch_cao_consumer_confidence_values(conn, dry_run=dry_run)
+
+    def _cao_gdp_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # The SNA archive is past-only, so seed the staged GDP rows
+        # from the archive before discovering pending CSV values.
+        fetch_cao_gdp_calendar(conn, dry_run=dry_run)
+        return fetch_cao_gdp_values(conn, dry_run=dry_run)
+
+    def _meti_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        return fetch_meti_values(conn, dry_run=dry_run)
+
     value_side_map: dict[ConnectorName, _ConnectorFn] = {
         "bls":        _bls_values,
         "bea":        _bea_values,
@@ -728,6 +854,13 @@ def sweep_value_side(
         "nar":        _nar_values,
         "ecb":        _ecb_values,
         "fed-values": _fed_values,
+        "stat-bureau-jp-values": _stat_bureau_values,
+        "boj-values": _boj_values,
+        "boj-tankan-values": _boj_tankan_values,
+        "mof-jp-values": _mof_values,
+        "cao-values": _cao_values,
+        "cao-gdp-values": _cao_gdp_values,
+        "meti-values": _meti_values,
     }
 
     requested = (
