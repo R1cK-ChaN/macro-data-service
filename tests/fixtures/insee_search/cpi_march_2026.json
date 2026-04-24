@@ -1,0 +1,15 @@
+{
+  "status": 0,
+  "numFounds": 1,
+  "start": 0,
+  "documents": [
+    {
+      "id": 8964204,
+      "titre": "In March 2026, consumer prices increased by 1.7% year on year",
+      "sousTitre": "Consumer price index - provisional results - March 2026",
+      "famille": {"id": 1250},
+      "embargo": "2026-03-31T06:45:00.000+00:00",
+      "dateDiffusion": "2026-03-31T06:45:00.000+00:00"
+    }
+  ]
+}

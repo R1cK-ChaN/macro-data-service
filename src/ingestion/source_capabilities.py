@@ -648,6 +648,7 @@ class SourceCapabilityManager:
                 _entity("calendar", "ecb", "provider", "ECB"),
                 _entity("calendar", "eurostat", "provider", "Eurostat"),
                 _entity("calendar", "destatis", "provider", "Destatis"),
+                _entity("calendar", "insee", "provider", "INSEE France"),
                 _entity("calendar", "ine", "provider", "INE Spain"),
                 _entity("calendar", "istat", "provider", "ISTAT Italy"),
                 _entity("calendar", "nbs", "provider", "NBS"),

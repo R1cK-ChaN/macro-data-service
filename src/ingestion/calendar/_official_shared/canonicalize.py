@@ -233,6 +233,13 @@ _ALIASES: dict[str, str] = {
     "balance of trade": "TRADE_BALANCE",
     "value of exports and imports": "TRADE_BALANCE",
     "balance_of_trade": "TRADE_BALANCE",
+    # ── France (INSEE, issue #15 P3c) ───────────────────────────
+    "france cpi": "CPI",
+    "french cpi": "CPI",
+    "france cpi provisional": "CPI",
+    "france gdp": "GDP",
+    "french gdp": "GDP",
+    "france gdp first estimate": "GDP",
     "beige book": "BEIGE_BOOK",
     "h.4.1": "FED_H41",
     "h.8": "FED_H8",

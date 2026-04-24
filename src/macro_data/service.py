@@ -1866,6 +1866,129 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    # -- Economic calendar -- France INSEE connector (issue #15 P3c) --
+
+    def _op_calendar_econ_fetch_insee(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch due INSEE press-release values into the calendar."""
+        from ingestion.calendar.insee_api import fetch_insee_calendar
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list):
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            from ingestion.calendar.insee_api.fetcher import _resolve_series
+            planned, unknown = _resolve_series(series_ids)
+            return {
+                "dry_run":        True,
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_insee_calendar(
+                connection,
+                series_ids=series_ids,
+                dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "series_unknown":     summary.series_unknown,
+            "series_failed":      summary.series_failed,
+            "pending_releases":   summary.pending_releases,
+            "observations_seen":  summary.observations_seen,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_schedule_insee(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch INSEE agenda rows into ``cal_econ_event``."""
+        from ingestion.calendar.insee_api import schedule_insee_calendar
+
+        dry_run = bool(arguments.get("dry_run", True))
+        start_date = arguments.get("start_date")
+        end_date = arguments.get("end_date")
+        start_date = str(start_date) if start_date else None
+        end_date = str(end_date) if end_date else None
+
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list):
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            from ingestion.calendar.insee_api.fetcher import _resolve_series
+            from ingestion.calendar.insee_api.schedule import default_schedule_window
+            planned, unknown = _resolve_series(series_ids)
+            default_start, default_end = default_schedule_window()
+            return {
+                "dry_run":        True,
+                "start_date":     start_date or default_start.isoformat(),
+                "end_date":       end_date or default_end.isoformat(),
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = schedule_insee_calendar(
+                connection,
+                start_date=start_date,
+                end_date=end_date,
+                series_ids=series_ids,
+                dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "start_date":         summary.start_date,
+            "end_date":           summary.end_date,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "series_unknown":     summary.series_unknown,
+            "entries_parsed":     summary.entries_parsed,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "row_issues":         summary.row_issues,
+            "fetch_error":        summary.fetch_error,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
     # -- Economic calendar -- Spain INE connector (issue #15 P3a) -----
 
     def _op_calendar_econ_fetch_ine(
@@ -3085,7 +3208,7 @@ class LocalMacroDataService:
           connectors   — optional list subset of
                          ``["bls", "bea", "census", "ism", "umich",
                          "conference-board", "nar", "ecb", "eurostat", "destatis",
-                         "ine", "istat", "fed-values",
+                         "insee", "ine", "istat", "fed-values",
                          "stat-bureau-jp-values", "boj-values", "boj-tankan-values",
                          "mof-jp-values", "cao-values",
                          "cao-gdp-values", "meti-values"]``.
@@ -3176,7 +3299,7 @@ class LocalMacroDataService:
         Daily-cron candidate for the recurring-fetch scheduler
         (:mod:`ingestion.calendar.scheduler`). Iterates BLS + BEA +
         Census + ISM + U Michigan + Conference Board + NAR + ECB + Eurostat + Destatis +
-        INE + ISTAT +
+        INSEE + INE + ISTAT +
         Fed FOMC + Fed releasedates + NBS + BoJ + BoJ Tankan +
         Statistics Bureau JP + MoF JP + CAO + CAO GDP + METI in order, isolating
         per-connector exceptions so one upstream outage rolls back
@@ -3187,7 +3310,7 @@ class LocalMacroDataService:
           dry_run    — default True. No HTTP, no DB writes.
           connectors — optional list subset of
                        ``["bls","bea","census","ism","umich",
-                       "conference-board","nar","ecb","eurostat","destatis","ine","istat","fed-fomc",
+                       "conference-board","nar","ecb","eurostat","destatis","insee","ine","istat","fed-fomc",
                        "fed-releases","nbs","stat-bureau-jp","boj","boj-tankan",
                        "mof-jp","cao","cao-gdp","meti"]``;
                        omit to run the full roster.

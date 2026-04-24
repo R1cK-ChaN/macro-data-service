@@ -9,13 +9,13 @@ Two driver entry points, one shared per-connector loop:
 
 - :func:`refresh_all_schedules` (P-sched-1) — schedule-side: invokes
   every connector's forward-looking schedule scrape (BLS / BEA / Census
-  / ISM / U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / INE /
+  / ISM / U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / INSEE / INE /
   ISTAT / Fed FOMC / Fed releasedates / NBS / Statistics Bureau JP / BoJ / BoJ Tankan / MoF JP / CAO /
   CAO GDP / METI).
   Daily-cron candidate.
 - :func:`sweep_value_side` (P-sched-2) — value-side: invokes every
   connector's value-bearing scrape (BLS / BEA / Census / ISM /
-  U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / INE /
+  U Michigan / Conference Board / NAR / ECB / Eurostat / Destatis / INSEE / INE /
   ISTAT / Fed-values / BoJ-values / Statistics Bureau JP-values / BoJ Tankan-values / MoF JP-values /
   CAO-values / CAO GDP-values / METI-values).
   Frequent-cron candidate — repeatedly runs to pick up new values once
@@ -76,6 +76,7 @@ from .conference_board_api import (
 from .ecb_api import fetch_ecb_calendar, schedule_ecb_calendar
 from .eurostat_api import fetch_eurostat_calendar, schedule_eurostat_calendar
 from .destatis_api import fetch_destatis_calendar, schedule_destatis_calendar
+from .insee_api import fetch_insee_calendar, schedule_insee_calendar
 from .ine_api import fetch_ine_calendar, schedule_ine_calendar
 from .istat_api import fetch_istat_calendar, schedule_istat_calendar
 from .fed_api import (
@@ -148,6 +149,10 @@ def _destatis(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_destatis_calendar(conn, dry_run=dry_run)
 
 
+def _insee(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return schedule_insee_calendar(conn, dry_run=dry_run)
+
+
 def _ine(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_ine_calendar(conn, dry_run=dry_run)
 
@@ -214,6 +219,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("ecb", _ecb),
     ("eurostat", _eurostat),
     ("destatis", _destatis),
+    ("insee", _insee),
     ("ine", _ine),
     ("istat", _istat),
     ("fed-fomc", _fed_fomc),
@@ -249,6 +255,7 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "ecb",
     "eurostat",
     "destatis",
+    "insee",
     "ine",
     "istat",
     "fed-values",
@@ -738,7 +745,8 @@ def sweep_value_side(
         observation lands.
     start_period / end_period:
         Optional SDMX-period strings forwarded to ECB and Eurostat.
-        Destatis uses the resolved year bounds.
+        Destatis uses the resolved year bounds; INSEE / INE / ISTAT
+        auto-discover due rows from ``cal_econ_event``.
         ``None`` means the driver picks its recent window.
     connectors:
         Optional subset of :data:`ALL_VALUE_SIDE_CONNECTORS`. Omit to
@@ -856,6 +864,9 @@ def sweep_value_side(
             dry_run=dry_run,
         )
 
+    def _insee_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        return fetch_insee_calendar(conn, dry_run=dry_run)
+
     def _ine_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         return fetch_ine_calendar(conn, dry_run=dry_run)
 
@@ -925,6 +936,7 @@ def sweep_value_side(
         "ecb":        _ecb_values,
         "eurostat":   _eurostat_values,
         "destatis":   _destatis_values,
+        "insee":      _insee_values,
         "ine":        _ine_values,
         "istat":      _istat_values,
         "fed-values": _fed_values,
