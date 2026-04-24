@@ -53,6 +53,10 @@ _ECB_CRON_WINDOW_DAYS = 180
 from .bea_api import fetch_bea_calendar, schedule_bea_calendar
 from .bls_api import fetch_bls_calendar, schedule_bls_calendar
 from .boj_api import fetch_boj_calendar, fetch_boj_statement_values
+from .boj_tankan_api import (
+    fetch_boj_tankan_calendar,
+    fetch_boj_tankan_outlines,
+)
 from .census_api import fetch_census_calendar, schedule_census_calendar
 from .conference_board_api import (
     fetch_conference_board_calendar,
@@ -140,6 +144,10 @@ def _boj(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_boj_calendar(conn, dry_run=dry_run)
 
 
+def _boj_tankan(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return fetch_boj_tankan_calendar(conn, dry_run=dry_run)
+
+
 # Sequencing matters for operator inspection — BLS first (highest
 # trader impact, cheapest surface), Fed / ECB in the middle, NBS last
 # (most upstream-fragile so a failure there is easiest to triage at
@@ -157,6 +165,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("fed-releases", _fed_releases),
     ("nbs", _nbs),
     ("boj", _boj),
+    ("boj-tankan", _boj_tankan),
 )
 
 ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
@@ -171,7 +180,7 @@ ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
 # ``fetch_fed_statement_values`` exposed as ``fed-values`` below.
 ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "bls", "bea", "census", "ism", "umich", "conference-board",
-    "nar", "ecb", "fed-values", "boj-values",
+    "nar", "ecb", "fed-values", "boj-values", "boj-tankan-values",
 )
 
 
@@ -281,6 +290,20 @@ def _summary_is_total_outage(summary: Any) -> bool:
         meetings_planned is not None
         and meetings_fetched == 0
         and meetings_planned > 0
+    ):
+        return True
+    # BoJ Tankan value-side mirrors the same shape but names the
+    # counters ``releases_*`` (the Tankan surface is "releases", not
+    # "meetings"). Without this branch, a run where every outline URL
+    # 404s would set ``ok=False`` via ``fetch_failures`` without
+    # tripping the breaker, and the frequent cron would keep polling
+    # the broken surface.
+    releases_planned = getattr(summary, "releases_planned", None)
+    releases_fetched = getattr(summary, "releases_fetched", None)
+    if (
+        releases_planned is not None
+        and releases_fetched == 0
+        and releases_planned > 0
     ):
         return True
     return False
@@ -729,6 +752,17 @@ def sweep_value_side(
         # mirrors the Fed-values shape, no year window needed.
         return fetch_boj_statement_values(conn, dry_run=dry_run)
 
+    def _boj_tankan_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # Tankan's schedule source (``yoshi/index.htm``) is past-only
+        # — a newly-published release appears there only after
+        # 08:50 JST on release day. The daily schedule pass may
+        # therefore lag the release by several hours, which would
+        # leave the value-side sweep with no ``actual IS NULL`` row
+        # to discover. Seed the schedule side first so the same
+        # sweep that observes the release also fills its value.
+        fetch_boj_tankan_calendar(conn, dry_run=dry_run)
+        return fetch_boj_tankan_outlines(conn, dry_run=dry_run)
+
     value_side_map: dict[ConnectorName, _ConnectorFn] = {
         "bls":        _bls_values,
         "bea":        _bea_values,
@@ -740,6 +774,7 @@ def sweep_value_side(
         "ecb":        _ecb_values,
         "fed-values": _fed_values,
         "boj-values": _boj_values,
+        "boj-tankan-values": _boj_tankan_values,
     }
 
     requested = (
