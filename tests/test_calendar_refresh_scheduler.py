@@ -70,7 +70,7 @@ def test_default_connectors_cover_every_official_source() -> None:
     """The default plan is the full official-source suite."""
     assert ALL_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
-        "nar", "ecb", "eurostat", "destatis", "insee", "ine", "istat",
+        "nar", "ecb", "eurostat", "destatis", "zew", "insee", "ine", "istat",
         "fed-fomc", "fed-releases", "nbs", "stat-bureau-jp", "boj",
         "boj-tankan", "mof-jp", "cao", "cao-gdp", "meti",
     )
@@ -95,7 +95,7 @@ def test_dry_run_plans_every_connector(store: SQLiteEngineStore) -> None:
     )
     assert summary.dry_run is True
     assert summary.connectors_planned == list(ALL_CONNECTORS)
-    assert summary.ok_count == 23
+    assert summary.ok_count == 24
     assert summary.failed_count == 0
     assert [c for c, _ in call_log] == list(ALL_CONNECTORS)
     # Per-connector summaries are flattened to dicts so the service op
@@ -133,7 +133,7 @@ def test_one_connector_raising_does_not_skip_the_rest(
     )
     assert call_log == list(ALL_CONNECTORS)  # every connector invoked
     assert summary.failed_count == 1
-    assert summary.ok_count == 22
+    assert summary.ok_count == 23
     ecb_result = next(r for r in summary.results if r.connector == "ecb")
     assert ecb_result.ok is False
     assert "simulated ECB outage" in (ecb_result.error or "")
@@ -180,6 +180,7 @@ def test_failed_connector_rolls_back_without_touching_successes(
         "ecb":          _raise_after_write,
         "eurostat":     _writer("eurostat",     "kept-eurostat"),
         "destatis":     _writer("destatis",     "kept-destatis"),
+        "zew":          _writer("zew",          "kept-zew"),
         "insee":        _writer("insee",        "kept-insee"),
         "ine":           _writer("ine",          "kept-ine"),
         "istat":        _writer("istat",        "kept-istat"),
@@ -217,6 +218,7 @@ def test_failed_connector_rolls_back_without_touching_successes(
     assert "kept-nar" in ids
     assert "kept-eurostat" in ids
     assert "kept-destatis" in ids
+    assert "kept-zew" in ids
     assert "kept-insee" in ids
     assert "kept-ine" in ids
     assert "kept-istat" in ids
@@ -287,7 +289,7 @@ def test_in_summary_fetch_error_flips_ok_to_false(
     assert "502" in (by_connector["bea"].error or "")
     assert by_connector["ecb"].ok is False
     assert "503" in (by_connector["ecb"].error or "")
-    assert summary.ok_count == 21
+    assert summary.ok_count == 22
     assert summary.failed_count == 2
 
 
@@ -477,7 +479,7 @@ def test_service_op_dry_run_returns_envelope(store: SQLiteEngineStore) -> None:
     # connector's summary dict is carried through. We don't assert on
     # specific fields (they vary by connector) but we do assert every
     # connector reported ok.
-    assert result["ok_count"] == 23
+    assert result["ok_count"] == 24
     assert result["failed_count"] == 0
 
 
@@ -506,7 +508,7 @@ def test_value_side_default_plan_covers_connectors() -> None:
     — the value-bearing Fed op lives under ``fed-values``."""
     assert ALL_VALUE_SIDE_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
-        "nar", "ecb", "eurostat", "destatis", "insee", "ine", "istat",
+        "nar", "ecb", "eurostat", "destatis", "zew", "insee", "ine", "istat",
         "fed-values", "stat-bureau-jp-values", "boj-values", "boj-tankan-values",
         "mof-jp-values", "cao-values", "cao-gdp-values", "meti-values",
     )
@@ -532,7 +534,7 @@ def test_value_side_dry_run_hits_every_connector(
     assert summary.dry_run is True
     assert summary.connectors_planned == list(ALL_VALUE_SIDE_CONNECTORS)
     assert [c for c, _ in call_log] == list(ALL_VALUE_SIDE_CONNECTORS)
-    assert summary.ok_count == 21
+    assert summary.ok_count == 22
     assert summary.failed_count == 0
 
 
@@ -561,6 +563,7 @@ def test_value_side_missing_api_key_isolates_to_one_connector(
         "ecb":        _ok("ecb"),
         "eurostat":   _ok("eurostat"),
         "destatis":   _ok("destatis"),
+        "zew":        _ok("zew"),
         "insee":      _ok("insee"),
         "ine":        _ok("ine"),
         "istat":      _ok("istat"),
@@ -581,7 +584,7 @@ def test_value_side_missing_api_key_isolates_to_one_connector(
     bls_result = next(r for r in summary.results if r.connector == "bls")
     assert bls_result.ok is False
     assert "BLS_API_KEY" in (bls_result.error or "")
-    assert summary.ok_count == 20
+    assert summary.ok_count == 21
     assert summary.failed_count == 1
 
 

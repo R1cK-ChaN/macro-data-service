@@ -164,7 +164,7 @@ def test_default_calendar_capability_is_discovery_only() -> None:
 
     entities = manager.list_entities("calendar", limit=20)["entities"]
     ids = {entity["entity_id"] for entity in entities}
-    assert {"tradingeconomics", "eodhd", "bls", "nar", "insee"} <= ids
+    assert {"tradingeconomics", "eodhd", "bls", "nar", "zew", "insee"} <= ids
     assert manager.sync_latest("calendar") == {
         "error": "latest sync unavailable for calendar"
     }

@@ -176,6 +176,7 @@ def test_cal_provider_seeded(store: SQLiteEngineStore) -> None:
         ("stat-bureau-jp",   "government_agency", "economic",  100),
         ("tradingeconomics", "data_aggregator",   "economic",  10),
         ("umich",            "market_data",       "economic",  100),
+        ("zew",              "market_data",       "economic",  100),
     ]
 
 
@@ -186,7 +187,7 @@ def test_cal_provider_seed_idempotent(tmp_path: Path) -> None:
     second = SQLiteEngineStore(db_path=db)
     with second._connection(commit=False) as c:
         n = c.execute("SELECT COUNT(*) FROM cal_provider").fetchone()[0]
-    assert n == 22
+    assert n == 23
 
 
 def test_importance_flows_through_view_as_enum_string(store: SQLiteEngineStore) -> None:
@@ -329,6 +330,49 @@ def test_calendar_keyword_patterns_expand_nfp_provider_spellings(
         "nfp-ff",
         "nfp-investing",
     }
+
+
+def test_calendar_keyword_zew_filters_to_zew_specific_titles(
+    store: SQLiteEngineStore,
+) -> None:
+    with store._connection(commit=True) as c:
+        c.executemany(
+            """
+            INSERT INTO cal_econ_event (
+                provider, provider_event_id, event_time_utc, event_time_precision,
+                country_code, category, title, importance, actual, content_hash,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (
+                ?, ?, ?, 'datetime',
+                ?, ?, ?, 'high', '1.0', ?,
+                1700000000000, '2026-04-23', '2026-04-23'
+            )
+            """,
+            [
+                (
+                    "tradingeconomics",
+                    "zew-germany",
+                    "2026-04-21T09:05:00+00:00",
+                    "DE",
+                    "Zew Economic Sentiment Index",
+                    "ZEW Economic Sentiment Index",
+                    "zew-germany",
+                ),
+                (
+                    "tradingeconomics",
+                    "eu-economic-sentiment",
+                    "2026-04-21T09:00:00+00:00",
+                    "EU",
+                    "Economic Optimism Index",
+                    "Economic Sentiment",
+                    "eu-economic-sentiment",
+                ),
+            ],
+        )
+
+    events = store.list_indicator_releases(indicator_keyword="zew", limit=10)
+
+    assert [event.event_id for event in events] == ["zew-germany"]
 
 
 def test_calendar_keyword_filter_matches_acronym_aliases(
