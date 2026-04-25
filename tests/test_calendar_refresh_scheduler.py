@@ -516,7 +516,8 @@ def test_value_side_default_plan_covers_connectors() -> None:
     — the value-bearing Fed op lives under ``fed-values``."""
     assert ALL_VALUE_SIDE_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
-        "nar", "ecb", "eurostat", "destatis", "zew", "ifo", "gfk", "ec-bcs", "insee", "ine", "istat",
+        "nar", "ecb", "eurostat", "destatis", "zew", "ifo", "gfk", "hcob",
+        "ec-bcs", "insee", "ine", "istat",
         "fed-values", "stat-bureau-jp-values", "boj-values", "boj-tankan-values",
         "mof-jp-values", "cao-values", "cao-gdp-values", "meti-values",
     )
@@ -574,6 +575,7 @@ def test_value_side_missing_api_key_isolates_to_one_connector(
         "zew":        _ok("zew"),
         "ifo":        _ok("ifo"),
         "gfk":        _ok("gfk"),
+        "hcob":       _ok("hcob"),
         "insee":      _ok("insee"),
         "ine":        _ok("ine"),
         "istat":      _ok("istat"),

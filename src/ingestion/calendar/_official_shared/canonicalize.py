@@ -256,26 +256,31 @@ _ALIASES: dict[str, str] = {
     "germany gfk consumer confidence": "GFK_CONSUMER_CLIMATE",
     "nim consumer climate": "GFK_CONSUMER_CLIMATE",
     "nim consumer climate powered by gfk": "GFK_CONSUMER_CLIMATE",
-    # HCOB Germany PMIs. Note that the shared `_MODIFIER_SUFFIXES`
-    # table strips a trailing " flash" before alias lookup, so TE labels
-    # like "HCOB Manufacturing PMI Flash" collapse to
-    # `HCOB_MANUFACTURING_PMI` — i.e. TE's Flash-Manufacturing sits in
-    # the same canonical bucket as the final Manufacturing release. Our
-    # P5 schedule-side ships a single combined `HCOB Flash PMI` row on
-    # the Flash release day; a future P5-values slice can split out
-    # per-component flash rows to match TE's three-row shape. Today
-    # TE-only parity gaps on the flash day are expected and documented.
-    "hcob flash pmi": "HCOB_FLASH_PMI",
-    "hcob germany flash pmi": "HCOB_FLASH_PMI",
-    "germany hcob flash pmi": "HCOB_FLASH_PMI",
-    "hcob flash germany pmi": "HCOB_FLASH_PMI",
+    # HCOB Germany PMIs. Issue #23 splits the flash day into three
+    # per-component canonical tokens (`HCOB_FLASH_MANUFACTURING_PMI`,
+    # `HCOB_FLASH_SERVICES_PMI`, `HCOB_FLASH_COMPOSITE_PMI`). TE labels
+    # carrying a trailing " Flash" must alias BEFORE the shared
+    # `_MODIFIER_SUFFIXES` strips that suffix, otherwise "HCOB
+    # Manufacturing PMI Flash" would collapse onto the canonical for
+    # the *final* monthly release. The flash entries below are
+    # therefore registered against the pre-strip surface form. Our own
+    # rebranded "Germany HCOB Flash <component> PMI" titles also alias
+    # here so the parity harness buckets them together with TE rows.
+    "hcob flash manufacturing pmi": "HCOB_FLASH_MANUFACTURING_PMI",
+    "hcob manufacturing pmi flash": "HCOB_FLASH_MANUFACTURING_PMI",
+    "germany hcob flash manufacturing pmi": "HCOB_FLASH_MANUFACTURING_PMI",
+    "hcob flash services pmi": "HCOB_FLASH_SERVICES_PMI",
+    "hcob services pmi flash": "HCOB_FLASH_SERVICES_PMI",
+    "germany hcob flash services pmi": "HCOB_FLASH_SERVICES_PMI",
+    "hcob flash composite pmi": "HCOB_FLASH_COMPOSITE_PMI",
+    "hcob composite pmi flash": "HCOB_FLASH_COMPOSITE_PMI",
+    "germany hcob flash composite pmi": "HCOB_FLASH_COMPOSITE_PMI",
     "hcob manufacturing pmi": "HCOB_MANUFACTURING_PMI",
     "hcob germany manufacturing pmi": "HCOB_MANUFACTURING_PMI",
     "germany hcob manufacturing pmi": "HCOB_MANUFACTURING_PMI",
     "hcob services pmi": "HCOB_SERVICES_PMI",
     "hcob germany services pmi": "HCOB_SERVICES_PMI",
     "germany hcob services pmi": "HCOB_SERVICES_PMI",
-    "s&p global flash germany pmi": "HCOB_FLASH_PMI",
     "s&p global germany manufacturing pmi": "HCOB_MANUFACTURING_PMI",
     "s&p global germany services pmi": "HCOB_SERVICES_PMI",
     # ── European Commission BCS (issue #24) ─────────────────────

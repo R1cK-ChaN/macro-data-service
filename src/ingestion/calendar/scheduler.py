@@ -79,7 +79,7 @@ from .destatis_api import fetch_destatis_calendar, schedule_destatis_calendar
 from .zew_api import fetch_zew_calendar, schedule_zew_calendar
 from .ifo_api import fetch_ifo_calendar, schedule_ifo_calendar
 from .gfk_api import fetch_gfk_calendar, schedule_gfk_calendar
-from .hcob_api import schedule_hcob_calendar
+from .hcob_api import fetch_hcob_calendar, schedule_hcob_calendar
 from .ec_bcs_api import fetch_ec_bcs_calendar, schedule_ec_bcs_calendar
 from .insee_api import fetch_insee_calendar, schedule_insee_calendar
 from .ine_api import fetch_ine_calendar, schedule_ine_calendar
@@ -288,6 +288,7 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "zew",
     "ifo",
     "gfk",
+    "hcob",
     "ec-bcs",
     "insee",
     "ine",
@@ -907,6 +908,9 @@ def sweep_value_side(
     def _gfk_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         return fetch_gfk_calendar(conn, dry_run=dry_run)
 
+    def _hcob_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        return fetch_hcob_calendar(conn, dry_run=dry_run)
+
     def _ec_bcs_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         return fetch_ec_bcs_calendar(conn, dry_run=dry_run)
 
@@ -985,6 +989,7 @@ def sweep_value_side(
         "zew":        _zew_values,
         "ifo":        _ifo_values,
         "gfk":        _gfk_values,
+        "hcob":       _hcob_values,
         "ec-bcs":     _ec_bcs_values,
         "insee":      _insee_values,
         "ine":        _ine_values,

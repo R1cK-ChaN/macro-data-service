@@ -20,9 +20,10 @@ from ingestion.calendar._official_shared import (
 )
 
 from .indicators import (
+    HCOB_PRESS_RELEASES_URL,
     HCOB_RELEASE_DATES_URL,
     HCOBIndicatorSpec,
-    spec_for_calendar_title,
+    specs_for_calendar_title,
 )
 from .parser import (
     PROVIDER,
@@ -90,13 +91,13 @@ def _resolve_year(release_month: int, release_day: int, today: date) -> int:
 def _reference_date(release_date: date, release_kind: str) -> date:
     """Reference month for each PMI release kind.
 
-    Flash is always for the current month (publishes on ~23rd).
+    Flash variants are always for the current month (publishes on ~23rd).
     Final Manufacturing / Services publish on the 1st–3rd business day of
     month N reporting on month N-1.
     """
-    if release_kind == "pmi_flash":
+    if release_kind.startswith("pmi_flash"):
         return date(release_date.year, release_date.month, 1)
-    # pmi_final — reference is the prior month.
+    # pmi_final_* — reference is the prior month.
     year = release_date.year
     month = release_date.month - 1
     if month == 0:
@@ -181,31 +182,31 @@ def parse_release_dates_html(
             remainder = item_text[time_match.end():]
         title_text = _normalise_title(remainder)
 
-        spec = spec_for_calendar_title(title_text)
-        if spec is None:
+        matched = specs_for_calendar_title(title_text)
+        if not matched:
             continue
-        if series_ids is not None and spec.series_id not in series_ids:
-            continue
-
-        reference = _reference_date(release_date, spec.release_kind)
-        entries.append(
-            HCOBScheduleEntry(
-                series_id=spec.series_id,
-                reference_date=reference.isoformat(),
-                reference_label=_reference_label_en(reference),
-                release_title=spec.title,
-                release_date=release_date,
-                event_time_utc=_event_time(release_date, release_time),
-                event_time_precision="datetime",
-                source_url=source_url or HCOB_RELEASE_DATES_URL,
-                raw={
-                    "upstream_title": item_text.strip(),
-                    "release_date": release_date.isoformat(),
-                    "release_time_utc": release_time,
-                    "source_url": source_url or HCOB_RELEASE_DATES_URL,
-                },
+        for spec in matched:
+            if series_ids is not None and spec.series_id not in series_ids:
+                continue
+            reference = _reference_date(release_date, spec.release_kind)
+            entries.append(
+                HCOBScheduleEntry(
+                    series_id=spec.series_id,
+                    reference_date=reference.isoformat(),
+                    reference_label=_reference_label_en(reference),
+                    release_title=spec.title,
+                    release_date=release_date,
+                    event_time_utc=_event_time(release_date, release_time),
+                    event_time_precision="datetime",
+                    source_url=source_url or HCOB_RELEASE_DATES_URL,
+                    raw={
+                        "upstream_title": item_text.strip(),
+                        "release_date": release_date.isoformat(),
+                        "release_time_utc": release_time,
+                        "source_url": source_url or HCOB_RELEASE_DATES_URL,
+                    },
+                )
             )
-        )
 
     if not entries:
         where = f" at {source_url}" if source_url else ""
@@ -323,3 +324,143 @@ def default_schedule_window(today: date | None = None) -> tuple[date, date]:
     """Default schedule window for the PMI calendar's rolling release list."""
     base = today or datetime.now(ZoneInfo("Europe/Berlin")).date()
     return base - timedelta(days=14), date(base.year + 1, 12, 31)
+
+
+# ── press-release listing → PDF URL resolution ──────────────────────
+
+
+@dataclass(frozen=True)
+class HCOBResolvedPressRelease:
+    """One press-release row resolved from the public listing page."""
+
+    title: str
+    release_date: str
+    source_url: str
+    raw: dict[str, Any]
+
+
+_LISTING_MONTHS: dict[str, int] = _MONTHS  # alias for clarity at use sites
+
+
+def _normalise_listing_title(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _parse_listing_date(text: str) -> date | None:
+    """Parse ``"April 23 2026 07:30 UTC"`` into a release ``date``."""
+    cleaned = text.replace("\xa0", " ")
+    match = re.search(
+        r"(January|February|March|April|May|June|July|August|September|October|November|December)"
+        r"\s+(\d{1,2})\s+(20\d{2})",
+        cleaned,
+        re.I,
+    )
+    if not match:
+        return None
+    month_raw, day_raw, year_raw = match.groups()
+    try:
+        return date(
+            int(year_raw),
+            _LISTING_MONTHS[month_raw.lower()],
+            int(day_raw),
+        )
+    except (KeyError, ValueError):
+        return None
+
+
+def resolve_press_release_link(
+    html: str | bytes,
+    *,
+    release_date: date,
+    expected_listing_match: str,
+) -> HCOBResolvedPressRelease:
+    """Locate one press-release URL on the public listing page.
+
+    The listing groups every release into rows with a date span, a
+    title span, and a "View More" anchor that points at a GUID-keyed
+    PDF. Each release also has a ``(Deutsch)`` German-language sibling
+    we deliberately skip so the value parser receives English text.
+    """
+    text = html.decode("utf-8", errors="replace") if isinstance(html, bytes) else html
+    soup = BeautifulSoup(text, "html.parser")
+    expected = _normalise_listing_title(expected_listing_match)
+
+    for item in soup.find_all("div", class_="listItem"):
+        date_span = item.find("span", class_="releaseDate")
+        title_span = item.find("span", class_="releaseTitle")
+        anchor = item.find("a", href=True)
+        if not (date_span and title_span and anchor):
+            continue
+
+        title_text = title_span.get_text(" ", strip=True)
+        normalized = _normalise_listing_title(title_text)
+        if normalized.endswith("(deutsch)"):
+            continue
+        if normalized != expected:
+            continue
+
+        listing_date = _parse_listing_date(date_span.get_text(" ", strip=True))
+        if listing_date != release_date:
+            continue
+
+        href = str(anchor.get("href") or "")
+        if not href:
+            continue
+        return HCOBResolvedPressRelease(
+            title=title_text,
+            release_date=release_date.isoformat(),
+            source_url=href,
+            raw={
+                "listing_date": date_span.get_text(" ", strip=True),
+                "listing_title": title_text,
+            },
+        )
+
+    raise HCOBScheduleParseError(
+        f"HCOB / S&P Global press release not found on listing for "
+        f"{release_date.isoformat()} / {expected_listing_match!r}"
+    )
+
+
+def fetch_press_releases_listing_html(
+    *,
+    session: requests.Session | None = None,
+    timeout: float = 30.0,
+) -> str:
+    """GET the S&P Global PMI press-release listing page."""
+    http = session or requests.Session()
+    response = http.get(
+        HCOB_PRESS_RELEASES_URL,
+        headers=_HCOB_BROWSER_HEADERS,
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    return response.text
+
+
+def fetch_press_release_pdf_text(
+    url: str,
+    *,
+    session: requests.Session | None = None,
+    timeout: float = 60.0,
+) -> str:
+    """Download a press-release PDF and extract its text via ``pypdf``.
+
+    The PMI press-release endpoint serves ``application/pdf`` directly
+    (no intermediate HTML), so the response body is the PDF bytes.
+    """
+    from io import BytesIO
+
+    from pypdf import PdfReader
+
+    http = session or requests.Session()
+    response = http.get(url, headers=_HCOB_BROWSER_HEADERS, timeout=timeout)
+    response.raise_for_status()
+    reader = PdfReader(BytesIO(response.content))
+    parts = []
+    for page in reader.pages:
+        try:
+            parts.append(page.extract_text() or "")
+        except Exception:  # pypdf raises various decoding errors per page
+            continue
+    return "\n".join(parts)
