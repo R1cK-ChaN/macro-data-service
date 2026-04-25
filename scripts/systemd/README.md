@@ -6,6 +6,12 @@ Files in this directory wire the daily TE-vs-official parity job
 ## Install
 
 ```bash
+# 1. One-time GitHub label bootstrap. The filer uses
+#    `parity-drift` + `agency:<id>` labels; `gh issue create` errors
+#    out if any are missing. Idempotent — re-running skips existing.
+bash scripts/parity_setup_labels.sh
+
+# 2. Install the systemd user unit.
 mkdir -p ~/.config/systemd/user
 cp scripts/systemd/parity-daily.service ~/.config/systemd/user/
 cp scripts/systemd/parity-daily.timer   ~/.config/systemd/user/
