@@ -278,6 +278,19 @@ _ALIASES: dict[str, str] = {
     "s&p global flash germany pmi": "HCOB_FLASH_PMI",
     "s&p global germany manufacturing pmi": "HCOB_MANUFACTURING_PMI",
     "s&p global germany services pmi": "HCOB_SERVICES_PMI",
+    # ── European Commission BCS (issue #24) ─────────────────────
+    "economic sentiment indicator": "EC_BCS_ESI",
+    "euro area economic sentiment indicator": "EC_BCS_ESI",
+    "eu economic sentiment indicator": "EC_BCS_ESI",
+    "business confidence": "EC_BCS_ESI",
+    "economic sentiment": "EC_BCS_ESI",
+    "esi": "EC_BCS_ESI",
+    "consumer confidence flash": "EC_BCS_CCI_FLASH",
+    "flash consumer confidence indicator": "EC_BCS_CCI_FLASH",
+    "euro area consumer confidence flash": "EC_BCS_CCI_FLASH",
+    "eu consumer confidence flash": "EC_BCS_CCI_FLASH",
+    "consumer confidence flash estimate": "EC_BCS_CCI_FLASH",
+    "flash consumer confidence": "EC_BCS_CCI_FLASH",
     "beige book": "BEIGE_BOOK",
     "h.4.1": "FED_H41",
     "h.8": "FED_H8",
@@ -371,6 +384,15 @@ def canonicalize_indicator(label: str) -> str:
     for dash in _DASH_CHARS:
         text = text.replace(dash, " ")
     text = _WHITESPACE_RE.sub(" ", text).strip()
+
+    # Try alias before stripping modifier suffixes so labels whose
+    # modifier carries semantic weight (e.g. "Consumer Confidence Flash"
+    # is a distinct release from "Consumer Confidence") have a chance
+    # to resolve to their own token before " flash" is stripped to the
+    # base indicator.
+    alias = _ALIASES.get(text)
+    if alias is not None:
+        return alias
 
     # Strip modifier suffixes iteratively — "CPI YoY SA" → "CPI".
     changed = True

@@ -80,6 +80,7 @@ from .zew_api import fetch_zew_calendar, schedule_zew_calendar
 from .ifo_api import fetch_ifo_calendar, schedule_ifo_calendar
 from .gfk_api import fetch_gfk_calendar, schedule_gfk_calendar
 from .hcob_api import schedule_hcob_calendar
+from .ec_bcs_api import fetch_ec_bcs_calendar, schedule_ec_bcs_calendar
 from .insee_api import fetch_insee_calendar, schedule_insee_calendar
 from .ine_api import fetch_ine_calendar, schedule_ine_calendar
 from .istat_api import fetch_istat_calendar, schedule_istat_calendar
@@ -169,6 +170,10 @@ def _hcob(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_hcob_calendar(conn, dry_run=dry_run)
 
 
+def _ec_bcs(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    return schedule_ec_bcs_calendar(conn, dry_run=dry_run)
+
+
 def _insee(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_insee_calendar(conn, dry_run=dry_run)
 
@@ -243,6 +248,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("ifo", _ifo),
     ("gfk", _gfk),
     ("hcob", _hcob),
+    ("ec-bcs", _ec_bcs),
     ("insee", _insee),
     ("ine", _ine),
     ("istat", _istat),
@@ -282,6 +288,7 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "zew",
     "ifo",
     "gfk",
+    "ec-bcs",
     "insee",
     "ine",
     "istat",
@@ -900,6 +907,9 @@ def sweep_value_side(
     def _gfk_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         return fetch_gfk_calendar(conn, dry_run=dry_run)
 
+    def _ec_bcs_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        return fetch_ec_bcs_calendar(conn, dry_run=dry_run)
+
     def _insee_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         return fetch_insee_calendar(conn, dry_run=dry_run)
 
@@ -975,6 +985,7 @@ def sweep_value_side(
         "zew":        _zew_values,
         "ifo":        _ifo_values,
         "gfk":        _gfk_values,
+        "ec-bcs":     _ec_bcs_values,
         "insee":      _insee_values,
         "ine":        _ine_values,
         "istat":      _istat_values,
