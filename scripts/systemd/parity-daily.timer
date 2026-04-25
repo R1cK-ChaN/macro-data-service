@@ -1,0 +1,19 @@
+[Unit]
+Description=Daily 06:00 UTC parity tripwire run (issue #22)
+
+[Timer]
+# 06:00 UTC every day. AccuracySec=1m keeps the timer responsive to
+# the cron-like wall clock without burning a wakeup every second.
+OnCalendar=*-*-* 06:00:00 UTC
+AccuracySec=1m
+
+# If the laptop was suspended over 06:00, run the missed firing on
+# resume. The service is idempotent (TE day-window is replayable;
+# parity comparator is a pure read; gh filer dedups by label) so the
+# late catch-up cannot create duplicate state.
+Persistent=true
+
+Unit=parity-daily.service
+
+[Install]
+WantedBy=timers.target
