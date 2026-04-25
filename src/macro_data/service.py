@@ -1835,16 +1835,17 @@ class LocalMacroDataService:
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
-    # -- Economic calendar -- HCOB Germany PMI connector (issue #15 P5) --
+    # -- Economic calendar -- HCOB Germany PMI connector (issues #15 P5, #23) --
 
     def _op_calendar_econ_schedule_hcob(
         self, arguments: dict[str, Any],
     ) -> dict[str, Any]:
         """Fetch HCOB Germany PMI release-date rows into ``cal_econ_event``.
 
-        P5 is schedule-side only. Value-side (press-release index levels)
-        is deferred to a follow-up — the S&P Global report-viewer pages
-        use opaque GUIDs and likely require authenticated access.
+        Schedule-side only. The value-side counterpart is
+        ``calendar_econ_fetch_hcob`` (issue #23) which sweeps the
+        public press-release listing for due rows and projects the
+        headline indices onto the schedule rows.
         """
         from ingestion.calendar.hcob_api import schedule_hcob_calendar
 
@@ -1906,6 +1907,67 @@ class LocalMacroDataService:
             "events_upserted":    summary.events_upserted,
             "row_issues":         summary.row_issues,
             "fetch_error":        summary.fetch_error,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_hcob(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch due HCOB / S&P Global press-release values (issue #23).
+
+        Auto-discovers ``actual IS NULL`` HCOB rows already staged by
+        ``calendar_econ_schedule_hcob``, resolves each release's PDF
+        URL on the public press-release listing, downloads the PDF,
+        extracts the headline index, and upserts via the shared
+        ``provider_event_id``.
+        """
+        from ingestion.calendar.hcob_api import fetch_hcob_calendar
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_series = arguments.get("series_ids")
+        series_ids: list[str] | None = None
+        if isinstance(raw_series, list):
+            series_ids = [str(s) for s in raw_series]
+
+        if dry_run:
+            from ingestion.calendar.hcob_api.fetcher import _resolve_series
+            planned, unknown = _resolve_series(series_ids)
+            return {
+                "dry_run":        True,
+                "series_planned": planned,
+                "series_unknown": unknown,
+                "stopped_reason": "dry_run",
+            }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_hcob_calendar(
+                connection,
+                series_ids=series_ids,
+                dry_run=False,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            False,
+            "series_planned":     summary.series_planned,
+            "series_ok":          summary.series_ok,
+            "series_empty":       summary.series_empty,
+            "series_unknown":     summary.series_unknown,
+            "series_failed":      summary.series_failed,
+            "pending_releases":   summary.pending_releases,
+            "observations_seen":  summary.observations_seen,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
@@ -3775,9 +3837,9 @@ class LocalMacroDataService:
           connectors   — optional list subset of
                          ``["bls", "bea", "census", "ism", "umich",
                          "conference-board", "nar", "ecb", "eurostat", "destatis",
-                         "zew", "ifo", "gfk", "ec-bcs", "insee", "ine", "istat", "fed-values",
-                         "stat-bureau-jp-values", "boj-values", "boj-tankan-values",
-                         "mof-jp-values", "cao-values",
+                         "zew", "ifo", "gfk", "hcob", "ec-bcs", "insee", "ine", "istat",
+                         "fed-values", "stat-bureau-jp-values", "boj-values",
+                         "boj-tankan-values", "mof-jp-values", "cao-values",
                          "cao-gdp-values", "meti-values"]``.
           start_year   — optional int; default ``current_year − 1``.
                          Applied to BLS / BEA / Census / Destatis.

@@ -34,8 +34,14 @@ def _fixture_text(*parts: str) -> str:
     return (Path(__file__).parent / "fixtures" / Path(*parts)).read_text()
 
 
-def test_registry_ships_issue_15_p5_anchors() -> None:
-    expected = {"HCOB_FLASH_PMI", "HCOB_MANUFACTURING_PMI", "HCOB_SERVICES_PMI"}
+def test_registry_ships_issue_23_anchors() -> None:
+    expected = {
+        "HCOB_FLASH_MANUFACTURING_PMI",
+        "HCOB_FLASH_SERVICES_PMI",
+        "HCOB_FLASH_COMPOSITE_PMI",
+        "HCOB_MANUFACTURING_PMI",
+        "HCOB_SERVICES_PMI",
+    }
     assert set(INDICATOR_REGISTRY) == expected
     for spec in INDICATOR_REGISTRY.values():
         assert spec.country_code == "DE"
@@ -47,14 +53,26 @@ def test_registry_ships_issue_15_p5_anchors() -> None:
 
 
 def test_spec_for_calendar_title_maps_upstream_labels() -> None:
-    assert spec_for_calendar_title("s&p global flash germany pmi").series_id == "HCOB_FLASH_PMI"
+    # The single upstream "S&P Global Flash Germany PMI" row fans out
+    # into three series at projection time — spec_for_calendar_title()
+    # returns one representative; specs_for_calendar_title() returns
+    # the full trio.
+    from ingestion.calendar.hcob_api import specs_for_calendar_title
+    flash = spec_for_calendar_title("s&p global flash germany pmi")
+    assert flash is not None and flash.series_id.startswith("HCOB_FLASH_")
+    flash_all = {s.series_id for s in specs_for_calendar_title("s&p global flash germany pmi")}
+    assert flash_all == {
+        "HCOB_FLASH_MANUFACTURING_PMI",
+        "HCOB_FLASH_SERVICES_PMI",
+        "HCOB_FLASH_COMPOSITE_PMI",
+    }
     assert spec_for_calendar_title(
         "s&p global germany manufacturing pmi"
     ).series_id == "HCOB_MANUFACTURING_PMI"
     assert spec_for_calendar_title(
         "s&p global germany services pmi"
     ).series_id == "HCOB_SERVICES_PMI"
-    # Construction PMI is out of scope for P5; must not map.
+    # Construction PMI is out of scope; must not map.
     assert spec_for_calendar_title("s&p global germany construction pmi") is None
 
 
@@ -65,12 +83,17 @@ def test_schedule_parser_picks_only_whitelisted_german_rows() -> None:
         today=date(2026, 4, 24),
     )
     # France rows, Construction, and French Flash must be filtered out.
+    # The flash row fans out into 3 series.
     assert {e.series_id for e in entries} == {
-        "HCOB_FLASH_PMI",
+        "HCOB_FLASH_MANUFACTURING_PMI",
+        "HCOB_FLASH_SERVICES_PMI",
+        "HCOB_FLASH_COMPOSITE_PMI",
         "HCOB_MANUFACTURING_PMI",
         "HCOB_SERVICES_PMI",
     }
-    assert len(entries) == 5  # 2x Mfg (May + Jun + rollover-Jan) — see rollover test
+    # Fixture has: 2x Mfg (May + Jun + rollover-Jan), 1x Services (May),
+    # 1x Flash (May → 3 series). Total = 3 + 1 + 3 = 7.
+    assert len(entries) == 7
     # Title is rebranded from "S&P Global" to "HCOB" in storage.
     assert all(e.release_title.startswith("Germany HCOB") for e in entries)
 
@@ -95,7 +118,7 @@ def test_schedule_parser_sets_event_time_at_calendar_clock() -> None:
         source_url=HCOB_RELEASE_DATES_URL,
         today=date(2026, 4, 24),
     )
-    flash = next(e for e in entries if e.series_id == "HCOB_FLASH_PMI")
+    flash = next(e for e in entries if e.series_id == "HCOB_FLASH_MANUFACTURING_PMI")
     manufacturing_may = next(
         e for e in entries
         if e.series_id == "HCOB_MANUFACTURING_PMI" and e.release_date.month == 5
@@ -111,7 +134,9 @@ def test_flash_reference_is_release_month_final_reference_is_prior_month() -> No
         source_url=HCOB_RELEASE_DATES_URL,
         today=date(2026, 4, 24),
     )
-    flash = next(e for e in entries if e.series_id == "HCOB_FLASH_PMI")
+    flash_mfg = next(e for e in entries if e.series_id == "HCOB_FLASH_MANUFACTURING_PMI")
+    flash_svc = next(e for e in entries if e.series_id == "HCOB_FLASH_SERVICES_PMI")
+    flash_comp = next(e for e in entries if e.series_id == "HCOB_FLASH_COMPOSITE_PMI")
     manufacturing_may = next(
         e for e in entries
         if e.series_id == "HCOB_MANUFACTURING_PMI" and e.release_date.month == 5
@@ -120,9 +145,11 @@ def test_flash_reference_is_release_month_final_reference_is_prior_month() -> No
         e for e in entries
         if e.series_id == "HCOB_MANUFACTURING_PMI" and e.release_date.year == 2027
     )
-    # Flash on May 21, 2026 reports the May 2026 flash number.
-    assert flash.reference_date == "2026-05-01"
-    assert flash.reference_label == "May 2026"
+    # Flash trio on May 21, 2026 all report the May 2026 flash number.
+    for entry in (flash_mfg, flash_svc, flash_comp):
+        assert entry.reference_date == "2026-05-01"
+        assert entry.reference_label == "May 2026"
+        assert entry.release_date.isoformat() == "2026-05-21"
     # Final Manufacturing on May 4, 2026 reports April 2026 data.
     assert manufacturing_may.reference_date == "2026-04-01"
     assert manufacturing_may.reference_label == "April 2026"
@@ -135,10 +162,10 @@ def test_flash_reference_is_release_month_final_reference_is_prior_month() -> No
 def test_schedule_filter_keeps_requested_series_only() -> None:
     entries = parse_release_dates_html(
         _fixture_text("hcob_calendar", "release_dates.html"),
-        series_ids={"HCOB_FLASH_PMI"},
+        series_ids={"HCOB_FLASH_MANUFACTURING_PMI"},
         today=date(2026, 4, 24),
     )
-    assert {e.series_id for e in entries} == {"HCOB_FLASH_PMI"}
+    assert {e.series_id for e in entries} == {"HCOB_FLASH_MANUFACTURING_PMI"}
 
 
 def test_schedule_parser_raises_when_no_germany_rows_match() -> None:
@@ -157,16 +184,17 @@ def test_schedule_and_value_records_share_provider_event_id() -> None:
         _fixture_text("hcob_calendar", "release_dates.html"),
         today=date(2026, 4, 24),
     )
-    flash = next(e for e in entries if e.series_id == "HCOB_FLASH_PMI")
+    flash = next(e for e in entries if e.series_id == "HCOB_FLASH_MANUFACTURING_PMI")
     _, event_record = schedule_entry_to_records(
         flash,
         snapshot_epoch_ms=1_800_000_000_000,
     )
     # Regression: the provider_event_id hashes (provider, country,
-    # canonical indicator, reference_date). A future P5-values slice
-    # upserting on the same tuple must converge on this exact id.
+    # canonical indicator, reference_date). The value-side sweep
+    # upserts on the same tuple, so the schedule + value paths must
+    # converge on this exact id.
     assert event_record.provider == PROVIDER == "hcob"
-    assert event_record.title == "Germany HCOB Flash PMI"
+    assert event_record.title == "Germany HCOB Flash Manufacturing PMI"
     assert event_record.reference_date == "2026-05-01"
     assert event_record.actual is None
 
@@ -187,12 +215,17 @@ def test_schedule_fetcher_projects_fixture_rows(store: SQLiteEngineStore) -> Non
         count = conn.execute(
             "SELECT COUNT(*) FROM cal_econ_event WHERE provider = 'hcob'"
         ).fetchone()[0]
-    # Inside the window: May 04 Mfg, May 06 Svc, May 21 Flash, June 02 Mfg.
-    assert summary.entries_parsed == 4
+    # Inside the window: May 04 Mfg, May 06 Svc, May 21 Flash (×3),
+    # June 02 Mfg → 6 schedule rows.
+    assert summary.entries_parsed == 6
     assert set(summary.series_ok) == {
-        "HCOB_FLASH_PMI", "HCOB_MANUFACTURING_PMI", "HCOB_SERVICES_PMI"
+        "HCOB_FLASH_MANUFACTURING_PMI",
+        "HCOB_FLASH_SERVICES_PMI",
+        "HCOB_FLASH_COMPOSITE_PMI",
+        "HCOB_MANUFACTURING_PMI",
+        "HCOB_SERVICES_PMI",
     }
-    assert count == 4
+    assert count == 6
 
 
 def test_schedule_fetcher_flags_empty_upstream_page(store: SQLiteEngineStore) -> None:
@@ -241,7 +274,8 @@ def test_schedule_refresh_is_idempotent(store: SQLiteEngineStore) -> None:
         count = conn.execute(
             "SELECT COUNT(*) FROM cal_econ_event WHERE provider = 'hcob'"
         ).fetchone()[0]
-    assert count == 4
+    # 6 rows: May 04 Mfg, May 06 Svc, May 21 Flash (×3), June 02 Mfg.
+    assert count == 6
 
 
 def test_http_helper_uses_browser_headers() -> None:
@@ -282,23 +316,36 @@ def test_service_dry_run_returns_plan(store: SQLiteEngineStore) -> None:
 
 
 def test_canonical_aliases_cover_te_hcob_titles() -> None:
-    # Final / Flash mapping for the two-slot, day-distinct flavours:
+    # Final mapping for the two-slot, day-distinct flavours:
     assert canonicalize_indicator("HCOB Manufacturing PMI") == "HCOB_MANUFACTURING_PMI"
     assert canonicalize_indicator("HCOB Services PMI") == "HCOB_SERVICES_PMI"
-    assert canonicalize_indicator("Germany HCOB Flash PMI") == "HCOB_FLASH_PMI"
-    assert canonicalize_indicator("S&P Global Flash Germany PMI") == "HCOB_FLASH_PMI"
     assert canonicalize_indicator(
         "S&P Global Germany Manufacturing PMI"
     ) == "HCOB_MANUFACTURING_PMI"
-    # Documented collision: the shared _MODIFIER_SUFFIXES table strips
-    # a trailing " flash" before alias lookup, so TE's per-component
-    # flash labels ("HCOB Manufacturing PMI Flash") collapse onto the
-    # same canonical as the *final* monthly release. P5 ships one
-    # combined `HCOB Flash PMI` row on flash day; a future P5-values
-    # slice can split out per-component flash rows for parity.
+    # Issue #23: TE's per-component flash labels carry a trailing " Flash"
+    # and must alias BEFORE the shared _MODIFIER_SUFFIXES strips that
+    # suffix; otherwise they would collapse onto the canonical for the
+    # final monthly release.
     assert canonicalize_indicator(
         "HCOB Manufacturing PMI Flash"
-    ) == "HCOB_MANUFACTURING_PMI"
+    ) == "HCOB_FLASH_MANUFACTURING_PMI"
+    assert canonicalize_indicator(
+        "HCOB Services PMI Flash"
+    ) == "HCOB_FLASH_SERVICES_PMI"
+    assert canonicalize_indicator(
+        "HCOB Composite PMI Flash"
+    ) == "HCOB_FLASH_COMPOSITE_PMI"
+    # Our own rebranded flash titles also alias so parity buckets them
+    # together with TE rows.
+    assert canonicalize_indicator(
+        "Germany HCOB Flash Manufacturing PMI"
+    ) == "HCOB_FLASH_MANUFACTURING_PMI"
+    assert canonicalize_indicator(
+        "Germany HCOB Flash Services PMI"
+    ) == "HCOB_FLASH_SERVICES_PMI"
+    assert canonicalize_indicator(
+        "Germany HCOB Flash Composite PMI"
+    ) == "HCOB_FLASH_COMPOSITE_PMI"
 
 
 def test_record_dataclasses_match_shared_projector_shape() -> None:
