@@ -46,10 +46,15 @@ def append_calendar_event_vintage_if_changed_with_conn(
     Returns True if a row was appended, False on no-op (triple matched
     the predecessor) or on UNIQUE collision via INSERT OR IGNORE.
     """
+    # Use julianday() rather than string <= so fractional-second ISO
+    # timestamps compare against whole-second timestamps correctly.
+    # Lexicographic <= on '2024-01-01T00:00:00.500Z' vs '2024-01-01T00:00:00Z'
+    # would falsely treat the fractional value as <= the whole-second one.
     row = connection.execute(
         "SELECT actual, forecast, previous FROM calendar_event_vintages "
-        "WHERE event_id = ? AND provider = ? AND observed_at <= ? "
-        "ORDER BY observed_at DESC, id DESC LIMIT 1",
+        "WHERE event_id = ? AND provider = ? "
+        "AND julianday(observed_at) <= julianday(?) "
+        "ORDER BY julianday(observed_at) DESC, id DESC LIMIT 1",
         (event_id, provider, observed_at),
     ).fetchone()
     if row is not None and (row[0], row[1], row[2]) == (actual, forecast, previous):
@@ -4662,6 +4667,60 @@ class SQLiteEngineStore:
                     vintage.metadata, ensure_ascii=True, sort_keys=True
                 ),
             )
+
+    def calendar_actual_as_of(
+        self, event_id: str, provider: str, as_of: str,
+    ) -> CalendarEventVintageRecord | None:
+        """Return the vintage with the greatest ``observed_at <= as_of`` for
+        ``(event_id, provider)``. ``None`` when no vintage exists at or
+        before the cutoff.
+
+        On ties (identical ``observed_at``), the row with the larger ``id``
+        wins — i.e. the most recently appended vintage at that timestamp.
+        """
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT event_id, provider, vintage_date, observed_at, "
+                "actual, forecast, previous, metadata_json "
+                "FROM calendar_event_vintages "
+                "WHERE event_id = ? AND provider = ? "
+                "AND julianday(observed_at) <= julianday(?) "
+                "ORDER BY julianday(observed_at) DESC, id DESC LIMIT 1",
+                (event_id, provider, as_of),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_calendar_vintage(row)
+
+    def calendar_vintage_history(
+        self, event_id: str, provider: str,
+    ) -> list[CalendarEventVintageRecord]:
+        """Return every vintage for ``(event_id, provider)`` ordered by
+        ``observed_at`` ascending, ``id`` ascending on ties.
+        """
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                "SELECT event_id, provider, vintage_date, observed_at, "
+                "actual, forecast, previous, metadata_json "
+                "FROM calendar_event_vintages "
+                "WHERE event_id = ? AND provider = ? "
+                "ORDER BY julianday(observed_at) ASC, id ASC",
+                (event_id, provider),
+            ).fetchall()
+        return [self._row_to_calendar_vintage(row) for row in rows]
+
+    @staticmethod
+    def _row_to_calendar_vintage(row: sqlite3.Row) -> CalendarEventVintageRecord:
+        return CalendarEventVintageRecord(
+            event_id=row["event_id"],
+            provider=row["provider"],
+            vintage_date=row["vintage_date"],
+            observed_at=row["observed_at"],
+            actual=row["actual"],
+            forecast=row["forecast"],
+            previous=row["previous"],
+            metadata=json.loads(row["metadata_json"]),
+        )
 
     # -- News articles -------------------------------------------------------
 
