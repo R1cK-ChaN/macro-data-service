@@ -427,6 +427,18 @@ class IndicatorVintageRecord:
 
 
 @dataclass(frozen=True)
+class CalendarEventVintageRecord:
+    event_id: str
+    provider: str           # connector source ("trading_economics", "ec_bcs", ...)
+    vintage_date: str       # source LastUpdate when available, else observed_at
+    observed_at: str        # authoritative for PIT ordering (ISO-8601 UTC)
+    actual: str | None
+    forecast: str | None
+    previous: str | None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ObsSourceRecord:
     source_id: str          # 'fred', 'eia', 'treasury_fiscal'
     source_code: str
@@ -1550,6 +1562,27 @@ class SQLiteEngineStore:
                     UNIQUE(series_id, source, observation_date, vintage_date)
                 )
                 """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS calendar_event_vintages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    vintage_date TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    actual TEXT,
+                    forecast TEXT,
+                    previous TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    scraped_at TEXT NOT NULL,
+                    UNIQUE(event_id, provider, vintage_date)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_calendar_event_vintages_lookup "
+                "ON calendar_event_vintages(event_id, provider, observed_at)"
             )
             connection.execute(
                 """
@@ -4556,6 +4589,66 @@ class SQLiteEngineStore:
             value=float(row["value"]),
             metadata=json.loads(row["metadata_json"]),
         )
+
+    # -- Calendar event vintages ---------------------------------------------
+
+    def append_calendar_event_vintage_if_changed(
+        self, vintage: CalendarEventVintageRecord,
+    ) -> bool:
+        """Append a vintage row only if (actual, forecast, previous) differs
+        from the vintage immediately preceding (or matching) the candidate's
+        observed_at for (event_id, provider).
+
+        Comparison uses the predecessor row rather than the all-time latest so
+        out-of-order backfills (e.g. seeding an older vintage after a newer
+        one) record genuine intermediate states. Returns True if a new row
+        was appended, False if the triple matched the predecessor or a row
+        with the same vintage_date already exists.
+        """
+        with self._connection(commit=True) as connection:
+            row = connection.execute(
+                """
+                SELECT actual, forecast, previous
+                FROM calendar_event_vintages
+                WHERE event_id = ? AND provider = ? AND observed_at <= ?
+                ORDER BY observed_at DESC, id DESC
+                LIMIT 1
+                """,
+                (vintage.event_id, vintage.provider, vintage.observed_at),
+            ).fetchone()
+            if row is not None and (
+                row["actual"] == vintage.actual
+                and row["forecast"] == vintage.forecast
+                and row["previous"] == vintage.previous
+            ):
+                return False
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO calendar_event_vintages (
+                    event_id,
+                    provider,
+                    vintage_date,
+                    observed_at,
+                    actual,
+                    forecast,
+                    previous,
+                    metadata_json,
+                    scraped_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    vintage.event_id,
+                    vintage.provider,
+                    vintage.vintage_date,
+                    vintage.observed_at,
+                    vintage.actual,
+                    vintage.forecast,
+                    vintage.previous,
+                    json.dumps(vintage.metadata, ensure_ascii=True, sort_keys=True),
+                    utc_now().isoformat(),
+                ),
+            )
+            return cursor.rowcount > 0
 
     # -- News articles -------------------------------------------------------
 
