@@ -26,6 +26,48 @@ def default_engine_db_path(root: Path | None = None) -> Path:
     return base / ".macro-data" / "engine.db"
 
 
+def append_calendar_event_vintage_if_changed_with_conn(
+    connection: sqlite3.Connection,
+    *,
+    event_id: str,
+    provider: str,
+    vintage_date: str,
+    observed_at: str,
+    actual: str | None,
+    forecast: str | None,
+    previous: str | None,
+    metadata_json: str = "{}",
+    scraped_at: str | None = None,
+) -> bool:
+    """Append-on-change vintage write using a caller-supplied connection.
+
+    Compares against the vintage immediately at-or-before ``observed_at``
+    so out-of-order backfills capture genuine intermediate states.
+    Returns True if a row was appended, False on no-op (triple matched
+    the predecessor) or on UNIQUE collision via INSERT OR IGNORE.
+    """
+    row = connection.execute(
+        "SELECT actual, forecast, previous FROM calendar_event_vintages "
+        "WHERE event_id = ? AND provider = ? AND observed_at <= ? "
+        "ORDER BY observed_at DESC, id DESC LIMIT 1",
+        (event_id, provider, observed_at),
+    ).fetchone()
+    if row is not None and (row[0], row[1], row[2]) == (actual, forecast, previous):
+        return False
+    cursor = connection.execute(
+        "INSERT OR IGNORE INTO calendar_event_vintages ("
+        "event_id, provider, vintage_date, observed_at, "
+        "actual, forecast, previous, metadata_json, scraped_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            event_id, provider, vintage_date, observed_at,
+            actual, forecast, previous, metadata_json,
+            scraped_at or utc_now().isoformat(),
+        ),
+    )
+    return cursor.rowcount > 0
+
+
 def _matches_scope_tags(text: str, tags: list[str]) -> bool:
     lowered = text.lower()
     return any(re.search(rf"\b{re.escape(tag.lower())}\b", lowered) for tag in tags)
@@ -3040,6 +3082,17 @@ class SQLiteEngineStore:
 
     def upsert_calendar_event(self, event: StoredEventRecord) -> None:
         with self._connection(commit=True) as connection:
+            now_iso = utc_now().isoformat()
+            append_calendar_event_vintage_if_changed_with_conn(
+                connection,
+                event_id=event.event_id,
+                provider=event.source,
+                vintage_date=now_iso,
+                observed_at=now_iso,
+                actual=event.actual,
+                forecast=event.forecast,
+                previous=event.previous,
+            )
             connection.execute(
                 """
                 INSERT OR REPLACE INTO calendar_events (
@@ -4595,60 +4648,20 @@ class SQLiteEngineStore:
     def append_calendar_event_vintage_if_changed(
         self, vintage: CalendarEventVintageRecord,
     ) -> bool:
-        """Append a vintage row only if (actual, forecast, previous) differs
-        from the vintage immediately preceding (or matching) the candidate's
-        observed_at for (event_id, provider).
-
-        Comparison uses the predecessor row rather than the all-time latest so
-        out-of-order backfills (e.g. seeding an older vintage after a newer
-        one) record genuine intermediate states. Returns True if a new row
-        was appended, False if the triple matched the predecessor or a row
-        with the same vintage_date already exists.
-        """
         with self._connection(commit=True) as connection:
-            row = connection.execute(
-                """
-                SELECT actual, forecast, previous
-                FROM calendar_event_vintages
-                WHERE event_id = ? AND provider = ? AND observed_at <= ?
-                ORDER BY observed_at DESC, id DESC
-                LIMIT 1
-                """,
-                (vintage.event_id, vintage.provider, vintage.observed_at),
-            ).fetchone()
-            if row is not None and (
-                row["actual"] == vintage.actual
-                and row["forecast"] == vintage.forecast
-                and row["previous"] == vintage.previous
-            ):
-                return False
-            cursor = connection.execute(
-                """
-                INSERT OR IGNORE INTO calendar_event_vintages (
-                    event_id,
-                    provider,
-                    vintage_date,
-                    observed_at,
-                    actual,
-                    forecast,
-                    previous,
-                    metadata_json,
-                    scraped_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    vintage.event_id,
-                    vintage.provider,
-                    vintage.vintage_date,
-                    vintage.observed_at,
-                    vintage.actual,
-                    vintage.forecast,
-                    vintage.previous,
-                    json.dumps(vintage.metadata, ensure_ascii=True, sort_keys=True),
-                    utc_now().isoformat(),
+            return append_calendar_event_vintage_if_changed_with_conn(
+                connection,
+                event_id=vintage.event_id,
+                provider=vintage.provider,
+                vintage_date=vintage.vintage_date,
+                observed_at=vintage.observed_at,
+                actual=vintage.actual,
+                forecast=vintage.forecast,
+                previous=vintage.previous,
+                metadata_json=json.dumps(
+                    vintage.metadata, ensure_ascii=True, sort_keys=True
                 ),
             )
-            return cursor.rowcount > 0
 
     # -- News articles -------------------------------------------------------
 
