@@ -26,6 +26,53 @@ def default_engine_db_path(root: Path | None = None) -> Path:
     return base / ".macro-data" / "engine.db"
 
 
+def append_calendar_event_vintage_if_changed_with_conn(
+    connection: sqlite3.Connection,
+    *,
+    event_id: str,
+    provider: str,
+    vintage_date: str,
+    observed_at: str,
+    actual: str | None,
+    forecast: str | None,
+    previous: str | None,
+    metadata_json: str = "{}",
+    scraped_at: str | None = None,
+) -> bool:
+    """Append-on-change vintage write using a caller-supplied connection.
+
+    Compares against the vintage immediately at-or-before ``observed_at``
+    so out-of-order backfills capture genuine intermediate states.
+    Returns True if a row was appended, False on no-op (triple matched
+    the predecessor) or on UNIQUE collision via INSERT OR IGNORE.
+    """
+    # Use julianday() rather than string <= so fractional-second ISO
+    # timestamps compare against whole-second timestamps correctly.
+    # Lexicographic <= on '2024-01-01T00:00:00.500Z' vs '2024-01-01T00:00:00Z'
+    # would falsely treat the fractional value as <= the whole-second one.
+    row = connection.execute(
+        "SELECT actual, forecast, previous FROM calendar_event_vintages "
+        "WHERE event_id = ? AND provider = ? "
+        "AND julianday(observed_at) <= julianday(?) "
+        "ORDER BY julianday(observed_at) DESC, id DESC LIMIT 1",
+        (event_id, provider, observed_at),
+    ).fetchone()
+    if row is not None and (row[0], row[1], row[2]) == (actual, forecast, previous):
+        return False
+    cursor = connection.execute(
+        "INSERT OR IGNORE INTO calendar_event_vintages ("
+        "event_id, provider, vintage_date, observed_at, "
+        "actual, forecast, previous, metadata_json, scraped_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            event_id, provider, vintage_date, observed_at,
+            actual, forecast, previous, metadata_json,
+            scraped_at or utc_now().isoformat(),
+        ),
+    )
+    return cursor.rowcount > 0
+
+
 def _matches_scope_tags(text: str, tags: list[str]) -> bool:
     lowered = text.lower()
     return any(re.search(rf"\b{re.escape(tag.lower())}\b", lowered) for tag in tags)
@@ -424,6 +471,18 @@ class IndicatorVintageRecord:
     value: float
     metadata: dict[str, Any] = field(default_factory=dict)
     obs_family_id: str | None = None
+
+
+@dataclass(frozen=True)
+class CalendarEventVintageRecord:
+    event_id: str
+    provider: str           # connector source ("trading_economics", "ec_bcs", ...)
+    vintage_date: str       # source LastUpdate when available, else observed_at
+    observed_at: str        # authoritative for PIT ordering (ISO-8601 UTC)
+    actual: str | None
+    forecast: str | None
+    previous: str | None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1550,6 +1609,27 @@ class SQLiteEngineStore:
                     UNIQUE(series_id, source, observation_date, vintage_date)
                 )
                 """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS calendar_event_vintages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    vintage_date TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    actual TEXT,
+                    forecast TEXT,
+                    previous TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    scraped_at TEXT NOT NULL,
+                    UNIQUE(event_id, provider, vintage_date)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_calendar_event_vintages_lookup "
+                "ON calendar_event_vintages(event_id, provider, observed_at)"
             )
             connection.execute(
                 """
@@ -3007,6 +3087,17 @@ class SQLiteEngineStore:
 
     def upsert_calendar_event(self, event: StoredEventRecord) -> None:
         with self._connection(commit=True) as connection:
+            now_iso = utc_now().isoformat()
+            append_calendar_event_vintage_if_changed_with_conn(
+                connection,
+                event_id=event.event_id,
+                provider=event.source,
+                vintage_date=now_iso,
+                observed_at=now_iso,
+                actual=event.actual,
+                forecast=event.forecast,
+                previous=event.previous,
+            )
             connection.execute(
                 """
                 INSERT OR REPLACE INTO calendar_events (
@@ -4554,6 +4645,80 @@ class SQLiteEngineStore:
             observation_date=row["observation_date"],
             vintage_date=row["vintage_date"],
             value=float(row["value"]),
+            metadata=json.loads(row["metadata_json"]),
+        )
+
+    # -- Calendar event vintages ---------------------------------------------
+
+    def append_calendar_event_vintage_if_changed(
+        self, vintage: CalendarEventVintageRecord,
+    ) -> bool:
+        with self._connection(commit=True) as connection:
+            return append_calendar_event_vintage_if_changed_with_conn(
+                connection,
+                event_id=vintage.event_id,
+                provider=vintage.provider,
+                vintage_date=vintage.vintage_date,
+                observed_at=vintage.observed_at,
+                actual=vintage.actual,
+                forecast=vintage.forecast,
+                previous=vintage.previous,
+                metadata_json=json.dumps(
+                    vintage.metadata, ensure_ascii=True, sort_keys=True
+                ),
+            )
+
+    def calendar_actual_as_of(
+        self, event_id: str, provider: str, as_of: str,
+    ) -> CalendarEventVintageRecord | None:
+        """Return the vintage with the greatest ``observed_at <= as_of`` for
+        ``(event_id, provider)``. ``None`` when no vintage exists at or
+        before the cutoff.
+
+        On ties (identical ``observed_at``), the row with the larger ``id``
+        wins — i.e. the most recently appended vintage at that timestamp.
+        """
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT event_id, provider, vintage_date, observed_at, "
+                "actual, forecast, previous, metadata_json "
+                "FROM calendar_event_vintages "
+                "WHERE event_id = ? AND provider = ? "
+                "AND julianday(observed_at) <= julianday(?) "
+                "ORDER BY julianday(observed_at) DESC, id DESC LIMIT 1",
+                (event_id, provider, as_of),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_calendar_vintage(row)
+
+    def calendar_vintage_history(
+        self, event_id: str, provider: str,
+    ) -> list[CalendarEventVintageRecord]:
+        """Return every vintage for ``(event_id, provider)`` ordered by
+        ``observed_at`` ascending, ``id`` ascending on ties.
+        """
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                "SELECT event_id, provider, vintage_date, observed_at, "
+                "actual, forecast, previous, metadata_json "
+                "FROM calendar_event_vintages "
+                "WHERE event_id = ? AND provider = ? "
+                "ORDER BY julianday(observed_at) ASC, id ASC",
+                (event_id, provider),
+            ).fetchall()
+        return [self._row_to_calendar_vintage(row) for row in rows]
+
+    @staticmethod
+    def _row_to_calendar_vintage(row: sqlite3.Row) -> CalendarEventVintageRecord:
+        return CalendarEventVintageRecord(
+            event_id=row["event_id"],
+            provider=row["provider"],
+            vintage_date=row["vintage_date"],
+            observed_at=row["observed_at"],
+            actual=row["actual"],
+            forecast=row["forecast"],
+            previous=row["previous"],
             metadata=json.loads(row["metadata_json"]),
         )
 

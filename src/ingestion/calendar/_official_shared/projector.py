@@ -38,13 +38,24 @@ works; the five connectors' record dataclasses all satisfy this.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from storage.sqlite import append_calendar_event_vintage_if_changed_with_conn
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _epoch_ms_to_iso(ms: int | None) -> str | None:
+    if ms is None:
+        return None
+    return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).isoformat().replace(
+        "+00:00", "Z"
+    )
 
 
 def store_raw(
@@ -174,6 +185,36 @@ def project_events(
         )
         if cursor.rowcount > 0:
             changed += 1
+
+        # Append-on-change vintage capture. Runs unconditionally — even when
+        # the cal_econ_event UPDATE is suppressed by the observed_at gate, the
+        # vintage layer still records the predecessor-aware history.
+        observed_iso = _epoch_ms_to_iso(r.observed_at_epoch_ms) or now
+        last_update_iso = _epoch_ms_to_iso(r.last_update_epoch_ms)
+        # Clamp only when an actual is present and observed_at predates the
+        # release. Pre-release rows carry forecast/previous only and must
+        # keep their fetch-time observed_at so PIT queries between fetch and
+        # release see the pre-release consensus.
+        if r.actual and r.event_time_utc and observed_iso < r.event_time_utc:
+            observed_iso = r.event_time_utc
+        # vintage_date = observed_at so a row that reuses upstream LastUpdate
+        # across distinct revisions still appends instead of being swallowed
+        # by UNIQUE(event_id, provider, vintage_date).
+        meta_json = json.dumps(
+            {"source_last_update": last_update_iso} if last_update_iso else {},
+            ensure_ascii=True, sort_keys=True,
+        )
+        append_calendar_event_vintage_if_changed_with_conn(
+            connection,
+            event_id=r.provider_event_id,
+            provider=r.provider,
+            vintage_date=observed_iso,
+            observed_at=observed_iso,
+            actual=r.actual,
+            forecast=r.forecast,
+            previous=r.previous,
+            metadata_json=meta_json,
+        )
     return changed
 
 
