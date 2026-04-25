@@ -68,6 +68,13 @@ _CALENDAR_KEYWORD_ALIASES: dict[str, tuple[str, ...]] = {
         "germany hcob manufacturing pmi",
         "germany hcob services pmi",
     ),
+    "ec-bcs": (
+        "economic sentiment indicator",
+        "euro area economic sentiment indicator",
+        "consumer confidence flash",
+        "flash consumer confidence indicator",
+        "euro area consumer confidence flash",
+    ),
 }
 
 
@@ -1081,6 +1088,7 @@ _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
     ("ifo",             "ifo",             "ifo Institute",                    "market_data",       "DE", "https://www.ifo.de",                                              "https://www.ifo.de/en/press"),
     ("gfk",             "gfk",             "NIM Consumer Climate powered by GfK","market_data",     "DE", "https://www.nim.org",                                             "https://www.nim.org/en/consumer-climate"),
     ("hcob",            "hcob",            "HCOB Germany PMI (S&P Global)",    "market_data",       "DE", "https://www.pmi.spglobal.com",                                    "https://www.pmi.spglobal.com/Public/Release/ReleaseDates?language=en"),
+    ("ec-bcs",          "ec-bcs",          "European Commission DG ECFIN — Business and Consumer Surveys", "government_agency", "EU", "https://economy-finance.ec.europa.eu", "https://economy-finance.ec.europa.eu/economic-forecast-and-surveys/business-and-consumer-surveys_en"),
     ("insee",           "insee",           "French National Institute of Statistics and Economic Studies","government_agency", "FR", "https://www.insee.fr",              "https://www.insee.fr/en/agenda-diffusion"),
     ("ine",             "ine",             "Instituto Nacional de Estadistica","government_agency", "ES", "https://www.ine.es",                                              "https://www.ine.es/dyngs/Prensa"),
     ("istat",           "istat",           "Italian National Institute of Statistics","government_agency", "IT", "https://www.istat.it",                                      "https://www.istat.it/en/press-release"),
@@ -2902,6 +2910,7 @@ class SQLiteEngineStore:
                     ("ifo",              "market_data",       "economic",  100, _now_iso, _now_iso),
                     ("gfk",              "market_data",       "economic",  100, _now_iso, _now_iso),
                     ("hcob",             "market_data",       "economic",  100, _now_iso, _now_iso),
+                    ("ec-bcs",           "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("insee",            "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("ine",              "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("istat",            "government_agency", "economic",  100, _now_iso, _now_iso),
