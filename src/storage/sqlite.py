@@ -2467,6 +2467,9 @@ class SQLiteEngineStore:
                     ("cao",              "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("meti",             "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("stat-bureau-jp",   "government_agency", "economic",  100, _now_iso, _now_iso),
+                    # Issue #50 — DOL UI Weekly Claims + EIA weekly stocks.
+                    ("dol",              "government_agency", "economic",  100, _now_iso, _now_iso),
+                    ("eia",              "government_agency", "economic",  100, _now_iso, _now_iso),
                 ],
             )
 
