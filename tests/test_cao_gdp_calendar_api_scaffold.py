@@ -112,13 +112,16 @@ def test_archive_parser_extracts_staged_releases() -> None:
     assert entries[2].report_url.endswith("/2025/qe253_2/gdemenuea.html")
 
 
-def test_archive_parser_raises_on_duplicate_stage() -> None:
+def test_archive_parser_dedups_republished_release() -> None:
     html = """<html><body><table><tbody>
-    <tr><td>Dec 8, 2025</td><td><a href="/a.html">Quarterly Estimates of GDP for Jul.-Sep.2025 (The Second preliminary Estimates)</a></td></tr>
-    <tr><td>Dec 9, 2025</td><td><a href="/b.html">Quarterly Estimates of GDP for Jul.-Sep.2025 (The Second preliminary Estimates)</a></td></tr>
+    <tr><td>Jun 10, 2024</td><td><a href="/2024/qe241_2/gdemenuea.html">Quarterly Estimates of GDP for Jan.-Mar.2024 (The Second preliminary Estimates)</a></td></tr>
+    <tr><td>Dec  8, 2024</td><td><a href="/2024/qe241_2/gdemenuea.html">Quarterly Estimates of GDP for Jan.-Mar.2024 (The Second preliminary Estimates)</a></td></tr>
     </tbody></table></body></html>"""
-    with pytest.raises(CaoGdpArchiveParseError):
-        parse_gdp_archive_html(html, base_url=archive_year_url(2025))
+    entries = parse_gdp_archive_html(html, base_url=archive_year_url(2024))
+    assert len(entries) == 1
+    assert entries[0].reference_date == date(2024, 3, 31)
+    assert entries[0].release_stage == SECOND_PRELIMINARY
+    assert entries[0].release_date == date(2024, 12, 8)
 
 
 def test_build_report_url_matches_archive_shape() -> None:
