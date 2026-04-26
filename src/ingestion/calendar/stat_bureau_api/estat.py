@@ -54,7 +54,9 @@ def _reference_label(reference: date) -> str:
 
 
 def _resolve_app_id(app_id: str | None) -> str:
-    resolved = (app_id or os.getenv("ESTAT_APP_ID") or "").strip()
+    from env import get_env_value
+
+    resolved = (app_id or get_env_value("ESTAT_APP_ID")).strip()
     if not resolved:
         raise RuntimeError("ESTAT_APP_ID not set")
     return resolved
