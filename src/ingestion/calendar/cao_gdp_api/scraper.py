@@ -190,10 +190,15 @@ def parse_gdp_archive_html(
     *,
     base_url: str,
 ) -> list[CaoGdpReleaseEntry]:
-    """Extract GDP release rows from one yearly archive page."""
+    """Extract GDP release rows from one yearly archive page.
+
+    CAO occasionally republishes a ``(reference_date, stage)`` pair after
+    annual revisions; when that happens, keep the row with the most recent
+    ``release_date`` so downstream sees the latest revision anchor.
+    """
     soup = BeautifulSoup(html, "html.parser")
-    entries: list[CaoGdpReleaseEntry] = []
-    seen: set[tuple[date, str]] = set()
+    by_key: dict[tuple[date, str], CaoGdpReleaseEntry] = {}
+    order: list[tuple[date, str]] = []
     for row in soup.find_all("tr"):
         cells = row.find_all(["td", "th"], recursive=False)
         if len(cells) < 2:
@@ -208,23 +213,40 @@ def parse_gdp_archive_html(
         reference_date, reference_label = _parse_reference_period(title)
         stage = _parse_release_stage(title)
         key = (reference_date, stage)
-        if key in seen:
-            raise CaoGdpArchiveParseError(
-                f"duplicate CAO GDP archive row: {reference_date} {stage}"
-            )
-        seen.add(key)
         report_url = urljoin(base_url, str(anchor["href"]).strip())
-        entries.append(
-            CaoGdpReleaseEntry(
-                reference_date=reference_date,
-                reference_label=reference_label,
-                release_date=release_date,
-                release_stage=stage,
-                report_url=report_url,
-                release_title=title,
-            )
+        candidate = CaoGdpReleaseEntry(
+            reference_date=reference_date,
+            reference_label=reference_label,
+            release_date=release_date,
+            release_stage=stage,
+            report_url=report_url,
+            release_title=title,
         )
-    return entries
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = candidate
+            order.append(key)
+            continue
+        if candidate.release_date > existing.release_date:
+            logger.info(
+                "cao_gdp archive republished %s %s; keeping release_date=%s "
+                "over %s",
+                reference_date,
+                stage,
+                candidate.release_date,
+                existing.release_date,
+            )
+            by_key[key] = candidate
+        else:
+            logger.info(
+                "cao_gdp archive republished %s %s; keeping release_date=%s "
+                "over %s",
+                reference_date,
+                stage,
+                existing.release_date,
+                candidate.release_date,
+            )
+    return [by_key[key] for key in order]
 
 
 _HASH_FIELDS: tuple[str, ...] = (
