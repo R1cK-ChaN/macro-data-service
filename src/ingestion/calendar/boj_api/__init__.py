@@ -10,9 +10,11 @@ Sources:
   publishes a ``BOJ_RATE`` event anchored on the meeting's closing day.
   BoJ decisions are announced around noon JST after the committee
   closes; we use 12:00 JST (03:00 UTC) as the scheduled convention.
-- ``boj.or.jp/en/mopo/mpmdeci/state_<YYYY>/k<YYMMDD>a.htm`` —
-  value-side: the statement page for a given closing date carries the
-  new target policy rate in a stable sentence:
+- ``boj.or.jp/en/mopo/mpmdeci/state_<YYYY>/index.htm`` —
+  per-year index that lists each meeting's statement URL. The link
+  points to either ``state_<YYYY>/k<YYMMDD>a.htm`` (legacy) or
+  ``mpr_<YYYY>/k<YYMMDD>a.pdf`` (current — BoJ migrated late 2025);
+  both shapes carry the new target policy rate in a stable sentence:
 
       "The Bank will encourage the uncollateralized overnight call
        rate to remain at around 0.5 percent."
@@ -55,36 +57,44 @@ from .scraper import (
     parse_boj_mpm_calendar_html,
 )
 from .statements import (
-    BOJ_STATEMENT_URL_TEMPLATE,
+    BOJ_STATEMENT_INDEX_URL_TEMPLATE,
     BojStatementParseError,
+    BojStatementUrlNotFoundError,
     StatementValue,
-    build_statement_url,
-    fetch_statement_html,
+    build_statement_index_url,
+    discover_statement_url,
+    fetch_statement,
     parse_statement_html,
+    parse_statement_index,
+    parse_statement_pdf,
     statement_value_to_records,
 )
 
 __all__ = [
     "BOJ_MPM_CALENDAR_URL",
-    "BOJ_STATEMENT_URL_TEMPLATE",
+    "BOJ_STATEMENT_INDEX_URL_TEMPLATE",
     "BojCalendarEventRecord",
     "BojCalendarRawRecord",
     "BojIndicatorSpec",
     "BojMpmCalendarParseError",
     "BojMpmEntry",
     "BojStatementParseError",
+    "BojStatementUrlNotFoundError",
     "FetchRunSummary",
     "INDICATOR_REGISTRY",
     "StatementValue",
     "StatementValuesRunSummary",
-    "build_statement_url",
+    "build_statement_index_url",
+    "discover_statement_url",
     "fetch_boj_calendar",
     "fetch_boj_mpm_calendar_html",
     "fetch_boj_statement_values",
-    "fetch_statement_html",
+    "fetch_statement",
     "mpm_entry_to_records",
     "parse_boj_mpm_calendar_html",
     "parse_statement_html",
+    "parse_statement_index",
+    "parse_statement_pdf",
     "project_events",
     "project_schedule_events",
     "statement_value_to_records",
