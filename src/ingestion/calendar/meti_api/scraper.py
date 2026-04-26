@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import re
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any
@@ -22,8 +21,9 @@ from ingestion.calendar._official_shared import (
 
 from .indicators import INDICATOR_REGISTRY
 from .parser import (
-    METI_IIP_RELEASE_CALENDAR_URL,
-    METI_IIP_RELEASE_TIME_LOCAL,
+    ESTAT_IIP_TOUKEI_CD,
+    ESTAT_RELEASE_CALENDAR_DETAIL_URL_TEMPLATE,
+    ESTAT_RELEASE_CALENDAR_URL,
     METI_RELEASE_TZ,
     METI_RETAIL_PAGE_URL,
     PROVIDER,
@@ -83,25 +83,17 @@ _MONTH_NAME_BY_NUM = {
     9: "September", 10: "October", 11: "November", 12: "December",
 }
 
-_MONTH_YEAR_RE = re.compile(
-    r"\b(?P<month>[A-Za-z]{3,9})\.?\s*,?\s*(?P<year>\d{4})\b"
-)
-_LONG_DATE_RE = re.compile(
-    r"\b(?P<month>[A-Za-z]{3,9})\.?\s+"
-    r"(?P<day>\d{1,2})(?:st|nd|rd|th)?\s*,?\s*"
-    r"(?P<year>\d{4})\b"
-)
-_ISO_DATE_RE = re.compile(r"\b(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})\b")
 _TIME_RE = re.compile(
     r"\b(?P<hour>\d{1,2}):(?P<minute>\d{2})\s*"
     r"(?P<ampm>a\.?m\.?|p\.?m\.?)?\b",
     re.IGNORECASE,
 )
-_IIP_HEADER_RE = re.compile(
-    r"Preliminary\s+Report\s+for\s+"
-    r"(?P<month>[A-Za-z]{3,9})\.?\s+(?P<year>\d{4})",
-    re.IGNORECASE,
+_ESTAT_IIP_REFERENCE_RE = re.compile(
+    r"(?P<year>\d{4})\s*年\s*[（(]\s*(?P<month>\d{1,2})\s*月分",
 )
+_ESTAT_IIP_PRELIMINARY = "速報"
+_ESTAT_IIP_REVISION = "訂正"
+_ESTAT_IIP_STAMP_RE = re.compile(r"^(\d{8})(\d{4})$")
 _RETAIL_NEXT_RE = re.compile(
     r"The\s+Preliminary\s+Report\s+for\s+(?P<ref_month>[A-Za-z]{3,9})"
     r"\s+will\s+be\s+published\s+on\s+"
@@ -123,35 +115,6 @@ def _reference_label(reference: date) -> str:
     return f"{_MONTH_NAME_BY_NUM[reference.month]} {reference.year}"
 
 
-def _parse_month_year(text: str) -> date | None:
-    match = _MONTH_YEAR_RE.search(text or "")
-    if match is None:
-        return None
-    return date(
-        int(match.group("year")),
-        _month_number(match.group("month")),
-        1,
-    )
-
-
-def _parse_long_date(text: str) -> date | None:
-    match = _LONG_DATE_RE.search(text or "")
-    if match is not None:
-        return date(
-            int(match.group("year")),
-            _month_number(match.group("month")),
-            int(match.group("day")),
-        )
-    iso = _ISO_DATE_RE.search(text or "")
-    if iso is not None:
-        return date(
-            int(iso.group("year")),
-            int(iso.group("month")),
-            int(iso.group("day")),
-        )
-    return None
-
-
 def _parse_time(text: str, *, default: str) -> str:
     match = _TIME_RE.search(text or "")
     if match is None:
@@ -166,91 +129,56 @@ def _parse_time(text: str, *, default: str) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
-def _element_texts(element: ET.Element) -> list[str]:
-    values: list[str] = []
-    for node in element.iter():
-        if node.text and node.text.strip():
-            values.append(node.text.strip())
-        values.extend(str(v).strip() for v in node.attrib.values() if str(v).strip())
-    return values
-
-
-def _direct_element_texts(element: ET.Element) -> list[str]:
-    values: list[str] = []
-    if element.text and element.text.strip():
-        values.append(element.text.strip())
-    values.extend(str(v).strip() for v in element.attrib.values() if str(v).strip())
-    for child in list(element):
-        if child.text and child.text.strip():
-            values.append(child.text.strip())
-        values.extend(str(v).strip() for v in child.attrib.values() if str(v).strip())
-    return values
-
-
-def _find_by_tag_fragment(element: ET.Element, fragments: tuple[str, ...]) -> str:
-    for node in element.iter():
-        tag = node.tag.rsplit("}", 1)[-1].lower()
-        if any(fragment in tag for fragment in fragments):
-            text = " ".join(_element_texts(node)).strip()
-            if text:
-                return text
-    return ""
-
-
-def _entry_from_iip_xml_element(element: ET.Element) -> MetiScheduleEntry | None:
-    direct_blob = " ".join(_direct_element_texts(element))
-    direct_lowered = direct_blob.lower()
-    if "preliminary" not in direct_lowered and "prelim" not in direct_lowered:
-        return None
-    if all(
-        token not in direct_lowered
-        for token in ("industrial", "iip", "production")
-    ):
-        return None
-
-    blob = " ".join(_element_texts(element))
-
-    reference_text = _find_by_tag_fragment(
-        element,
-        ("reference", "target", "period", "month"),
+def _estat_iip_detail_url(stamp: str) -> str:
+    return ESTAT_RELEASE_CALENDAR_DETAIL_URL_TEMPLATE.format(
+        toukei_cd=ESTAT_IIP_TOUKEI_CD,
+        stamp=stamp,
     )
-    reference = None
-    header_match = _IIP_HEADER_RE.search(blob)
-    if header_match is not None:
-        reference = date(
-            int(header_match.group("year")),
-            _month_number(header_match.group("month")),
-            1,
-        )
-    if reference is None:
-        reference = _parse_month_year(reference_text) or _parse_month_year(blob)
-    if reference is None:
-        raise MetiCalendarParseError(
-            f"METI IIP XML row lacks reference month: {blob[:160]!r}"
-        )
 
-    release_text = _find_by_tag_fragment(
-        element,
-        ("release", "publish", "publication", "date"),
-    ) or blob
-    release_date = _parse_long_date(release_text)
-    if release_date is None:
-        raise MetiCalendarParseError(
-            f"METI IIP XML row lacks release date: {blob[:160]!r}"
-        )
-    release_time = _parse_time(release_text, default=METI_IIP_RELEASE_TIME_LOCAL)
 
+def _entry_from_estat_iip_span(span: Any) -> MetiScheduleEntry | None:
+    text = span.get_text(" ", strip=True) or ""
+    if _ESTAT_IIP_PRELIMINARY not in text or _ESTAT_IIP_REVISION in text:
+        return None
+    stamp = next(
+        (
+            value
+            for key, value in span.attrs.items()
+            if key.lower() == "data-kensakukouhyou_date" and value
+        ),
+        "",
+    )
+    stamp_match = _ESTAT_IIP_STAMP_RE.match(stamp)
+    if stamp_match is None:
+        raise MetiCalendarParseError(
+            f"e-Stat IIP row missing release stamp: {text[:120]!r}"
+        )
+    yyyymmdd, hhmm = stamp_match.groups()
+    release_date = date(int(yyyymmdd[:4]), int(yyyymmdd[4:6]), int(yyyymmdd[6:8]))
+    release_time = f"{hhmm[:2]}:{hhmm[2:]}"
+    reference_match = _ESTAT_IIP_REFERENCE_RE.search(text)
+    if reference_match is None:
+        raise MetiCalendarParseError(
+            f"e-Stat IIP row missing reference month: {text[:120]!r}"
+        )
+    reference = date(
+        int(reference_match.group("year")),
+        int(reference_match.group("month")),
+        1,
+    )
     return MetiScheduleEntry(
         indicator="INDUSTRIAL_PRODUCTION",
         reference_date=reference,
         reference_label=_reference_label(reference),
         release_date=release_date,
         release_time_local=release_time,
-        source_url=METI_IIP_RELEASE_CALENDAR_URL,
+        source_url=_estat_iip_detail_url(stamp),
         report_url=build_iip_report_url(reference),
         payload={
-            "kind": "iip_release_calendar",
-            "raw_text": blob,
+            "kind": "estat_iip_release_calendar",
+            "toukei_cd": ESTAT_IIP_TOUKEI_CD,
+            "stamp": stamp,
+            "raw_text": text,
             "reference_date": reference.isoformat(),
             "release_date": release_date.isoformat(),
             "release_time_local": release_time,
@@ -258,16 +186,20 @@ def _entry_from_iip_xml_element(element: ET.Element) -> MetiScheduleEntry | None
     )
 
 
-def parse_iip_release_calendar_xml(xml_text: str) -> list[MetiScheduleEntry]:
-    """Extract IIP preliminary release dates from METI's XML calendar."""
-    try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError as exc:
-        raise MetiCalendarParseError(f"METI IIP XML parse failed: {exc}") from exc
-
+def parse_iip_release_calendar_html(html: str) -> list[MetiScheduleEntry]:
+    """Extract IIP preliminary release dates from e-Stat's release calendar."""
+    soup = BeautifulSoup(html, "html.parser")
+    spans = [
+        node
+        for node in soup.find_all("span")
+        if any(
+            key.lower() == "data-toukei_cd" and value == ESTAT_IIP_TOUKEI_CD
+            for key, value in node.attrs.items()
+        )
+    ]
     entries: dict[tuple[date, date], MetiScheduleEntry] = {}
-    for element in root.iter():
-        entry = _entry_from_iip_xml_element(element)
+    for span in spans:
+        entry = _entry_from_estat_iip_span(span)
         if entry is None:
             continue
         entries[(entry.reference_date, entry.release_date)] = entry
@@ -390,14 +322,35 @@ def schedule_entry_to_records(
     return raw, event
 
 
-def fetch_iip_release_calendar_xml(
+def fetch_iip_release_calendar_html(
+    start: date,
+    end: date,
     *,
     session: requests.Session | None = None,
     timeout: float = 30.0,
 ) -> str:
+    """GET e-Stat's Japanese release calendar for the requested window.
+
+    e-Stat's English calendar omits METI's IIP entries; the Japanese
+    surface returns the same data with `toukei_cd=00550300` and works
+    from any IP, so we use it as the reachable fallback for METI's own
+    XML calendar (which is geo/Akamai blocked from many networks).
+    """
+    if end < start:
+        raise ValueError(
+            f"e-Stat calendar window invalid: start={start} end={end}"
+        )
     client = session or requests.Session()
     response = client.get(
-        METI_IIP_RELEASE_CALENDAR_URL,
+        ESTAT_RELEASE_CALENDAR_URL,
+        params={
+            "startYear": str(start.year),
+            "startMonth": str(start.month),
+            "startDay": str(start.day),
+            "endYear": str(end.year),
+            "endMonth": str(end.month),
+            "endDay": str(end.day),
+        },
         headers=METI_BROWSER_HEADERS,
         timeout=timeout,
     )
