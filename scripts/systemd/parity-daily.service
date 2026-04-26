@@ -3,6 +3,14 @@ Description=Macro-data daily TE parity tripwire (issue #22)
 After=network-online.target
 Wants=network-online.target
 
+# After a long suspend, all three calendar timers (refresh / sweep /
+# parity) queue Persistent=true catch-up firings into the same systemd
+# transaction. Order parity behind the refresh + sweep so the
+# comparator sees today's `actual` values instead of running ahead of
+# the catch-up sweep and filing false TE-only drift issues. (Issue #31.)
+After=calendar-schedule-refresh.service
+After=calendar-value-sweep.service
+
 [Service]
 Type=oneshot
 # Replace REPO_ROOT below with the absolute path to your checkout, e.g.

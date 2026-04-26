@@ -1,0 +1,20 @@
+[Unit]
+Description=Hourly :15 calendar value-side sweep (issue #31)
+
+[Timer]
+# Hourly at :15 — staggered off the schedule-refresh slot at 04:00 so
+# the two timers never overlap on the engine DB. AccuracySec=1m keeps
+# the timer responsive without burning a wakeup every second.
+OnCalendar=*-*-* *:15:00
+AccuracySec=1m
+
+# If the laptop was suspended over a firing slot, run the missed
+# firing on resume. The value sweep is idempotent end-to-end (each
+# connector upserts onto the existing provider_event_id) so the late
+# catch-up cannot create duplicate state.
+Persistent=true
+
+Unit=calendar-value-sweep.service
+
+[Install]
+WantedBy=timers.target

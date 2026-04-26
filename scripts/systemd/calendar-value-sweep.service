@@ -1,0 +1,31 @@
+[Unit]
+Description=Macro-data calendar value-side sweep (issue #31)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Replace REPO_ROOT below with the absolute path to your checkout, e.g.
+# /home/rick/Desktop/analyst/macro-data-service. The wrapper resolves
+# .macro-data/, .env, and scripts/ relative to it.
+Environment=REPO_ROOT=%h/Desktop/analyst/macro-data-service
+ExecStart=%h/Desktop/analyst/macro-data-service/scripts/calendar_sweep_values_wrapper.sh
+
+# Soft watchdog — the hourly sweep is recent-window only, so a clean
+# run finishes in well under 5 minutes. Anything past 10 minutes is a
+# stuck connector and should be killed; the next firing picks up the
+# missed work.
+TimeoutStartSec=600
+
+# Don't restart on failure — per-connector failures are isolated by the
+# scheduler's breaker. Hourly cadence makes systemd retries redundant.
+Restart=no
+
+# Standard output / error stream into the journal so journalctl --user
+# -u calendar-value-sweep.service shows the run summary alongside the
+# structured log file.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

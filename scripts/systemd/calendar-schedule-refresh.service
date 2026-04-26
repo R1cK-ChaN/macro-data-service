@@ -1,0 +1,32 @@
+[Unit]
+Description=Macro-data calendar schedule-side refresh (issue #31)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Replace REPO_ROOT below with the absolute path to your checkout, e.g.
+# /home/rick/Desktop/analyst/macro-data-service. The wrapper resolves
+# .macro-data/, .env, and scripts/ relative to it.
+Environment=REPO_ROOT=%h/Desktop/analyst/macro-data-service
+ExecStart=%h/Desktop/analyst/macro-data-service/scripts/calendar_refresh_schedules_wrapper.sh
+
+# Soft watchdog — 28 connectors at a few seconds each, plus per-connector
+# cool-down windows, should comfortably finish under 10 minutes; longer
+# means a connector stuck in retry / backoff and should be killed.
+TimeoutStartSec=900
+
+# Don't restart on failure — per-connector failures are isolated by the
+# scheduler's breaker, and the daily TE parity tripwire (#22) catches
+# downstream drift if any agency goes silent. systemd retries would just
+# fight the per-connector cooling_until_ms cool-down.
+Restart=no
+
+# Standard output / error stream into the journal so journalctl --user
+# -u calendar-schedule-refresh.service shows the run summary alongside
+# the structured log file.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

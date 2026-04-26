@@ -1,0 +1,21 @@
+[Unit]
+Description=Daily 04:00 UTC calendar schedule-side refresh (issue #31)
+
+[Timer]
+# 04:00 UTC every day — runs ahead of the 06:00 UTC parity tripwire
+# (#22) so today's forward-looking schedule rows are fresh when the
+# parity comparator picks them up. AccuracySec=1m keeps the timer
+# responsive to wall clock without burning a wakeup every second.
+OnCalendar=*-*-* 04:00:00 UTC
+AccuracySec=1m
+
+# If the laptop was suspended over 04:00, run the missed firing on
+# resume. The schedule-side refresh is idempotent end-to-end (each
+# connector dedups by content hash + provider_event_id) so the late
+# catch-up cannot create duplicate state.
+Persistent=true
+
+Unit=calendar-schedule-refresh.service
+
+[Install]
+WantedBy=timers.target
