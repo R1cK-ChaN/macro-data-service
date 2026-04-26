@@ -75,6 +75,22 @@ def test_schedule_parser_extracts_cpi_and_gdp_advance_rows() -> None:
     assert entries[3].event_time_utc == "2026-04-30T07:00:00+00:00"
 
 
+def test_schedule_parser_handles_button_section_headers() -> None:
+    entries = parse_calendar_html(
+        _fixture_text("ine_calendar", "calendar_2026_live.html"),
+    )
+    cpi = [e for e in entries if e.series_id == "INE_CPI_ADVANCE_YOY"]
+    gdp = [e for e in entries if e.series_id == "INE_GDP_ADVANCE_QOQ"]
+    assert len(cpi) == 12
+    assert len(gdp) == 4
+    assert {e.reference_date for e in cpi} == {
+        f"2026-{m:02d}-01" for m in range(1, 13)
+    }
+    assert {e.reference_date for e in gdp} == {
+        "2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30",
+    }
+
+
 def test_schedule_filter_keeps_requested_series_only() -> None:
     entries = parse_calendar_html(
         _fixture_text("ine_calendar", "calendar_2026.html"),
