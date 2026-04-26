@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
+import zipfile
 from dataclasses import dataclass, field
 from typing import Mapping
 
@@ -38,9 +40,11 @@ class DestatisGenesisClient:
     @classmethod
     def from_env(cls) -> "DestatisGenesisClient":
         """Build a client from environment credentials with guest fallback."""
+        from env import get_env_value
+
         return cls(
-            username=os.getenv(DESTATIS_USERNAME_ENV, "GAST"),
-            password=os.getenv(DESTATIS_PASSWORD_ENV, "GAST"),
+            username=get_env_value(DESTATIS_USERNAME_ENV) or "GAST",
+            password=get_env_value(DESTATIS_PASSWORD_ENV) or "GAST",
         )
 
     def tablefile(
@@ -83,7 +87,21 @@ class DestatisGenesisClient:
             timeout=self.timeout,
         )
         response.raise_for_status()
-        text = response.content.decode(response.encoding or "utf-8-sig")
+        body = response.content
+        # Genesis-Online's tablefile endpoint returns a zip archive
+        # regardless of the ``compress=false`` request param (verified
+        # 2026-04-26). Detect the PK\x03\x04 magic and unwrap the
+        # contained CSV; fall through to direct decode for legacy bare
+        # CSV responses (older test fixtures still use that shape).
+        if body[:4] == b"PK\x03\x04":
+            with zipfile.ZipFile(io.BytesIO(body)) as zf:
+                inner = next((n for n in zf.namelist() if n.endswith(".csv")), None)
+                if inner is None:
+                    raise DestatisGenesisError(
+                        f"Destatis zip response had no CSV: {zf.namelist()}"
+                    )
+                body = zf.read(inner)
+        text = body.decode(response.encoding or "utf-8-sig")
         return self._extract_response_text(text)
 
     @staticmethod

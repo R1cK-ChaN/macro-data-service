@@ -337,6 +337,38 @@ def test_genesis_client_extracts_json_wrapped_table_content() -> None:
     assert client.tablefile("61111-0004").startswith("Zeit;Merkmal;Wert")
 
 
+def test_genesis_client_unwraps_zip_response() -> None:
+    """Genesis tablefile now returns a ZIP archive containing the CSV.
+
+    Verified against the live API on 2026-04-26: the endpoint always
+    answers ``application/zip`` regardless of the ``compress=false``
+    request param. The client must detect the PK\\x03\\x04 magic and
+    extract the inner ``.csv`` file before decoding.
+    """
+    import io
+    import zipfile
+
+    csv_payload = b"Zeit;Merkmal;Wert\n2026-04;x;2,1\n"
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as zf:
+        zf.writestr("61111-0001_1234_en_flat.csv", csv_payload)
+    zip_bytes = zip_buf.getvalue()
+
+    class _Response:
+        content = zip_bytes
+        encoding = None
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class _Session:
+        def post(self, url, *, data, headers, timeout):  # noqa: ANN001
+            return _Response()
+
+    client = DestatisGenesisClient(session=_Session())  # type: ignore[arg-type]
+    assert client.tablefile("61111-0001").startswith("Zeit;Merkmal;Wert")
+
+
 def test_service_dry_runs_return_plan(store: SQLiteEngineStore) -> None:
     svc = LocalMacroDataService(store=store)
     fetch_result = svc.invoke("calendar_econ_fetch_destatis", {"dry_run": True})
