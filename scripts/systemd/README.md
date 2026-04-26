@@ -1,3 +1,14 @@
+# Calendar systemd units
+
+Files in this directory wire the recurring calendar jobs into
+`systemd --user` timers:
+
+| Unit | Cadence | Purpose | Issue |
+| --- | --- | --- | --- |
+| `calendar-schedule-refresh.timer` | daily 04:00 UTC | every connector pulls forward-looking schedule rows | #31 |
+| `calendar-value-sweep.timer` | hourly at :15 | every value-side connector fills `actual` on recent rows | #31 |
+| `parity-daily.timer` | daily 06:00 UTC | TE-vs-official parity tripwire (depends on the 04:00 refresh having run) | #22 |
+
 # Parity tripwire systemd unit
 
 Files in this directory wire the daily TE-vs-official parity job
@@ -65,3 +76,81 @@ scripts/parity_daily_wrapper.sh --dry-run
 * `Persistent=true` on the timer means a missed firing (laptop
   suspended at 06:00 UTC) catches up on resume. The job is idempotent
   end-to-end so this cannot duplicate state.
+
+## Calendar refresh + value sweep (issue #31)
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp scripts/systemd/calendar-schedule-refresh.service ~/.config/systemd/user/
+cp scripts/systemd/calendar-schedule-refresh.timer   ~/.config/systemd/user/
+cp scripts/systemd/calendar-value-sweep.service      ~/.config/systemd/user/
+cp scripts/systemd/calendar-value-sweep.timer        ~/.config/systemd/user/
+
+# Same caveat as the parity unit: edit Environment= / ExecStart= in
+# each .service if your checkout is not at
+# ~/Desktop/analyst/macro-data-service.
+
+systemctl --user daemon-reload
+systemctl --user enable --now calendar-schedule-refresh.timer
+systemctl --user enable --now calendar-value-sweep.timer
+```
+
+Verify:
+
+```bash
+systemctl --user list-timers \
+    calendar-schedule-refresh.timer calendar-value-sweep.timer
+journalctl --user -u calendar-schedule-refresh.service -n 100
+journalctl --user -u calendar-value-sweep.service -n 100
+```
+
+Operations:
+
+* Schedule refresh log: `.macro-data/logs/calendar_refresh_schedules.log`
+  (one JSON per run — `ok_count`, `failed_count`,
+  `failed_connectors[]`, `wall_seconds`).
+* Value sweep log: `.macro-data/logs/calendar_sweep_values.log` (same
+  shape).
+* Per-connector breaker state: `cal_provider` table column
+  `cooling_until_ms` and `calendar_connector_state.consecutive_failures`
+  in the engine DB.
+
+Manual run:
+
+```bash
+# Default: hits live upstreams and writes to engine.db.
+scripts/calendar_refresh_schedules_wrapper.sh
+scripts/calendar_sweep_values_wrapper.sh
+
+# Plan only — no HTTP, no DB writes.
+scripts/calendar_refresh_schedules_wrapper.sh --dry-run
+scripts/calendar_sweep_values_wrapper.sh --dry-run
+
+# Subset by connector.
+scripts/calendar_refresh_schedules_wrapper.sh --connectors bls bea
+```
+
+Design notes (calendar units):
+
+* Cadence ordering — schedule refresh at 04:00 UTC ships forward-looking
+  rows before the parity tripwire fires at 06:00 UTC. Value sweep at
+  every `:15` is staggered off the 04:00 / 06:00 hourly slots so the
+  three timers never collide on the engine DB.
+* `flock --nonblock` is held by the wrapper so an over-running run
+  silently skips the next slot rather than racing on the engine DB.
+  The refresh and sweep wrappers share one lock
+  (`.macro-data/calendar_recurring.lock`) — without sharing, the 04:15
+  sweep can step on a still-running 04:00 refresh and trip
+  `database is locked` ticks against the per-connector breakers.
+* On resume after a long suspend, systemd queues the missed firings
+  for refresh + sweep + parity together. `parity-daily.service`
+  carries `After=calendar-schedule-refresh.service` and
+  `After=calendar-value-sweep.service` so the catch-up parity run
+  sees today's freshly-written `actual` values instead of running
+  ahead of the catch-up sweep and filing false TE-only drift issues.
+* Per-connector failures are isolated by the
+  `_run_connector_with_breaker` driver in
+  `src/ingestion/calendar/scheduler.py` — one upstream outage rolls
+  back only that connector. Connector-level signal lives in
+  `calendar_connector_state` and is enforced by `cooling_until_ms`,
+  not by systemd `Restart=`.
