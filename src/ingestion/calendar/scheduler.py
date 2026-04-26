@@ -83,8 +83,10 @@ from .conference_board_api import (
     schedule_conference_board_calendar,
 )
 from .ecb_api import fetch_ecb_calendar, schedule_ecb_calendar
+from .eia_api import fetch_eia_calendar
 from .eurostat_api import fetch_eurostat_calendar, schedule_eurostat_calendar
 from .destatis_api import fetch_destatis_calendar, schedule_destatis_calendar
+from .dol_api import fetch_dol_calendar
 from .zew_api import fetch_zew_calendar, schedule_zew_calendar
 from .ifo_api import fetch_ifo_calendar, schedule_ifo_calendar
 from .gfk_api import fetch_gfk_calendar, schedule_gfk_calendar
@@ -153,6 +155,24 @@ def _nar(conn: sqlite3.Connection, dry_run: bool) -> Any:
 
 def _ecb(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_ecb_calendar(conn, dry_run=dry_run)
+
+
+def _eia(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # EIA combines schedule + value in one JSON response — no
+    # separate schedule scrape exists. Pulls the most recent 60
+    # days of weekly stocks; the projector idempotently merges so
+    # repeated runs don't write duplicates.
+    from ingestion.timeseries.scrapers.eia import EIAClient
+    client = EIAClient()
+    if not dry_run and not client.api_key:
+        raise RuntimeError("EIA_API_KEY not set")
+    return fetch_eia_calendar(conn, client, dry_run=dry_run)
+
+
+def _dol(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # DOL combines schedule + value too — each Thursday press
+    # release carries the headline figures and reference week.
+    return fetch_dol_calendar(conn, dry_run=dry_run)
 
 
 def _eurostat(conn: sqlite3.Connection, dry_run: bool) -> Any:
@@ -251,6 +271,8 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("conference-board", _conference_board),
     ("nar", _nar),
     ("ecb", _ecb),
+    ("eia", _eia),
+    ("dol", _dol),
     ("eurostat", _eurostat),
     ("destatis", _destatis),
     ("zew", _zew),
@@ -292,6 +314,8 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "conference-board",
     "nar",
     "ecb",
+    "eia",
+    "dol",
     "eurostat",
     "destatis",
     "zew",
@@ -496,6 +520,15 @@ def _summary_failure_reason(summary: Any) -> str | None:
         count = len(parse_failures)
         first = parse_failures[0]
         return f"{count} parse failures (e.g. {first})"
+    # Issue #50 — DOL UI Claims fetcher records per-release outages
+    # in ``releases_failed`` (list of (release_iso_or_indicator,
+    # reason) tuples). Surface so the scheduler envelope flips
+    # ``ok=False`` when DOL silently drops every Thursday.
+    releases_failed = getattr(summary, "releases_failed", None)
+    if releases_failed:
+        count = len(releases_failed)
+        first = releases_failed[0]
+        return f"{count} release failures (e.g. {first})"
     return None
 
 
@@ -778,6 +811,8 @@ _VALUE_SIDE_DUE_ROW_FILTERS: dict[ConnectorName, str] = {
     # through to the hourly baseline here is an explicit slice cap
     # — Issue #37 P2 candidate to add a separate trigger /
     # completion-row tracker for ECB.
+    "eia":                   "provider = 'eia'",
+    "dol":                   "provider = 'dol'",
     "eurostat":              "provider = 'eurostat'",
     "destatis":              "provider = 'destatis'",
     "zew":                   "provider = 'zew'",
@@ -1023,6 +1058,21 @@ def sweep_value_side(
             dry_run=dry_run,
         )
 
+    def _eia_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # Same client as the schedule-side; the EIA API returns
+        # schedule + value in one shot. ``EIA_API_KEY`` required.
+        from ingestion.timeseries.scrapers.eia import EIAClient
+        client = EIAClient()
+        if not dry_run and not client.api_key:
+            raise RuntimeError("EIA_API_KEY not set")
+        return fetch_eia_calendar(conn, client, dry_run=dry_run)
+
+    def _dol_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # DOL ETA listing → release PDF → headline figures. No API
+        # key required. Sits behind Akamai bot protection — runs
+        # use the browser-shaped session in :mod:`dol_api.listing`.
+        return fetch_dol_calendar(conn, dry_run=dry_run)
+
     def _eurostat_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # Eurostat JSON-stat has no auth.
         from ingestion.timeseries.sdmx.providers.eurostat import EurostatClient
@@ -1131,6 +1181,8 @@ def sweep_value_side(
         "conference-board": _conference_board_values,
         "nar":        _nar_values,
         "ecb":        _ecb_values,
+        "eia":        _eia_values,
+        "dol":        _dol_values,
         "eurostat":   _eurostat_values,
         "destatis":   _destatis_values,
         "zew":        _zew_values,

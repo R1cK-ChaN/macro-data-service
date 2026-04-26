@@ -809,6 +809,104 @@ class CalendarOpsMixin(LocalMacroDataServiceBase):
             "wall_seconds":       round(summary.wall_seconds, 3),
         }
 
+    def _op_calendar_econ_fetch_dol(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Sweep DOL UI Weekly Claims releases (issue #50).
+
+        Walks the ETA newsroom listing for recent ``Unemployment
+        Insurance Weekly Claims Report`` rows, downloads each
+        release's PDF, and writes Initial Claims + Continuing
+        Claims into ``cal_econ_event``. Schedule and value land in
+        one pass — DOL doesn't publish a forward calendar.
+        """
+        from ingestion.calendar.dol_api import fetch_dol_calendar
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_dol_calendar(connection, dry_run=dry_run)
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":            summary.dry_run,
+            "indicators_planned": summary.indicators_planned,
+            "indicators_ok":      summary.indicators_ok,
+            "indicators_empty":   summary.indicators_empty,
+            "listing_entries":    summary.listing_entries,
+            "releases_fetched":   summary.releases_fetched,
+            "releases_failed":    summary.releases_failed,
+            "observations_seen":  summary.observations_seen,
+            "rows_raw_inserted":  summary.rows_raw_inserted,
+            "events_upserted":    summary.events_upserted,
+            "fetch_error":        summary.fetch_error,
+            "stopped_reason":     "dry_run" if dry_run else None,
+            "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_eia(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Pull EIA weekly stocks via the v2 JSON API (issue #50)."""
+        from ingestion.calendar.eia_api import fetch_eia_calendar
+        from ingestion.timeseries.scrapers.eia import EIAClient
+
+        dry_run = bool(arguments.get("dry_run", True))
+        raw_indicators = arguments.get("indicators")
+        indicators: list[str] | None = None
+        if isinstance(raw_indicators, list) and raw_indicators:
+            indicators = [str(s) for s in raw_indicators]
+
+        client = EIAClient()
+        if not dry_run and not client.api_key:
+            return {"error": "EIA_API_KEY not set"}
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_eia_calendar(
+                connection, client,
+                indicators=indicators,
+                dry_run=dry_run,
+            )
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":             summary.dry_run,
+            "indicators_planned":  summary.indicators_planned,
+            "indicators_unknown":  summary.indicators_unknown,
+            "indicators_ok":       summary.indicators_ok,
+            "indicators_empty":    summary.indicators_empty,
+            "series_failed":       summary.series_failed,
+            "start":               summary.start,
+            "end":                 summary.end,
+            "observations_seen":   summary.observations_seen,
+            "rows_raw_inserted":   summary.rows_raw_inserted,
+            "events_upserted":     summary.events_upserted,
+            "stopped_reason":      "dry_run" if dry_run else None,
+            "wall_seconds":        round(summary.wall_seconds, 3),
+        }
+
     def _op_calendar_econ_fetch_ism(
         self, arguments: dict[str, Any],
     ) -> dict[str, Any]:
@@ -3659,8 +3757,9 @@ class CalendarOpsMixin(LocalMacroDataServiceBase):
           dry_run      — default True. No HTTP, no DB writes.
           connectors   — optional list subset of
                          ``["bls", "bea", "census", "ism", "umich",
-                         "conference-board", "nar", "ecb", "eurostat", "destatis",
-                         "zew", "ifo", "gfk", "hcob", "ec-bcs", "insee", "ine", "istat",
+                         "conference-board", "nar", "ecb", "eia", "dol",
+                         "eurostat", "destatis", "zew", "ifo", "gfk", "hcob",
+                         "ec-bcs", "insee", "ine", "istat",
                          "fed-values", "stat-bureau-jp-values", "boj-values",
                          "boj-tankan-values", "mof-jp-values", "cao-values",
                          "cao-gdp-values", "meti-values"]``.

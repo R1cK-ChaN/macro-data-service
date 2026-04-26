@@ -83,6 +83,38 @@ class AgencyDecl:
 
 AGENCIES: tuple[AgencyDecl, ...] = (
     AgencyDecl(
+        agency_id="DOL",
+        label="US Department of Labor — Employment and Training Administration",
+        # Provider attribution only — the parity whitelist is
+        # deliberately empty in this slice. DOL writes raw counts
+        # (``"214000"``) while TE renders the same figures with a
+        # trailing "K" magnitude marker (``"214K"``); aligning the
+        # two needs an :class:`AlignmentSpec` that strips ``"K"`` and
+        # scales by 1000 before equality. The parity comparator
+        # also keys buckets on ``canonicalize_indicator(title)``,
+        # which today returns ``"JOBLESS_CLAIMS"`` for TE's
+        # "Initial Jobless Claims" but ``"us initial jobless
+        # claims"`` (lowercase fall-through) for the DOL-side
+        # title — adding the canonicalize aliases is part of the
+        # same follow-up. Once both are in, the indicator set
+        # extends to the matched TE / DOL bucket keys.
+        providers=("dol",),
+        indicators=frozenset(),
+    ),
+    AgencyDecl(
+        agency_id="EIA",
+        label="US Energy Information Administration",
+        # EIA weekly stocks publish raw counts in thousand-barrels
+        # (petroleum) or billion-cubic-feet (natural gas). TE
+        # publishes the same headline figures with a "M" / "B"
+        # magnitude marker. Stay out of the parity whitelist until
+        # alignment specs cover the suffix — the connector still
+        # writes ``actual`` and the agency declaration still owns
+        # the provider attribution.
+        providers=("eia",),
+        indicators=frozenset(),
+    ),
+    AgencyDecl(
         agency_id="BLS",
         label="US Bureau of Labor Statistics",
         # BLS stores raw observation values: CPI / Core CPI / PPI / Core PPI

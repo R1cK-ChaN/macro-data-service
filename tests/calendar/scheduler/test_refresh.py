@@ -39,7 +39,7 @@ def test_default_connectors_cover_every_official_source() -> None:
     """The default plan is the full official-source suite."""
     assert ALL_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
-        "nar", "ecb", "eurostat", "destatis", "zew", "ifo", "gfk", "hcob", "ec-bcs", "insee", "ine", "istat",
+        "nar", "ecb", "eia", "dol", "eurostat", "destatis", "zew", "ifo", "gfk", "hcob", "ec-bcs", "insee", "ine", "istat",
         "fed-fomc", "fed-releases", "nbs", "stat-bureau-jp", "boj",
         "boj-tankan", "mof-jp", "cao", "cao-gdp", "meti",
     )
@@ -472,10 +472,11 @@ def test_service_op_connectors_subset_narrows_the_run(
 def test_value_side_default_plan_covers_connectors() -> None:
     """Value-side plan omits NBS (no value-side op shipped) and the
     two Fed schedule-side surfaces (``fed-fomc`` / ``fed-releases``)
-    — the value-bearing Fed op lives under ``fed-values``."""
+    — the value-bearing Fed op lives under ``fed-values``. Issue #50
+    adds ``eia`` + ``dol`` (both combine schedule + value)."""
     assert ALL_VALUE_SIDE_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
-        "nar", "ecb", "eurostat", "destatis", "zew", "ifo", "gfk", "hcob",
+        "nar", "ecb", "eia", "dol", "eurostat", "destatis", "zew", "ifo", "gfk", "hcob",
         "ec-bcs", "insee", "ine", "istat",
         "fed-values", "stat-bureau-jp-values", "boj-values", "boj-tankan-values",
         "mof-jp-values", "cao-values", "cao-gdp-values", "meti-values",
@@ -529,6 +530,8 @@ def test_value_side_missing_api_key_isolates_to_one_connector(
         "conference-board": _ok("conference-board"),
         "nar":        _ok("nar"),
         "ecb":        _ok("ecb"),
+        "eia":        _ok("eia"),
+        "dol":        _ok("dol"),
         "eurostat":   _ok("eurostat"),
         "destatis":   _ok("destatis"),
         "zew":        _ok("zew"),
