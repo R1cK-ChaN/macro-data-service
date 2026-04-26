@@ -53,6 +53,15 @@ from typing import Any, Callable, Iterable
 # the projector's merge CASE.
 _ECB_CRON_WINDOW_DAYS = 180
 
+# Schedule-aware burst (issue #37). Cap of 30 attempts × 60-second
+# spacing matches the 30-minute look-ahead — the burst expires
+# naturally at the upper end of the window. Lookback of 1h absorbs
+# late publications + sweep-clock skew.
+_BURST_WINDOW_LOOKBACK = timedelta(hours=1)
+_BURST_WINDOW_LOOKAHEAD = timedelta(minutes=30)
+_BURST_MAX_ATTEMPTS = 30
+_BURST_INTERVAL_SECONDS = 60.0
+
 from .bea_api import fetch_bea_calendar, schedule_bea_calendar
 from .bls_api import fetch_bls_calendar, schedule_bls_calendar
 from .boj_api import fetch_boj_calendar, fetch_boj_statement_values
@@ -744,6 +753,127 @@ def refresh_all_schedules(
 # ──────────────────────────────────────────────────────────────────────────
 
 
+# Schedule-aware burst predicates (issue #37). Each entry is the SQL
+# WHERE-clause body that selects the rows a value-side connector is
+# responsible for filling. Combined with the ``actual IS NULL`` and
+# ``event_time_utc BETWEEN window_start AND window_end`` filters at
+# query time, this counts how many releases the connector should
+# pick up in the burst window. Providers shared across two value
+# connectors (``boj`` for MPM + Tankan, ``cao`` for CCI + GDP) are
+# disambiguated by title so each connector's burst sees only its own
+# pending rows.
+_VALUE_SIDE_DUE_ROW_FILTERS: dict[ConnectorName, str] = {
+    "bls":                   "provider = 'bls'",
+    "bea":                   "provider = 'bea'",
+    "census":                "provider = 'census'",
+    "ism":                   "provider = 'ism'",
+    "umich":                 "provider = 'umich'",
+    "conference-board":      "provider = 'conference-board'",
+    "nar":                   "provider = 'nar'",
+    # ECB intentionally absent — the value fetcher writes new
+    # ``'ECB % Rate'`` rows rather than filling ``actual`` on the
+    # schedule rows (`ECB Monetary Policy Decision` /
+    # `ECB Economic Bulletin`), so neither row shape supports the
+    # burst's "until ``actual`` lands" completion check. Falling
+    # through to the hourly baseline here is an explicit slice cap
+    # — Issue #37 P2 candidate to add a separate trigger /
+    # completion-row tracker for ECB.
+    "eurostat":              "provider = 'eurostat'",
+    "destatis":              "provider = 'destatis'",
+    "zew":                   "provider = 'zew'",
+    "ifo":                   "provider = 'ifo'",
+    "gfk":                   "provider = 'gfk'",
+    "hcob":                  "provider = 'hcob'",
+    "ec-bcs":                "provider = 'ec-bcs'",
+    "insee":                 "provider = 'insee'",
+    "ine":                   "provider = 'ine'",
+    "istat":                 "provider = 'istat'",
+    # ``fetch_fed_statement_values`` only fills rows matching
+    # ``title LIKE 'FOMC Rate Decision%'``; the other Fed-released
+    # series (Beige Book, H.4.1, H.8) ride on ``fed-releases``
+    # schedule-side and stay ``actual IS NULL`` permanently.
+    "fed-values":            "provider = 'federal-reserve' AND title LIKE 'FOMC Rate Decision%'",
+    "stat-bureau-jp-values": "provider = 'stat-bureau-jp'",
+    "boj-values":            "provider = 'boj' AND title = 'BoJ Interest Rate Decision'",
+    "boj-tankan-values":     "provider = 'boj' AND title LIKE 'Tankan %'",
+    "mof-jp-values":         "provider = 'mof-jp'",
+    "cao-values":            "provider = 'cao' AND title = 'Consumer Confidence'",
+    "cao-gdp-values":        "provider = 'cao' AND title LIKE 'GDP %'",
+    "meti-values":           "provider = 'meti'",
+}
+
+
+# Per-connector publication buffer (issue #37 / Codex round 1 P2 #3).
+# Six value-side connectors only attempt fetch ``buffer`` past the
+# scheduled ``event_time_utc`` (deliberate, to avoid hammering a
+# not-yet-published page and tripping the breaker — see the BoJ
+# fetcher's own ``_discover_pending_closings`` docstring). The burst
+# window for those connectors must shift back by the same amount,
+# otherwise a row at ``sweep_start + 10min`` is counted as due even
+# though the connector cannot fetch it for another hour, producing
+# 30 attempts of guaranteed no-ops. Connectors absent from the map
+# default to ``timedelta(0)`` — the standard ``[−1h, +30min]`` window.
+_VALUE_SIDE_FETCH_BUFFER: dict[ConnectorName, timedelta] = {
+    "boj-values":            timedelta(hours=1),
+    "boj-tankan-values":     timedelta(hours=1),
+    "mof-jp-values":         timedelta(hours=1),
+    "stat-bureau-jp-values": timedelta(hours=1),
+    "cao-gdp-values":        timedelta(hours=1),
+    "meti-values":           timedelta(hours=1),
+}
+
+
+def _count_due_rows(
+    conn: sqlite3.Connection,
+    predicate: str,
+    *,
+    window_start_iso: str,
+    window_end_iso: str,
+) -> int:
+    """Count rows the connector still needs to fill in the burst window.
+
+    ``actual IS NULL`` selects unfilled rows; ``event_time_utc BETWEEN
+    window_start AND window_end`` clamps to the burst window resolved at
+    sweep start. ``predicate`` narrows to one connector's roster — one
+    of :data:`_VALUE_SIDE_DUE_ROW_FILTERS`.
+    """
+    # Upper bound is exclusive (``<`` not ``<=``) so a row at
+    # exactly ``window_end_iso`` doesn't count as due. With 30
+    # attempts × 60s spacing, the burst's last attempt fires ~29
+    # minutes after sweep start; a row whose eligibility opens at
+    # the +30-min boundary would otherwise be counted but get no
+    # attempt at the time it became fetchable.
+    row = conn.execute(
+        f"""
+        SELECT COUNT(*) FROM cal_econ_event
+        WHERE actual IS NULL
+          AND event_time_utc >= ?
+          AND event_time_utc < ?
+          AND ({predicate})
+        """,
+        (window_start_iso, window_end_iso),
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def _result_indicates_skip(result: ConnectorResult) -> bool:
+    """True when the breaker short-circuited (cooling or budget out).
+
+    The breaker's two pre-call skip paths return ``ok=False`` with a
+    distinctive ``error`` string but never invoke the connector. The
+    burst loop must stop immediately on either: cooling means the
+    source is presumed down (more attempts compound the failure
+    counter), and budget exhaustion means subsequent attempts can't
+    actually hit the API anyway.
+    """
+    if result.ok or not result.error:
+        return False
+    return (
+        "circuit breaker cooling" in result.error
+        or "daily request budget exhausted" in result.error
+    )
+
+
 def sweep_value_side(
     connection_factory: Callable[[], sqlite3.Connection],
     *,
@@ -756,6 +886,10 @@ def sweep_value_side(
     _connector_overrides: (
         dict[ConnectorName, _ConnectorFn] | None
     ) = None,
+    _burst_max_attempts: int = _BURST_MAX_ATTEMPTS,
+    _burst_interval_seconds: float = _BURST_INTERVAL_SECONDS,
+    _burst_clock: Callable[[], datetime] | None = None,
+    _burst_sleep: Callable[[float], None] | None = None,
 ) -> RefreshRunSummary:
     """Invoke every value-side connector to fill ``actual`` on recent rows.
 
@@ -794,6 +928,19 @@ def sweep_value_side(
     (``BLS_API_KEY`` / ``BEA_API_KEY``). A missing key raises from the
     per-connector shim and lands as ``ok=False`` on the result rather
     than aborting the sweep — the other connectors still run.
+
+    Schedule-aware burst (issue #37). For each connector, the driver
+    counts unfilled rows in the burst window
+    (``[now − 1h, now + 30min]``) before the first invocation. If any
+    are due, the connector runs in a burst loop at
+    ``_burst_interval_seconds`` cadence until (a) every windowed row
+    has ``actual``, (b) ``_burst_max_attempts`` is reached, (c) the
+    window's upper bound has elapsed, or (d) the breaker short-
+    circuits (cooling / budget exhausted). Connectors with no due
+    rows in the window run exactly once — the existing baseline
+    behavior. The burst window is fixed at sweep start so events
+    drifting past ``+30min`` mid-burst aren't double-counted; the
+    next hourly sweep is the catch-all for any row that didn't fill.
     """
     started = time.monotonic()
     now_utc = datetime.now(timezone.utc)
@@ -1024,17 +1171,82 @@ def sweep_value_side(
         unknown_connectors=unknown_connectors,
     )
 
+    clock = _burst_clock or (lambda: datetime.now(timezone.utc))
+    sleep_fn = _burst_sleep or time.sleep
+    sweep_start_dt = clock()
+    burst_deadline_dt = sweep_start_dt + _BURST_WINDOW_LOOKAHEAD
+
     state_conn = connection_factory()
     try:
         for name, fn in plan:
-            run_summary.results.append(_run_connector_with_breaker(
-                name, fn,
-                connection_factory=connection_factory,
-                state_conn=state_conn,
-                dry_run=dry_run,
-                log_prefix="value-side sweep",
-                budget_cap=DAILY_BUDGET_CAPS.get(name),
-            ))
+            predicate = _VALUE_SIDE_DUE_ROW_FILTERS.get(name)
+            fetch_buffer = _VALUE_SIDE_FETCH_BUFFER.get(name, timedelta(0))
+            # Count predicate selects events whose connector-side
+            # eligibility window already opens inside the burst's
+            # wall-clock budget. Subtract ``fetch_buffer`` from both
+            # ends: a BoJ event at ``sweep_start − 30min`` becomes
+            # eligible only at ``sweep_start + 30min`` (its buffer
+            # opens then), so for the initial count it sits at the
+            # window's upper edge — same shape as a non-buffered
+            # event scheduled for ``sweep_start + 30min``.
+            window_start_iso = (
+                sweep_start_dt - _BURST_WINDOW_LOOKBACK - fetch_buffer
+            ).isoformat()
+            window_end_iso = (
+                sweep_start_dt + _BURST_WINDOW_LOOKAHEAD - fetch_buffer
+            ).isoformat()
+
+            # Dry-run skips the burst — no values can fill, so a burst
+            # loop would just spin without writes. Single invocation
+            # preserves the existing dry-run plan envelope.
+            initial_due = 0
+            if not dry_run and predicate is not None:
+                initial_due = _count_due_rows(
+                    state_conn, predicate,
+                    window_start_iso=window_start_iso,
+                    window_end_iso=window_end_iso,
+                )
+
+            attempts = 0
+            stopped_reason = "single_pass"
+            last_result: ConnectorResult | None = None
+            while True:
+                attempts += 1
+                last_result = _run_connector_with_breaker(
+                    name, fn,
+                    connection_factory=connection_factory,
+                    state_conn=state_conn,
+                    dry_run=dry_run,
+                    log_prefix="value-side sweep",
+                    budget_cap=DAILY_BUDGET_CAPS.get(name),
+                )
+                if initial_due == 0:
+                    break
+                if _result_indicates_skip(last_result):
+                    stopped_reason = "breaker_or_budget"
+                    break
+                remaining = _count_due_rows(
+                    state_conn, predicate or "1=1",
+                    window_start_iso=window_start_iso,
+                    window_end_iso=window_end_iso,
+                )
+                if remaining == 0:
+                    stopped_reason = "actual_filled"
+                    break
+                if attempts >= _burst_max_attempts:
+                    stopped_reason = "max_attempts"
+                    break
+                if clock() >= burst_deadline_dt:
+                    stopped_reason = "window_closed"
+                    break
+                sleep_fn(_burst_interval_seconds)
+
+            assert last_result is not None  # loop runs at least once
+            if initial_due > 0:
+                last_result.summary["burst_attempts"] = attempts
+                last_result.summary["burst_initial_due"] = initial_due
+                last_result.summary["burst_stopped_reason"] = stopped_reason
+            run_summary.results.append(last_result)
     finally:
         try:
             state_conn.close()
