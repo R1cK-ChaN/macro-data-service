@@ -470,15 +470,17 @@ def test_service_op_connectors_subset_narrows_the_run(
 
 
 def test_value_side_default_plan_covers_connectors() -> None:
-    """Value-side plan omits NBS (no value-side op shipped) and the
-    two Fed schedule-side surfaces (``fed-fomc`` / ``fed-releases``)
-    — the value-bearing Fed op lives under ``fed-values``. Issue #50
-    adds ``eia`` + ``dol`` (both combine schedule + value)."""
+    """Value-side plan omits the two Fed schedule-side surfaces
+    (``fed-fomc`` / ``fed-releases``) — the value-bearing Fed op
+    lives under ``fed-values``. Issue #49 adds ``nbs-values`` for
+    five China indicators; issue #50 adds ``eia`` + ``dol`` (both
+    combine schedule + value)."""
     assert ALL_VALUE_SIDE_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
         "nar", "ecb", "eia", "dol", "eurostat", "destatis", "zew", "ifo", "gfk", "hcob",
         "ec-bcs", "insee", "ine", "istat",
-        "fed-values", "stat-bureau-jp-values", "boj-values", "boj-tankan-values",
+        "fed-values", "nbs-values",
+        "stat-bureau-jp-values", "boj-values", "boj-tankan-values",
         "mof-jp-values", "cao-values", "cao-gdp-values", "meti-values",
     )
 

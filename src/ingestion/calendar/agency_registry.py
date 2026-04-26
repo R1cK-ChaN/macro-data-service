@@ -360,13 +360,18 @@ AGENCIES: tuple[AgencyDecl, ...] = (
             ("JP", "TANKAN_LARGE_NONMFG"),
         }),
     ),
-    # NBS is intentionally absent from the registry: the calendar
-    # connector ships schedule rows only — ``actual`` stays ``NULL``
-    # because no value-side fetcher has landed yet. Including NBS
-    # would make every TE NBS row report as "agency vintage missing
-    # first-release actual" until value ingestion ships, drowning the
-    # signal we care about. Add NBS back when ``cal_econ_event`` for
-    # provider ``nbs`` carries actuals.
+    # NBS deliberately stays out of the parity registry in this
+    # slice. The schedule connector anchors NBS rows on the *release*
+    # month (April 13 release → reference_date=2026-04-01) while
+    # TE buckets CN CPI/PPI/IP/Retail Sales rows on the *data* month
+    # (March 2026 → reference_date=2026-03-01). Wiring NBS into
+    # ``agency_registry`` without first aligning the reference-date
+    # convention would generate false-positive parity alerts every
+    # day — the comparator would see a TE row for the data month
+    # with no agency vintage in the same bucket. Issue #49's
+    # value-side fetcher fills ``actual`` on the existing release-
+    # month rows; a follow-up slice realigns the reference anchor
+    # and then re-introduces the NBS agency declaration.
 )
 
 
