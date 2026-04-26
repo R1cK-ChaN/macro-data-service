@@ -481,6 +481,77 @@ _LISTING_LABEL_PATTERNS: dict[str, re.Pattern[str]] = {
 }
 
 
+_ECL_META_DATE_RE = re.compile(
+    r"\b(?P<day>\d{1,2})\s+(?P<month>[A-Za-z]+)\s+(?P<year>20\d{2})\b",
+)
+
+
+def _extract_meta_date(container: Any) -> date | None:
+    """Pull the authoritative release date from an ``ecl-file__detail-meta-item``.
+
+    The EU listing puts the canonical release date in
+    ``<li class="ecl-file__detail-meta-item">22 APRIL 2026</li>``. The
+    title text on the same card sometimes carries a typo year (the
+    January 2026 Flash CCI is labelled ``"22 January 2025"`` on the
+    live page) so we never trust title text for date equality —
+    metadata is the source of truth.
+    """
+    if container is None:
+        return None
+    meta = container.find(
+        class_=lambda c: bool(c) and "ecl-file__detail-meta-item" in c.split(),
+    )
+    if meta is None:
+        return None
+    match = _ECL_META_DATE_RE.search(meta.get_text(" ", strip=True))
+    if match is None:
+        return None
+    month_key = match.group("month").lower()
+    month = _MONTHS.get(month_key)
+    if month is None:
+        return None
+    try:
+        return date(int(match.group("year")), month, int(match.group("day")))
+    except ValueError:
+        return None
+
+
+def _anchor_card(anchor: Any) -> tuple[str, str, date | None]:
+    """Return ``(title, haystack, ecl_meta_date)`` for one listing anchor.
+
+    The current EU listing wraps each press release in a
+    ``<div class="ecl-file">`` widget where the anchor's nearest
+    ``<div>`` parent is ``ecl-file__action`` (carrying only the
+    "Download" link text). The title lives on a sibling
+    ``ecl-file__title`` div, the canonical release date on a
+    ``ecl-file__detail-meta-item`` list item, and the anchor itself
+    carries a ``data-untranslated-label`` mirror of the title.
+
+    We prefer ``data-untranslated-label`` for the title (most reliable,
+    present on the anchor itself), walk up to the outer ``ecl-file``
+    container so the haystack covers every sub-div, and pull the
+    metadata date out of that container so it can be compared exactly
+    against the requested ``release_date``. For legacy listings without
+    the ECL widget, ``ecl_meta_date`` is ``None`` and the resolver
+    falls back to the existing month/long-date matchers.
+    """
+    anchor_text = anchor.get_text(" ", strip=True)
+    label = str(anchor.get("data-untranslated-label") or "").strip()
+
+    ecl_container = anchor.find_parent(
+        class_=lambda c: bool(c) and "ecl-file" in c.split()
+    )
+    container = ecl_container or anchor.find_parent(
+        ["li", "article", "div", "tr", "p"],
+    ) or anchor
+    container_text = container.get_text(" ", strip=True)
+    title = label or anchor_text or container_text[:200]
+    haystack = " ".join(
+        part for part in (label, anchor_text, container_text) if part
+    )
+    return title, haystack, _extract_meta_date(ecl_container)
+
+
 def resolve_press_release_link(
     html: str | bytes,
     *,
@@ -504,23 +575,27 @@ def resolve_press_release_link(
         href = str(anchor.get("href") or "")
         if "/document/download/" not in href:
             continue
-        anchor_text = anchor.get_text(" ", strip=True)
-        container = anchor.find_parent(["li", "article", "div", "tr", "p"]) or anchor
-        container_text = container.get_text(" ", strip=True)
-        haystack = f"{anchor_text} {container_text}"
+        title, haystack, ecl_meta_date = _anchor_card(anchor)
         if not label_pattern.search(haystack):
             continue
-        if target_month.lower() not in haystack.lower():
-            # Some listings use "DD Month YYYY" without an isolated month-year token —
-            # accept either form.
+        if ecl_meta_date is not None:
+            # ECL widget present — trust the metadata date over any
+            # text in title or haystack. Live page sometimes carries a
+            # typo year in the title (Jan 2026 Flash CCI labelled
+            # "22 January 2025") while the metadata is correct.
+            if ecl_meta_date != release_date:
+                continue
+        elif target_month.lower() not in haystack.lower():
+            # Legacy listing — accept either "Month YYYY" or
+            # "DD Month YYYY" anywhere in the haystack.
             if target_long_date.lower() not in haystack.lower():
                 continue
         return EcBcsResolvedPressRelease(
-            title=anchor_text or container_text[:200],
+            title=title,
             release_date=release_date.isoformat(),
             series_id=series_id,
             source_url=urljoin(EC_BCS_BASE_URL, href),
-            raw={"listing_text": container_text[:1000]},
+            raw={"listing_text": haystack[:1000]},
         )
     raise EcBcsScheduleParseError(
         f"EC BCS press release not found for {series_id} on {release_date.isoformat()}"
