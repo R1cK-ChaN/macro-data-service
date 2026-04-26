@@ -17,6 +17,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock
 import pytest
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
 from ingestion.sdmx._errors import OECDAPIError, OECDRateLimitError
 from ingestion.sdmx.providers.oecd import OECDClient, OECDObservation, _build_decade_chunks
 from ingestion.sources import (
@@ -32,12 +36,8 @@ from ingestion.validation._types import (
     ValidationSeverity,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
-
 pytestmark = pytest.mark.integration
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _CLI_DATAFLOW = "DSD_STES@DF_CLI"
 _CLI_AGENCY = "OECD.SDD.STES"
 
