@@ -106,6 +106,75 @@ class DOLValueObservation:
 _NUM = r"(?:\d{1,3}(?:,\d{3})+|\d{4,})"
 
 
+_MONTHS: dict[str, int] = {
+    "january":  1,  "february":  2,  "march":     3,  "april":    4,
+    "may":      5,  "june":      6,  "july":      7,  "august":   8,
+    "september":9,  "october":  10,  "november": 11,  "december":12,
+}
+
+# "week ending April 18" / "week ending April 11" — the PDF
+# narrative carries the *real* reference week-ending date for each
+# indicator. Federal-holiday-shifted releases (Wed publication when
+# Thursday is closed) need this; subtracting a fixed 5/12 days from
+# the release date would land on the wrong Saturday.
+_INITIAL_WEEK_END_RE = re.compile(
+    r"In\s+the\s+week\s+ending\s+([A-Z][a-z]+)\s+(\d{1,2})\b",
+    re.IGNORECASE,
+)
+_CONTINUING_WEEK_END_RE = re.compile(
+    r"insured\s+unemployment\s+during\s+the\s+week\s+ending\s+"
+    r"([A-Z][a-z]+)\s+(\d{1,2})\b",
+    re.IGNORECASE,
+)
+
+
+def _resolve_year_for_month(release_date: date, month: int) -> int:
+    """Pick the year that places the parsed (month, day) before release.
+
+    Most weeks the release-date year applies trivially. The
+    December → January rollover is the edge case: a January 2 release
+    might reference "week ending December 27" — the prior calendar
+    year. Pick whichever year places the reference date at or before
+    the release date.
+    """
+    candidate = release_date.year
+    if month > release_date.month + 1:
+        # E.g. release in Jan, narrative says December → prior year.
+        candidate -= 1
+    return candidate
+
+
+def _week_ending_from_narrative(
+    text: str, indicator: str, release_date: date,
+) -> date | None:
+    """Pick the week-ending date out of the PDF narrative.
+
+    Returns ``None`` when the narrative phrasing doesn't match — the
+    caller falls back to the spec's ``reference_days_back`` offset
+    (always correct on a normal Thursday release).
+    """
+    pattern = (
+        _INITIAL_WEEK_END_RE if indicator == "INITIAL_CLAIMS"
+        else _CONTINUING_WEEK_END_RE
+    )
+    match = pattern.search(text)
+    if not match:
+        return None
+    month_name, day_raw = match.group(1).lower(), match.group(2)
+    month = _MONTHS.get(month_name)
+    if month is None:
+        return None
+    try:
+        day = int(day_raw)
+    except ValueError:
+        return None
+    year = _resolve_year_for_month(release_date, month)
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
 # Per-indicator extraction strategy. The PDF table is the most
 # stable source — fall back to the narrative if the table parse
 # misses (PDF text-extraction can drop spaces between cells).
@@ -179,9 +248,21 @@ def parse_press_release_pdf(
     release_date: date,
     source_url: str = "",
 ) -> DOLValueObservation:
-    """Build a :class:`DOLValueObservation` from extracted PDF text."""
+    """Build a :class:`DOLValueObservation` from extracted PDF text.
+
+    The reference week-ending date comes from the narrative
+    (``"In the week ending April 18 …"`` / ``"insured unemployment
+    during the week ending April 11"``) when the PDF parses cleanly,
+    falling back to the spec's ``reference_days_back`` offset.
+    Holiday-shifted Wednesday releases break the offset — the
+    narrative always reflects the actual week reported on.
+    """
     value = extract_press_release_value(text, spec)
-    reference_date = release_date - _days(spec.reference_days_back)
+    body = _normalise_pdf_text(text)
+    parsed_ref = _week_ending_from_narrative(body, spec.indicator, release_date)
+    reference_date = parsed_ref or (
+        release_date - _days(spec.reference_days_back)
+    )
     reference_label = f"week ending {reference_date.strftime('%B %-d, %Y')}"
     return DOLValueObservation(
         indicator=spec.indicator,
@@ -190,7 +271,7 @@ def parse_press_release_pdf(
         reference_label=reference_label,
         value=value,
         source_url=source_url,
-        raw={"text": _normalise_pdf_text(text)[:4000]},
+        raw={"text": body[:4000]},
     )
 
 

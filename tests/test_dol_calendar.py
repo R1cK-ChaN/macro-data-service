@@ -108,6 +108,30 @@ def test_continuing_claims_reference_lags_initial_by_one_week() -> None:
     assert obs.value == "1821000"
 
 
+def test_holiday_shifted_release_uses_narrative_week_ending(
+) -> None:
+    """When a federal holiday shifts publication off Thursday, the
+    days-back offset would land on the wrong Saturday. The PDF
+    narrative carries the real week-ending date — parse it directly
+    so ``reference_date`` (and the parity bucket key) stay correct."""
+    # Synthesize a release where DOL publishes Wednesday but
+    # references the same week as a normal Thursday release.
+    text = (
+        "In the week ending April 18, the advance figure for "
+        "seasonally adjusted initial claims was 214,000."
+        " "
+        "Initial Claims (SA) 214,000 208,000 +6,000 218,000 224,000"
+    )
+    spec = INDICATOR_REGISTRY["INITIAL_CLAIMS"]
+    obs = parse_press_release_pdf(
+        text, spec=spec,
+        release_date=date(2026, 4, 22),   # Wednesday holiday-shift
+        source_url="https://example/release",
+    )
+    # 22 - 5 = 17 (Friday) — wrong. Narrative says April 18 (Saturday).
+    assert obs.reference_date == "2026-04-18"
+
+
 # ── listing parse ────────────────────────────────────────────────
 
 
@@ -235,7 +259,39 @@ def test_dol_listed_in_value_side_connectors() -> None:
     )
     assert "dol" in ALL_CONNECTORS
     assert "dol" in ALL_VALUE_SIDE_CONNECTORS
-    assert "dol" in _VALUE_SIDE_DUE_ROW_FILTERS
+    # DOL writes rows post-publication, so it falls through to the
+    # hourly baseline rather than carrying a burst predicate
+    # (matches the ECB / EIA pattern documented in scheduler.py).
+    assert "dol" not in _VALUE_SIDE_DUE_ROW_FILTERS
+
+
+def test_dol_total_outage_trips_breaker(
+    store: SQLiteEngineStore,
+) -> None:
+    """When the listing parses entries but every PDF GET fails, the
+    scheduler must classify the run as a total outage so the breaker
+    cools the connector instead of hammering Akamai every sweep."""
+    from ingestion.calendar.scheduler import _summary_is_total_outage
+    from ingestion.calendar.dol_api.fetcher import FetchRunSummary
+    summary = FetchRunSummary(
+        listing_entries=4,
+        releases_failed=[("2026-04-23", "403"), ("2026-04-16", "403")],
+        observations_seen=0,
+    )
+    assert _summary_is_total_outage(summary) is True
+
+
+def test_dol_partial_failure_does_not_trip_breaker() -> None:
+    """One failed Thursday with the others still landing values must
+    keep the breaker counter clean — the source is reachable."""
+    from ingestion.calendar.scheduler import _summary_is_total_outage
+    from ingestion.calendar.dol_api.fetcher import FetchRunSummary
+    summary = FetchRunSummary(
+        listing_entries=4,
+        releases_failed=[("2026-04-16", "403")],
+        observations_seen=6,
+    )
+    assert _summary_is_total_outage(summary) is False
 
 
 def test_dol_agency_attribution_added_without_parity_whitelist() -> None:

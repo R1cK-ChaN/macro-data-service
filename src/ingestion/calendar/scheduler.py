@@ -449,6 +449,32 @@ def _summary_is_total_outage(summary: Any) -> bool:
     if series_failed and series_planned is not None:
         if not series_ok and len(series_failed) >= len(series_planned):
             return True
+    # EIA's summary uses ``indicators_planned`` / ``indicators_ok``
+    # in place of the BLS-style ``series_*`` names. Mirror the same
+    # all-failed shape so a complete EIA upstream outage trips the
+    # breaker instead of getting misread as a clean run.
+    indicators_planned = getattr(summary, "indicators_planned", None)
+    indicators_ok = getattr(summary, "indicators_ok", None)
+    if (
+        series_failed and indicators_planned is not None
+        and not indicators_ok
+        and len(series_failed) >= len(indicators_planned)
+    ):
+        return True
+    # DOL's summary records per-release outages in
+    # ``releases_failed``. A run where the listing parsed entries
+    # but every PDF GET 403'd / parse-failed wrote zero observations
+    # — the listing was reachable but the publisher / Akamai stack
+    # is down. Treat as a total outage so the breaker cools the
+    # connector instead of hammering it on every sweep.
+    listing_entries = getattr(summary, "listing_entries", None)
+    releases_failed = getattr(summary, "releases_failed", None)
+    if (
+        listing_entries is not None and listing_entries > 0
+        and observations_seen == 0
+        and releases_failed
+    ):
+        return True
     meetings_planned = getattr(summary, "meetings_planned", None)
     meetings_fetched = getattr(summary, "meetings_fetched", None)
     if (
@@ -811,8 +837,13 @@ _VALUE_SIDE_DUE_ROW_FILTERS: dict[ConnectorName, str] = {
     # through to the hourly baseline here is an explicit slice cap
     # — Issue #37 P2 candidate to add a separate trigger /
     # completion-row tracker for ECB.
-    "eia":                   "provider = 'eia'",
-    "dol":                   "provider = 'dol'",
+    # EIA + DOL intentionally absent — both connectors write rows
+    # only after the value is published (the API / press-release
+    # carries period + value together), so a pre-release schedule
+    # row never exists for the burst's "until ``actual`` lands"
+    # check to fire on. Falls through to the hourly baseline (same
+    # explicit slice cap as ECB above). Adding a release-time-based
+    # trigger that pre-seeds rows is the issue #37 P2 follow-up.
     "eurostat":              "provider = 'eurostat'",
     "destatis":              "provider = 'destatis'",
     "zew":                   "provider = 'zew'",

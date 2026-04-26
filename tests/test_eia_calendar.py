@@ -190,7 +190,38 @@ def test_eia_listed_in_scheduler_rosters() -> None:
     )
     assert "eia" in ALL_CONNECTORS
     assert "eia" in ALL_VALUE_SIDE_CONNECTORS
-    assert "eia" in _VALUE_SIDE_DUE_ROW_FILTERS
+    # EIA writes rows post-publication; falls through to the hourly
+    # baseline rather than carrying a burst predicate.
+    assert "eia" not in _VALUE_SIDE_DUE_ROW_FILTERS
+
+
+def test_eia_total_outage_trips_breaker() -> None:
+    """When every EIA series call fails, the scheduler must classify
+    the run as a total outage so the breaker cools the connector."""
+    from ingestion.calendar.scheduler import _summary_is_total_outage
+    from ingestion.calendar.eia_api.fetcher import FetchRunSummary
+    summary = FetchRunSummary(
+        indicators_planned=["CRUDE_OIL_STOCKS", "GASOLINE_STOCKS"],
+        indicators_ok=[],
+        series_failed=[
+            ("CRUDE_OIL_STOCKS", "504"),
+            ("GASOLINE_STOCKS", "504"),
+        ],
+        observations_seen=0,
+    )
+    assert _summary_is_total_outage(summary) is True
+
+
+def test_eia_partial_failure_does_not_trip_breaker() -> None:
+    from ingestion.calendar.scheduler import _summary_is_total_outage
+    from ingestion.calendar.eia_api.fetcher import FetchRunSummary
+    summary = FetchRunSummary(
+        indicators_planned=["CRUDE_OIL_STOCKS", "GASOLINE_STOCKS"],
+        indicators_ok=["CRUDE_OIL_STOCKS"],
+        series_failed=[("GASOLINE_STOCKS", "504")],
+        observations_seen=2,
+    )
+    assert _summary_is_total_outage(summary) is False
 
 
 def test_eia_agency_registered_with_empty_indicator_set() -> None:
