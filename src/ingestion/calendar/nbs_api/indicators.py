@@ -77,6 +77,16 @@ class NBSIndicatorSpec:
     # = ``"YYYY-QN"``. Determines how the projector anchors the event's
     # reference period on ``cal_econ_event``.
     reference_cadence: Literal["monthly", "quarterly"] = "monthly"
+    # Issue #49 — value-side fetcher.
+    # ``listing_title_fragment`` is the lower-cased substring the
+    # press-release listing carries (``"consumer price index in"``,
+    # ``"industrial producer price indexes in"``). The value-side
+    # resolver matches a listing row when its release-date + title
+    # contains this fragment. ``None`` means no value-side coverage —
+    # the indicator stays schedule-only (today: PMI / GDP / Manufacturing
+    # PMI / Non-Manufacturing PMI). When set, the indicator also
+    # appears in the value-fetch roster.
+    listing_title_fragment: str | None = None
 
 
 INDICATOR_REGISTRY: dict[str, NBSIndicatorSpec] = {
@@ -84,34 +94,41 @@ INDICATOR_REGISTRY: dict[str, NBSIndicatorSpec] = {
         indicator="CPI",
         country_code="CN",
         title="China Consumer Price Index",
-        unit="index",
+        # Issue #49 — value-side ships YoY %; old "index" reflected the
+        # schedule-only legacy where ``actual`` stayed NULL.
+        unit="percent_yoy",
         importance="high",
         category="Prices",
         label_fragment="consumer price index",
+        listing_title_fragment="consumer price index in",
     ),
     "PPI": NBSIndicatorSpec(
         indicator="PPI",
         country_code="CN",
         title="China Producer Price Index",
-        unit="index",
+        unit="percent_yoy",
         importance="high",
         category="Prices",
         # Matches NBS row "Monthly Report on Industrial Producer Price
         # Index"; intentionally NOT just "industrial" so it doesn't
         # collide with "Industrial Production Operation …".
         label_fragment="producer price index",
+        # Press-release listing uses the plural "Indexes" — keep the
+        # fragment short and stable.
+        listing_title_fragment="industrial producer price indexes in",
     ),
     "INDUSTRIAL_PRODUCTION": NBSIndicatorSpec(
         indicator="INDUSTRIAL_PRODUCTION",
         country_code="CN",
         title="China Industrial Production",
-        unit="index",
+        unit="percent_yoy",
         importance="high",
         category="Output",
         # Matches NBS row "Monthly Report on Industrial Production
         # Operation Above the Designated Size". "Operation" keeps
         # the match disjoint from the PPI row.
         label_fragment="industrial production operation",
+        listing_title_fragment="industrial production operation in",
     ),
     "FIXED_ASSET_INVESTMENT": NBSIndicatorSpec(
         indicator="FIXED_ASSET_INVESTMENT",
@@ -123,6 +140,9 @@ INDICATOR_REGISTRY: dict[str, NBSIndicatorSpec] = {
         # Matches NBS row "Monthly Report on Investment in Fixed Assets
         # (Excluding Rural Households)".
         label_fragment="investment in fixed assets",
+        # NBS publishes the FAI release with a "from January to <Month>"
+        # title shape (cumulative YTD). Match the stable opening only.
+        listing_title_fragment="investment in fixed assets from",
     ),
     "RETAIL_SALES": NBSIndicatorSpec(
         indicator="RETAIL_SALES",
@@ -136,6 +156,11 @@ INDICATOR_REGISTRY: dict[str, NBSIndicatorSpec] = {
         # doesn't collide with the CPI row because the CPI fragment
         # requires "price index" as well.
         label_fragment="retail sales of consumer goods",
+        # Listing carries either "in <Month>" or "from January to
+        # <Month>" depending on whether the release covers the
+        # single-month or YTD aggregate. The shared opening is enough
+        # to disambiguate from CPI / IP.
+        listing_title_fragment="total retail sales of consumer goods",
     ),
     "MANUFACTURING_PMI": NBSIndicatorSpec(
         indicator="MANUFACTURING_PMI",

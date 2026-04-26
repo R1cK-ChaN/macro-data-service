@@ -236,6 +236,13 @@ def project_schedule_events(
     ``reference_label`` on conflict only updates when the stored
     value is empty, and ``reference_date`` fills with ``COALESCE`` —
     the API-side reference shape is authoritative when present.
+
+    ``source_url`` preserves the value-side write when the stored
+    row already carries an ``actual``: a value-bearing row's URL
+    points at the press-release / API endpoint that produced the
+    number, and a later schedule re-scrape would otherwise rewrite
+    it back to the schedule-page / calendar URL — clobbering
+    provenance for callers reading ``cal_econ_event.source_url``.
     """
     now = _now_iso()
     changed = 0
@@ -292,7 +299,9 @@ def project_schedule_events(
                 importance           = excluded.importance,
                 unit                 = excluded.unit,
                 source               = excluded.source,
-                source_url           = excluded.source_url,
+                source_url           = CASE WHEN cal_econ_event.actual IS NOT NULL
+                                             THEN cal_econ_event.source_url
+                                             ELSE excluded.source_url END,
                 updated_at           = excluded.updated_at
                 -- observed_at_epoch_ms deliberately not updated on
                 -- conflict: it's the value-side freshness guard used

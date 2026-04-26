@@ -100,7 +100,7 @@ from .fed_api import (
 )
 from .ism_api import fetch_ism_calendar, schedule_ism_calendar
 from .nar_api import fetch_nar_calendar, schedule_nar_calendar
-from .nbs_api import fetch_nbs_calendar
+from .nbs_api import fetch_nbs_calendar, fetch_nbs_values
 from .umich_api import fetch_umich_calendar, schedule_umich_calendar
 from .scheduler_state import (
     DAILY_BUDGET_CAPS,
@@ -278,10 +278,12 @@ ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
 )
 
 
-# Value-side connector identifiers. NBS is absent — it has no
-# value-side op (the yearly calendar is schedule-only; per-release
-# value scraping for CPI / PPI / etc. is a future slice). Fed's FOMC
-# calendar doesn't belong here either — the value-bearing Fed op is
+# Value-side connector identifiers. ``nbs-values`` (issue #49) covers
+# CPI / PPI / Industrial Production / Fixed Asset Investment / Retail
+# Sales — PMI / GDP stay schedule-only because the English NBS press-
+# release listing doesn't carry PMI articles and GDP uses a table-
+# format parser deferred to P2. Fed's FOMC calendar doesn't belong
+# here either — the value-bearing Fed op is
 # ``fetch_fed_statement_values`` exposed as ``fed-values`` below.
 ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "bls",
@@ -303,6 +305,7 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "ine",
     "istat",
     "fed-values",
+    "nbs-values",
     "stat-bureau-jp-values",
     "boj-values",
     "boj-tankan-values",
@@ -793,6 +796,19 @@ _VALUE_SIDE_DUE_ROW_FILTERS: dict[ConnectorName, str] = {
     # series (Beige Book, H.4.1, H.8) ride on ``fed-releases``
     # schedule-side and stay ``actual IS NULL`` permanently.
     "fed-values":            "provider = 'federal-reserve' AND title LIKE 'FOMC Rate Decision%'",
+    # Issue #49 — five indicators with a press-release listing
+    # fragment registered in ``nbs_api.indicators``. PMI / GDP
+    # schedule rows still ship ``actual=NULL`` and stay outside the
+    # burst's completion check; the next quarterly slice extends
+    # coverage by adding ``listing_title_fragment`` + value patterns.
+    "nbs-values": (
+        "provider = 'nbs' AND title IN ("
+        "'China Consumer Price Index',"
+        "'China Producer Price Index',"
+        "'China Industrial Production',"
+        "'China Fixed Asset Investment',"
+        "'China Retail Sales')"
+    ),
     "stat-bureau-jp-values": "provider = 'stat-bureau-jp'",
     "boj-values":            "provider = 'boj' AND title = 'BoJ Interest Rate Decision'",
     "boj-tankan-values":     "provider = 'boj' AND title LIKE 'Tankan %'",
@@ -1122,6 +1138,13 @@ def sweep_value_side(
     def _meti_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         return fetch_meti_values(conn, dry_run=dry_run)
 
+    def _nbs_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # Auto-discovers past NBS schedule rows with ``actual IS NULL``
+        # and resolves each release's article URL on the public
+        # press-release listing. No year window — the listing's first
+        # page covers the burst window plus the daily catch-up.
+        return fetch_nbs_values(conn, dry_run=dry_run)
+
     value_side_map: dict[ConnectorName, _ConnectorFn] = {
         "bls":        _bls_values,
         "bea":        _bea_values,
@@ -1142,6 +1165,7 @@ def sweep_value_side(
         "ine":        _ine_values,
         "istat":      _istat_values,
         "fed-values": _fed_values,
+        "nbs-values": _nbs_values,
         "stat-bureau-jp-values": _stat_bureau_values,
         "boj-values": _boj_values,
         "boj-tankan-values": _boj_tankan_values,
