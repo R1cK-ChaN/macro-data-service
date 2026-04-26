@@ -11,7 +11,7 @@ from ingestion.calendar._official_shared import canonicalize_indicator
 from ingestion.calendar.meti_api import (
     fetch_meti_calendar,
     fetch_meti_values,
-    parse_iip_release_calendar_xml,
+    parse_iip_release_calendar_html,
     parse_iip_report_html,
     parse_retail_current_page_html,
     parse_retail_outline_text,
@@ -40,38 +40,44 @@ def _epoch_ms(value: str) -> int:
     return int(datetime.fromisoformat(value).timestamp() * 1000)
 
 
-def test_iip_release_calendar_xml_filters_preliminary_rows() -> None:
-    entries = parse_iip_release_calendar_xml(
-        _fixture("meti_iip/release_calendar.xml")
+def test_iip_release_calendar_html_filters_preliminary_rows() -> None:
+    entries = parse_iip_release_calendar_html(
+        _fixture("meti_iip/estat_release_calendar_2026.html")
     )
 
     assert [(e.reference_date, e.release_date) for e in entries] == [
         (date(2026, 2, 1), date(2026, 3, 31)),
         (date(2026, 3, 1), date(2026, 4, 30)),
+        (date(2026, 4, 1), date(2026, 5, 29)),
+        (date(2026, 5, 1), date(2026, 6, 30)),
     ]
     assert {e.indicator for e in entries} == {"INDUSTRIAL_PRODUCTION"}
     assert entries[0].release_time_local == "08:50"
+    assert entries[0].source_url.endswith("/00550300/202603310850")
 
 
-def test_iip_release_calendar_xml_ignores_parent_aggregate_text() -> None:
-    xml = """
-    <releaseCalendar>
-      <release>
-        <statistics>Indices of Industrial Production</statistics>
-        <reportType>Revised Report</reportType>
-        <referenceMonth>January 2026</referenceMonth>
-        <releaseDate>March 14, 2026</releaseDate>
-      </release>
-      <release>
-        <statistics>Indices of Industrial Production</statistics>
-        <reportType>Preliminary Report</reportType>
-        <referenceMonth>February 2026</referenceMonth>
-        <releaseDate>March 31, 2026</releaseDate>
-      </release>
-    </releaseCalendar>
+def test_iip_release_calendar_html_drops_final_and_revision_rows() -> None:
+    html = """
+    <html><body>
+      <span class="stat-announce-comment"
+            data-toukei_cd="00550300"
+            data-kensakuKouhyou_date="202603190850">
+        <a href="x">鉱工業生産・出荷・在庫指数 2026年(1月分 確報)</a>
+      </span>
+      <span class="stat-announce-comment"
+            data-toukei_cd="00550300"
+            data-kensakuKouhyou_date="202603310850">
+        <a href="x">鉱工業生産・出荷・在庫指数 2026年(2月分 速報)</a>
+      </span>
+      <span class="stat-announce-comment"
+            data-toukei_cd="00550300"
+            data-kensakuKouhyou_date="202604141330">
+        <a href="x">鉱工業生産・出荷・在庫指数 2026年(2月分 速報訂正)</a>
+      </span>
+    </body></html>
     """
 
-    entries = parse_iip_release_calendar_xml(xml)
+    entries = parse_iip_release_calendar_html(html)
 
     assert [(e.reference_date, e.release_date) for e in entries] == [
         (date(2026, 2, 1), date(2026, 3, 31)),
@@ -89,8 +95,8 @@ def test_retail_schedule_html_parses_next_release() -> None:
 
 
 def test_schedule_entry_projects_jst_release_time() -> None:
-    entry = parse_iip_release_calendar_xml(
-        _fixture("meti_iip/release_calendar.xml")
+    entry = parse_iip_release_calendar_html(
+        _fixture("meti_iip/estat_release_calendar_2026.html")
     )[0]
     raw, event = schedule_entry_to_records(entry, snapshot_epoch_ms=1)
 
@@ -137,15 +143,17 @@ def test_fetch_meti_calendar_projects_iip_and_retail_rows(
             conn,
             dry_run=False,
             snapshot_epoch_ms=_epoch_ms("2026-04-01T00:00:00+00:00"),
-            iip_xml_fetcher=lambda: _fixture("meti_iip/release_calendar.xml"),
+            iip_html_fetcher=lambda: _fixture(
+                "meti_iip/estat_release_calendar_2026.html"
+            ),
             retail_html_fetcher=lambda: _fixture("meti_retail/index.html"),
         )
         conn.commit()
     finally:
         conn.close()
 
-    assert summary.releases_parsed == 3
-    assert summary.events_upserted == 3
+    assert summary.releases_parsed == 5
+    assert summary.events_upserted == 5
     with store.get_connection() as conn:
         rows = conn.execute(
             """
@@ -169,6 +177,18 @@ def test_fetch_meti_calendar_projects_iip_and_retail_rows(
             None,
         ),
         (
+            "Industrial Production MoM Prel",
+            "2026-04-01",
+            "2026-05-28T23:50:00+00:00",
+            None,
+        ),
+        (
+            "Industrial Production MoM Prel",
+            "2026-05-01",
+            "2026-06-29T23:50:00+00:00",
+            None,
+        ),
+        (
             "Retail Sales YoY",
             "2026-03-01",
             "2026-04-29T23:50:00+00:00",
@@ -186,7 +206,9 @@ def test_fetch_meti_values_fills_iip_pending_and_current_retail(
             conn,
             dry_run=False,
             snapshot_epoch_ms=_epoch_ms("2026-04-01T00:00:00+00:00"),
-            iip_xml_fetcher=lambda: _fixture("meti_iip/release_calendar.xml"),
+            iip_html_fetcher=lambda: _fixture(
+                "meti_iip/estat_release_calendar_2026.html"
+            ),
             retail_html_fetcher=lambda: _fixture("meti_retail/index.html"),
         )
         conn.commit()

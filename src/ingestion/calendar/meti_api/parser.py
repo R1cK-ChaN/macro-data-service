@@ -10,10 +10,11 @@ PROVIDER = "meti"
 METI_RELEASE_TZ = "Asia/Tokyo"
 METI_IIP_RELEASE_TIME_LOCAL = "08:50"
 METI_RETAIL_RELEASE_TIME_LOCAL = "08:50"
-METI_IIP_RELEASE_CALENDAR_URL = (
-    "https://www.meti.go.jp/english/statistics/tyo/iip/yotei/xml/"
-    "e-stat_iip_e.xml"
+ESTAT_RELEASE_CALENDAR_URL = "https://www.e-stat.go.jp/release-calendar"
+ESTAT_RELEASE_CALENDAR_DETAIL_URL_TEMPLATE = (
+    "https://www.e-stat.go.jp/release-calendar/detail/{toukei_cd}/{stamp}"
 )
+ESTAT_IIP_TOUKEI_CD = "00550300"
 METI_IIP_RESULTS_INDEX_URL = (
     "https://www.meti.go.jp/english/statistics/tyo/iip/kako_press.html"
 )

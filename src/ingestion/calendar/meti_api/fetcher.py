@@ -31,9 +31,9 @@ from .reports import (
 )
 from .scraper import (
     MetiCalendarParseError,
-    fetch_iip_release_calendar_xml,
+    fetch_iip_release_calendar_html,
     fetch_retail_schedule_html,
-    parse_iip_release_calendar_xml,
+    parse_iip_release_calendar_html,
     parse_retail_schedule_html,
     schedule_entry_to_records,
 )
@@ -58,12 +58,16 @@ class FetchRunSummary:
     wall_seconds: float = 0.0
 
 
+_ESTAT_IIP_WINDOW_DAYS = 90
+_ESTAT_IIP_LOOKBACK_DAYS = 14
+
+
 def fetch_meti_calendar(
     connection: sqlite3.Connection,
     *,
     dry_run: bool = True,
     snapshot_epoch_ms: int | None = None,
-    iip_xml_fetcher: Callable[[], str] | None = None,
+    iip_html_fetcher: Callable[[], str] | None = None,
     retail_html_fetcher: Callable[[], str] | None = None,
 ) -> FetchRunSummary:
     """Scrape METI schedule surfaces and project schedule rows."""
@@ -83,11 +87,20 @@ def fetch_meti_calendar(
     event_records: list[MetiCalendarEventRecord] = []
 
     try:
-        xml_text = (iip_xml_fetcher or fetch_iip_release_calendar_xml)()
-        iip_entries = parse_iip_release_calendar_xml(xml_text)
+        if iip_html_fetcher is not None:
+            html_text = iip_html_fetcher()
+        else:
+            today = datetime.fromtimestamp(
+                snapshot / 1000, tz=timezone.utc,
+            ).date()
+            html_text = fetch_iip_release_calendar_html(
+                today - timedelta(days=_ESTAT_IIP_LOOKBACK_DAYS),
+                today + timedelta(days=_ESTAT_IIP_WINDOW_DAYS),
+            )
+        iip_entries = parse_iip_release_calendar_html(html_text)
         if not iip_entries:
             raise MetiCalendarParseError(
-                "METI IIP release calendar exposed zero preliminary rows"
+                "e-Stat IIP release calendar exposed zero preliminary rows"
             )
         for entry in iip_entries:
             raw, event = schedule_entry_to_records(

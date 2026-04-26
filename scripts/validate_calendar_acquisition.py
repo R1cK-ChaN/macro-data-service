@@ -157,11 +157,11 @@ from ingestion.calendar.nbs_api import (  # noqa: E402
     release_entry_to_records as nbs_release_entry_to_records,
 )
 from ingestion.calendar.meti_api import (  # noqa: E402
-    METI_IIP_RELEASE_CALENDAR_URL,
+    ESTAT_RELEASE_CALENDAR_URL,
     METI_RETAIL_PAGE_URL,
-    fetch_iip_release_calendar_xml,
+    fetch_iip_release_calendar_html,
     fetch_retail_schedule_html,
-    parse_iip_release_calendar_xml,
+    parse_iip_release_calendar_html,
     parse_retail_schedule_html,
     schedule_entry_to_records as meti_schedule_entry_to_records,
 )
@@ -2988,9 +2988,9 @@ def plan_meti_probes() -> list[Probe]:
     return [
         Probe(
             name="meti_iip_release_calendar",
-            path=METI_IIP_RELEASE_CALENDAR_URL,
-            description="METI IIP XML release calendar",
-            expected_shape="XML rows -> MetiScheduleEntry",
+            path=ESTAT_RELEASE_CALENDAR_URL,
+            description="e-Stat IIP release calendar (toukei_cd 00550300)",
+            expected_shape="HTML rows -> MetiScheduleEntry",
             params={"surface": "iip"},
         ),
         Probe(
@@ -3008,8 +3008,12 @@ def run_meti_probe(probe: Probe) -> ProbeResult:
     started = datetime.now(timezone.utc)
     try:
         if probe.name == "meti_iip_release_calendar":
-            xml_text = fetch_iip_release_calendar_xml()
-            entries = parse_iip_release_calendar_xml(xml_text)
+            today = started.date()
+            html_text = fetch_iip_release_calendar_html(
+                today - timedelta(days=14),
+                today + timedelta(days=90),
+            )
+            entries = parse_iip_release_calendar_html(html_text)
         elif probe.name == "meti_retail_schedule":
             html = fetch_retail_schedule_html()
             entries = [parse_retail_schedule_html(html)]
