@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 from ._official_shared import canonicalize_indicator
@@ -68,6 +68,32 @@ class ValueMismatch:
     note: str
 
 
+@dataclass(frozen=True)
+class LagAfterParity:
+    """First-release vintage exists but landed after the parity run.
+
+    Informational only — the value-side sweep was lagging the parity
+    cron, not a real drift. The filer skips these (no issue, no comment,
+    no clean-streak change) and the structured log records the count.
+
+    ``agency_actual`` is captured even though no drift is filed: it lets
+    the operator confirm from the structured log whether the late write
+    eventually matched TE. A late mismatch is logged but intentionally
+    not filed (per the issue spec) — the operator can re-run the
+    comparator with a later ``--now-utc`` if they want it to file.
+    """
+
+    country: str
+    canonical: str
+    reference_date: str | None
+    te_event_id: str
+    agency_event_id: str
+    agency_provider: str
+    te_actual: str
+    agency_actual: str | None
+    first_observed_at: str
+
+
 @dataclass
 class AgencyReport:
     agency_id: str
@@ -75,6 +101,7 @@ class AgencyReport:
     target_date: str
     missing: list[MissingRelease] = field(default_factory=list)
     mismatches: list[ValueMismatch] = field(default_factory=list)
+    lag_after_parity: list[LagAfterParity] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
@@ -83,6 +110,15 @@ class AgencyReport:
     @property
     def total_anomalies(self) -> int:
         return len(self.missing) + len(self.mismatches)
+
+    @property
+    def total_lag_after_parity(self) -> int:
+        return len(self.lag_after_parity)
+
+    @property
+    def empty(self) -> bool:
+        """True when no missing, mismatches, *or* lag rows are present."""
+        return self.clean and not self.lag_after_parity
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +187,24 @@ def _first_release_vintage(
     ).fetchone()
 
 
+def _parse_observed_at(observed_at: str | None) -> datetime | None:
+    """Parse a vintage ``observed_at`` ISO string to an aware UTC datetime.
+
+    Naive inputs are assumed UTC — vintage writers normalise to UTC before
+    inserting, so a missing offset is the legacy-row case rather than a
+    local-time leak.
+    """
+    if not observed_at:
+        return None
+    try:
+        parsed = datetime.fromisoformat(observed_at)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _bucket_key(reference_date: str | None) -> str | None:
     """Reduce reference_date to a YYYY-MM bucket so TE and agency rows
     that disagree on the day-component (TE uses end-of-month, BLS uses
@@ -169,16 +223,28 @@ def _bucket_key(reference_date: str | None) -> str | None:
 
 
 def compare_daily(
-    connection: sqlite3.Connection, *, target_date: date,
+    connection: sqlite3.Connection,
+    *,
+    target_date: date,
+    now_utc: datetime | None = None,
 ) -> list[AgencyReport]:
     """Run the full per-agency parity sweep for ``target_date``.
 
-    Empty ``[]`` when every agency is clean. Reports with anomalies are
-    included; clean agencies are dropped (the filer's clean-streak
-    bookkeeping is its own concern).
+    ``now_utc`` is the parity run wall-clock used to classify lagged
+    sweep writes (issue #38). When the earliest first-release vintage
+    for a candidate anomaly was ``observed_at > now_utc``, the row is
+    bucketed under ``lag_after_parity`` instead of ``mismatches`` and
+    the filer skips it. Defaults to ``datetime.now(UTC)``.
+
+    Empty ``[]`` when every agency has no missing/mismatch/lag rows.
+    Reports with anomalies *or* lag-only entries are returned so the
+    structured log can record both.
     """
     iso = target_date.isoformat()
     next_iso = date.fromordinal(target_date.toordinal() + 1).isoformat()
+    parity_run_time = (now_utc or datetime.now(timezone.utc)).astimezone(
+        timezone.utc,
+    )
 
     te_rows = connection.execute(
         """
@@ -197,8 +263,9 @@ def compare_daily(
         report = _compare_agency(
             connection, agency=agency, te_rows=te_rows,
             target_iso=iso, next_iso=next_iso,
+            parity_run_time=parity_run_time,
         )
-        if not report.clean:
+        if not report.empty:
             reports.append(report)
     return reports
 
@@ -210,6 +277,7 @@ def _compare_agency(
     te_rows: list[sqlite3.Row],
     target_iso: str,
     next_iso: str,
+    parity_run_time: datetime,
 ) -> AgencyReport:
     report = AgencyReport(
         agency_id=agency.agency_id, label=agency.label, target_date=target_iso,
@@ -271,6 +339,24 @@ def _compare_agency(
             provider=agency_row["provider"],
             event_id=agency_row["provider_event_id"],
         )
+        if first_release is not None:
+            observed_at = _parse_observed_at(first_release["observed_at"])
+            if observed_at is not None and observed_at > parity_run_time:
+                # Sweep landed the value after the parity cron fired —
+                # the parity check would have flagged drift on the live
+                # DB even though the data eventually arrived. Record
+                # the timing forensics and skip filing.
+                report.lag_after_parity.append(LagAfterParity(
+                    country=country, canonical=canonical,
+                    reference_date=te_row["reference_date"],
+                    te_event_id=te_row["provider_event_id"],
+                    agency_event_id=agency_row["provider_event_id"],
+                    agency_provider=agency_row["provider"],
+                    te_actual=te_row["actual"],
+                    agency_actual=first_release["actual"],
+                    first_observed_at=first_release["observed_at"],
+                ))
+                continue
         agency_actual = first_release["actual"] if first_release else None
 
         te_decimal = _normalise(te_row["actual"], alignment)
@@ -332,6 +418,7 @@ def _looks_like_clean_factor(te: Decimal, agency: Decimal) -> bool:
 
 __all__ = [
     "AgencyReport",
+    "LagAfterParity",
     "MissingRelease",
     "ValueMismatch",
     "compare_daily",
