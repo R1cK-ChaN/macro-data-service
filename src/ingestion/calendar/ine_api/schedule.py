@@ -164,7 +164,9 @@ def _section_rows_from_tables(html: str) -> dict[str, list[tuple[date, str, str]
     }
     current: str | None = None
     current_year: int | None = None
-    for node in soup.find_all(["h1", "h2", "h3", "h4", "caption", "p", "li", "tr"]):
+    for node in soup.find_all(
+        ["h1", "h2", "h3", "h4", "caption", "p", "li", "tr", "button"]
+    ):
         node_text = unicodedata.normalize(
             "NFKC", node.get_text(" ", strip=True),
         ).strip()
@@ -174,11 +176,18 @@ def _section_rows_from_tables(html: str) -> dict[str, list[tuple[date, str, str]
         year_match = re.search(r"calendario\s+(\d{4})", norm)
         if year_match:
             current_year = int(year_match.group(1))
+        node_name = getattr(node, "name", "")
+        is_publication_header = node_name == "button" and "tit" in (
+            node.get("class") or []
+        )
         section = _section_key(node_text)
         if section is not None:
             current = section
             continue
-        if current is None or getattr(node, "name", "") != "tr":
+        if is_publication_header:
+            current = None
+            continue
+        if current is None or node_name != "tr":
             continue
         cells = [
             unicodedata.normalize("NFKC", cell.get_text(" ", strip=True)).strip()
