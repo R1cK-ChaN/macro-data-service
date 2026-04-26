@@ -44,7 +44,7 @@ from ingestion.calendar.boj_api import (
     store_raw,
 )
 from ingestion.calendar.boj_api.parser import PROVIDER, _content_hash
-from ingestion.calendar.boj_api.statements import build_statement_url
+from ingestion.calendar.boj_api.statements import build_statement_index_url
 from storage.sqlite import SQLiteEngineStore
 
 
@@ -334,7 +334,10 @@ def test_statement_value_writes_actual_with_two_decimals() -> None:
         value, snapshot_epoch_ms=1_700_000_000,
     )
     assert event.actual == "0.50"
-    assert event.source_url == build_statement_url(date(2025, 3, 19))
+    # Without a discovered URL, the projection anchors on the per-year
+    # index (the only stable entry point now that BoJ migrated some
+    # meetings to PDFs at a sister path).
+    assert event.source_url == build_statement_index_url(2025)
 
 
 # ──────────────────────────────────────────────────────────────────────────

@@ -39,8 +39,9 @@ from .scraper import (
 )
 from .statements import (
     BojStatementParseError,
-    fetch_statement_html,
-    parse_statement_html,
+    BojStatementUrlNotFoundError,
+    StatementValue,
+    fetch_statement,
     statement_value_to_records,
 )
 
@@ -183,7 +184,7 @@ def fetch_boj_statement_values(
     dry_run: bool = True,
     snapshot_epoch_ms: int | None = None,
     closing_dates: list[date] | None = None,
-    html_fetcher: Callable[[date], str] | None = None,
+    statement_fetcher: Callable[..., StatementValue] | None = None,
 ) -> StatementValuesRunSummary:
     """Scrape BoJ statement pages and fill ``actual`` on existing rows.
 
@@ -214,27 +215,36 @@ def fetch_boj_statement_values(
         summary.wall_seconds = time.monotonic() - started
         return summary
 
-    fetcher = html_fetcher or fetch_statement_html
+    # Per-year statement-index lookups are cached across the burst loop
+    # so a 30-attempt sweep on one connector doesn't re-fetch the index
+    # for every closing date. The cache is wired only into the default
+    # `fetch_statement` so user-supplied fetchers (manual replays,
+    # execute-mode tests) keep their simple `(closing_date) -> StatementValue`
+    # shape and aren't broken by an extra keyword.
+    if statement_fetcher is None:
+        index_cache: dict[int, dict[str, str]] = {}
+        def fetcher(closing: date) -> StatementValue:
+            return fetch_statement(closing, index_cache=index_cache)
+    else:
+        fetcher = statement_fetcher
     raw_records: list[BojCalendarRawRecord] = []
     event_records: list[BojCalendarEventRecord] = []
     for closing in planned:
         try:
-            html = fetcher(closing)
+            value = fetcher(closing)
+        except (BojStatementUrlNotFoundError, BojStatementParseError) as exc:
+            logger.warning(
+                "BoJ statement parse failed for %s: %s",
+                closing.isoformat(), exc,
+            )
+            summary.parse_failures.append((closing.isoformat(), str(exc)))
+            continue
         except Exception as exc:
             logger.warning(
                 "BoJ statement fetch failed for %s: %s",
                 closing.isoformat(), exc,
             )
             summary.fetch_failures.append((closing.isoformat(), str(exc)))
-            continue
-        try:
-            value = parse_statement_html(html, closing_date=closing)
-        except BojStatementParseError as exc:
-            logger.warning(
-                "BoJ statement parse failed for %s: %s",
-                closing.isoformat(), exc,
-            )
-            summary.parse_failures.append((closing.isoformat(), str(exc)))
             continue
         raw_rec, event_rec = statement_value_to_records(
             value, snapshot_epoch_ms=snapshot,

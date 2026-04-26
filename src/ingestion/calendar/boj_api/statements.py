@@ -1,9 +1,17 @@
 """Scrape BoJ statement pages for the policy-rate decision.
 
-Each MPM publishes a statement on closing day at
-``boj.or.jp/en/mopo/mpmdeci/state_<YYYY>/k<YYMMDD>a.htm``. The
-statement's policy paragraph names the new target for the
-uncollateralized overnight call rate in a stable sentence::
+The statement URL has two shapes (BoJ migrated newer meetings to PDFs
+during late 2025; older meetings remain HTML):
+
+- ``boj.or.jp/en/mopo/mpmdeci/state_<YYYY>/k<YYMMDD>a.htm`` (legacy)
+- ``boj.or.jp/en/mopo/mpmdeci/mpr_<YYYY>/k<YYMMDD>a.pdf`` (current)
+
+The per-year index page ``state_<YYYY>/index.htm`` lists the canonical
+URL for every meeting that year, mixing both shapes. We discover the
+URL through that index instead of templating, then dispatch on the URL
+suffix to the HTML or PDF parser.
+
+Both shapes carry the same policy-rate sentence::
 
     "The Bank will encourage the uncollateralized overnight call
      rate to remain at around 0.5 percent."
@@ -16,14 +24,14 @@ numeric rate only; direction ("hold" vs "hike" vs "cut") belongs to
 a downstream diff against the previous MPM's rate, not to the
 sentence itself.
 
-Fetch + parse + project are separable: tests feed fixture HTML to
-:func:`parse_statement_html`; live callers drive
-:func:`fetch_statement_html` (reuses the schedule-scraper browser-UA
-header bundle — ``boj.or.jp`` 403s on the default python-requests UA).
-:func:`statement_value_to_records` emits a ``(raw, event)`` tuple
-whose ``provider_event_id`` matches the schedule-side write exactly
-(same closing-date ISO anchor), so the ``actual`` value upserts onto
-the existing row via the shared projector's merge CASE.
+Fetch + parse + project are separable: tests feed fixture HTML / PDF
+bytes to :func:`parse_statement_html` / :func:`parse_statement_pdf`;
+live callers drive :func:`fetch_statement` (which discovers the URL
+via the per-year index and returns the source URL plus the parsed
+value). :func:`statement_value_to_records` emits a ``(raw, event)``
+tuple whose ``provider_event_id`` matches the schedule-side write
+exactly (same closing-date ISO anchor), so the ``actual`` value
+upserts onto the existing row via the shared projector's merge CASE.
 """
 
 from __future__ import annotations
@@ -32,9 +40,14 @@ import hashlib
 import json
 import logging
 import re
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Any
+from io import BytesIO
+from typing import Any, Callable
+from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -57,13 +70,25 @@ from .scraper import _BOJ_BROWSER_HEADERS
 
 logger = logging.getLogger(__name__)
 
-BOJ_STATEMENT_URL_TEMPLATE = (
-    "https://www.boj.or.jp/en/mopo/mpmdeci/state_{year}/k{yymmdd}a.htm"
+BOJ_STATEMENT_INDEX_URL_TEMPLATE = (
+    "https://www.boj.or.jp/en/mopo/mpmdeci/state_{year}/index.htm"
+)
+
+# Statement file basename: ``k<YYMMDD>a.{htm,pdf}``. The two-digit year
+# matches the closing date's two-digit year (BoJ won't recycle these
+# until 2100), so a per-year index lookup is unambiguous.
+_STATEMENT_HREF_RE = re.compile(
+    r"k(?P<yymmdd>\d{6})a\.(?P<ext>htm|pdf)\b",
+    re.IGNORECASE,
 )
 
 
 class BojStatementParseError(Exception):
     """Statement page didn't carry a parseable policy-rate sentence."""
+
+
+class BojStatementUrlNotFoundError(Exception):
+    """Per-year index didn't carry a link for the requested closing date."""
 
 
 @dataclass(frozen=True)
@@ -89,14 +114,80 @@ class StatementValue:
     rate: float
     rate_text: str
     release_time_local: str | None = None
+    source_url: str | None = None
 
 
-def build_statement_url(closing_date: date) -> str:
-    """Construct the statement URL for a given MPM closing date."""
-    return BOJ_STATEMENT_URL_TEMPLATE.format(
-        year=closing_date.strftime("%Y"),
-        yymmdd=closing_date.strftime("%y%m%d"),
-    )
+def build_statement_index_url(year: int) -> str:
+    """Per-year index URL listing every meeting's statement link."""
+    return BOJ_STATEMENT_INDEX_URL_TEMPLATE.format(year=year)
+
+
+def parse_statement_index(html: str, *, year: int) -> dict[str, str]:
+    """Map ``YYMMDD`` → absolute statement URL for one per-year index page.
+
+    The index lists each meeting's statement link as either ``.htm``
+    (legacy) or ``.pdf`` (current); both shapes encode the closing date
+    as ``k<YYMMDD>a``. We collect every distinct match the page carries
+    and return it keyed by the date stem.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    base = build_statement_index_url(year)
+    found: dict[str, str] = {}
+    for anchor in soup.find_all("a", href=True):
+        href = str(anchor.get("href") or "")
+        match = _STATEMENT_HREF_RE.search(href)
+        if match is None:
+            continue
+        stem = match.group("yymmdd")
+        # The first match for a date wins — the index sometimes carries
+        # the same statement linked from multiple cells (e.g. a
+        # "[PDF]" suffix link plus an icon link); both resolve to the
+        # same target.
+        found.setdefault(stem, urljoin(base, href))
+    return found
+
+
+def discover_statement_url(
+    closing_date: date,
+    *,
+    session: requests.Session | None = None,
+    timeout: float = 30.0,
+    index_cache: dict[int, dict[str, str]] | None = None,
+) -> str:
+    """Look up the canonical statement URL for one MPM closing date.
+
+    ``index_cache`` is shared across the burst loop / sweep so a 30-attempt
+    burst on one connector doesn't re-fetch the per-year index on every
+    attempt. Pass ``{}`` (a fresh dict) once per sweep and reuse the same
+    object across calls.
+    """
+    year = closing_date.year
+    cache = index_cache if index_cache is not None else {}
+    if year not in cache:
+        owned_session = session is None
+        s = session or requests.Session()
+        try:
+            response = s.get(
+                build_statement_index_url(year),
+                headers=_BOJ_BROWSER_HEADERS,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            cache[year] = parse_statement_index(
+                response.content.decode("utf-8"), year=year,
+            )
+        finally:
+            if owned_session:
+                s.close()
+    stem = closing_date.strftime("%y%m%d")
+    url = cache[year].get(stem)
+    if url is None:
+        raise BojStatementUrlNotFoundError(
+            f"BoJ {year} statement index has no entry for "
+            f"closing_date={closing_date.isoformat()} "
+            f"(stem k{stem}a)"
+        )
+    return url
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -141,19 +232,12 @@ _RELEASE_TIME_RE = re.compile(
 )
 
 
-def parse_statement_html(html: str, closing_date: date) -> StatementValue:
-    """Extract the policy-rate target from a BoJ statement page.
-
-    Raises :class:`BojStatementParseError` if no policy-rate sentence
-    is found — upstream drift must surface loudly rather than silently
-    emit a ``None`` value onto an existing schedule row.
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    text = _normalize(soup.get_text(separator=" "))
+def _parse_normalized_text(text: str, closing_date: date) -> StatementValue:
+    """Run the policy-rate / release-time regexes against normalized text."""
     match = _POLICY_RATE_RE.search(text)
     if match is None:
         raise BojStatementParseError(
-            "policy-rate sentence not found on BoJ statement page "
+            "policy-rate sentence not found on BoJ statement "
             f"(closing_date={closing_date.isoformat()})"
         )
     rate_text = match.group("rate")
@@ -169,32 +253,122 @@ def parse_statement_html(html: str, closing_date: date) -> StatementValue:
     )
 
 
+def parse_statement_html(html: str, closing_date: date) -> StatementValue:
+    """Extract the policy-rate target from a BoJ statement HTML page.
+
+    Raises :class:`BojStatementParseError` if no policy-rate sentence
+    is found — upstream drift must surface loudly rather than silently
+    emit a ``None`` value onto an existing schedule row.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    text = _normalize(soup.get_text(separator=" "))
+    return _parse_normalized_text(text, closing_date)
+
+
+def _extract_pdf_text(data: bytes) -> str:
+    """Extract layout-preserving text from a BoJ statement PDF.
+
+    Prefers ``pdftotext -layout`` (clean output for the policy-rate
+    sentence); falls back to ``pypdf`` with a whitespace-repair pass
+    that re-joins word-internal breaks ``pypdf`` inserts in BoJ PDFs
+    (``"uncollateralize d"`` → ``"uncollateralized"``, ``"0. 75"`` →
+    ``"0.75"``). Both passes feed the same regex downstream.
+    """
+    errors: list[str] = []
+    if shutil.which("pdftotext"):
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
+                tmp.write(data)
+                tmp.flush()
+                completed = subprocess.run(
+                    ("pdftotext", "-layout", tmp.name, "-"),
+                    check=False,
+                    capture_output=True,
+                    timeout=30.0,
+                )
+                if completed.returncode == 0 and completed.stdout.strip():
+                    return completed.stdout.decode("utf-8", errors="replace")
+                stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+                errors.append(f"pdftotext exited {completed.returncode}: {stderr}")
+        except Exception as exc:  # pragma: no cover — environment specific
+            # Restricted temp-dirs (read-only /tmp, locked-down sandboxes)
+            # raise from `NamedTemporaryFile` before subprocess.run is
+            # invoked. Recording the error and falling through lets the
+            # in-memory pypdf path still produce a usable extraction.
+            errors.append(f"pdftotext: {type(exc).__name__}: {exc}")
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(BytesIO(data))
+        raw = "\n".join(page.extract_text() or "" for page in reader.pages)
+        if raw.strip():
+            # Repair pypdf's word-internal whitespace before the regex
+            # tries to match. The two patterns cover the failures we see
+            # on BoJ statements: a digit-period-space-digit decimal split
+            # ("0. 75") and a single space inside an English word
+            # ("uncollateralize d").
+            repaired = re.sub(r"(\d)\s*\.\s*(\d)", r"\1.\2", raw)
+            repaired = re.sub(r"([a-z])\s([a-z]\b)", r"\1\2", repaired)
+            return repaired
+        errors.append("pypdf extracted empty text")
+    except Exception as exc:  # pragma: no cover — depends on optional wheel
+        errors.append(f"pypdf: {type(exc).__name__}: {exc}")
+    detail = "; ".join(errors) if errors else "pdftotext/pypdf unavailable"
+    raise BojStatementParseError(f"could not extract BoJ PDF text: {detail}")
+
+
+def parse_statement_pdf(data: bytes, closing_date: date) -> StatementValue:
+    """Extract the policy-rate target from a BoJ statement PDF."""
+    text = _normalize(_extract_pdf_text(data))
+    return _parse_normalized_text(text, closing_date)
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # HTTP fetch
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def fetch_statement_html(
+def fetch_statement(
     closing_date: date,
     *,
     session: requests.Session | None = None,
     timeout: float = 30.0,
-) -> str:
-    """GET the BoJ statement page for a given MPM closing date.
+    index_cache: dict[int, dict[str, str]] | None = None,
+) -> StatementValue:
+    """Discover, fetch, and parse one BoJ MPM statement.
 
-    Reuses the browser-UA header bundle from :mod:`.scraper` — the
-    same UA works for every ``boj.or.jp`` page.
+    Resolves the canonical URL through the per-year index (cached via
+    ``index_cache`` so a 30-attempt burst doesn't re-fetch it on every
+    pass), GETs the document, and dispatches to the HTML or PDF parser
+    based on the URL suffix.
     """
-    url = build_statement_url(closing_date)
     owned_session = session is None
     s = session or requests.Session()
     try:
+        url = discover_statement_url(
+            closing_date,
+            session=s,
+            timeout=timeout,
+            index_cache=index_cache,
+        )
         response = s.get(url, headers=_BOJ_BROWSER_HEADERS, timeout=timeout)
         response.raise_for_status()
-        return response.content.decode("utf-8")
+        if url.lower().endswith(".pdf"):
+            value = parse_statement_pdf(response.content, closing_date)
+        else:
+            value = parse_statement_html(
+                response.content.decode("utf-8"), closing_date,
+            )
     finally:
         if owned_session:
             s.close()
+    return StatementValue(
+        closing_date=value.closing_date,
+        rate=value.rate,
+        rate_text=value.rate_text,
+        release_time_local=value.release_time_local,
+        source_url=url,
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -258,7 +432,13 @@ def statement_value_to_records(
     )
 
     actual = _format_rate(value.rate)
-    statement_url = build_statement_url(value.closing_date)
+    # The discovered URL travels on the value through `fetch_statement`;
+    # callers that synthesise a value directly (test fixtures) leave it
+    # unset and we anchor on the per-year index URL instead so the raw
+    # row keeps a real BoJ link.
+    statement_url = value.source_url or build_statement_index_url(
+        value.closing_date.year,
+    )
     reference_label = value.closing_date.strftime("%B %Y")
 
     payload: dict[str, Any] = {
