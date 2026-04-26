@@ -111,3 +111,97 @@ and request limits. Backfill runs should use small request budgets and rely on
 Forward official-source connectors should prioritize stable machine-readable
 interfaces. Scraped institution pages should store selector/version metadata
 when the source publishes HTML pages.
+
+## Directory Map
+
+```
+calendar/
+  scheduler.py            — recurring-schedule + value-side refresh
+                            driver across all official-source providers.
+                            Owns the circuit breaker, daily request
+                            budget, and per-connector cooldown logic.
+  scheduler_state.py      — typed dataclasses + state primitives the
+                            scheduler reads/writes against
+                            cal_connector_state.
+  parity.py               — TE-vs-official cross-provider parity harness
+                            (issue #9 P6).
+  parity_daily.py         — daily TE-vs-official parity comparator
+                            (issue #22 P3) — pure computation, caller
+                            owns the connection.
+  parity_filer.py         — agency-attribution writer that turns parity
+                            diffs into reviewable filings.
+  agency_registry.py      — agency attribution map for the daily parity
+                            tripwire.
+  evidence_archive.py     — long-term evidence store for parity findings.
+  _official_shared/       — utilities every official-source connector
+                            reuses: canonicalize_indicator, event-id
+                            synthesis, release-time DST handling, and
+                            the shared projector helpers.
+
+  te_api/                 — TradingEconomics historical bootstrap.
+  eodhd_api/              — EODHD corporate-actions feed.
+  <provider>_api/         — one directory per official source. 27 today:
+                            BEA, BLS, BoJ, BoJ Tankan, CAO, CAO GDP,
+                            Census, Conference Board, Destatis, EC BCS,
+                            ECB, Eurostat, Fed, GfK, HCOB, IFO, INE,
+                            INSEE, ISM, ISTAT, METI, MoF, NAR, NBS,
+                            Stat Bureau JP, U Michigan, ZEW.
+                            (Plus te_api + eodhd_api = 29 *_api/ dirs
+                            total under this directory.)
+  scrapers/               — shared scraping helpers used across multiple
+                            providers (e.g. PDF / HTML readers).
+```
+
+Each `<provider>_api/` directory follows the same internal pattern
+(seeded by the `_official_shared/` utilities):
+
+```
+<provider>_api/
+  __init__.py    — provider registry hook (provider_id, type, precedence)
+  client.py      — transport (auth, rate-limit, retry). Optional —
+                   some providers have transport mixed into scraper.py.
+  parser.py      — upstream payload → CalendarEventRecord projection.
+  projector.py   — writes cal_econ_raw revisions + cal_econ_event upsert.
+  fetcher.py     — value-side: pull observed values for past releases.
+  schedule.py    — schedule-side: enumerate forthcoming releases.
+  indicators.py  — provider-specific indicator alias / enum tables.
+```
+
+Variants exist where the upstream surface differs (Fed has a separate
+`releases.py` + `statements.py`; ISM has only schedule-side because the
+value pulls from a single current-report page).
+
+## Where to add a new provider
+
+1. Create `src/ingestion/calendar/<name>_api/` and add the
+   `__init__.py` registry hook seeding `cal_provider` at
+   `precedence=100` (above TE's `10`).
+
+2. Build `parser.py` against the upstream payload using
+   `_official_shared.canonicalize_indicator` for the indicator label and
+   `_official_shared.synthesize_event_id` for `provider_event_id`.
+
+3. Wire `fetcher.py` (value side) and `schedule.py` (forward side)
+   through the shared `_official_shared.projector` helpers so revisions
+   land in `cal_econ_raw` and the latest projection upserts into
+   `cal_econ_event`.
+
+4. Register the connector in `src/ingestion/calendar/scheduler.py` so
+   the recurring driver picks it up — both schedule-side and
+   value-side rosters.
+
+5. Add service ops `calendar_econ_fetch_<name>` and
+   `calendar_econ_schedule_<name>` to
+   `src/macro_data/service/_calendar.py` (see that file's README for
+   the op-naming convention).
+
+6. Add a probe to `scripts/validate_calendar_acquisition.py` and the
+   matching `--provider <name>` runner branch so the live-validator
+   covers the new source.
+
+7. Tests: per-provider scaffold tests live in `tests/test_<name>_*`.
+   Mirror the pattern from a similar existing provider (e.g. BLS for
+   government-agency-style sources, ECB for SDMX-style sources, ISM
+   for HTML-scrape current-report sources).
+
+8. Update `docs/architecture.md` with the new provider entry.

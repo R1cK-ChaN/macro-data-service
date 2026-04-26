@@ -103,6 +103,7 @@ class SourceCapabilityManager:
     def _is_customer_visible(self, source_id: str) -> bool:
         return source_id not in {"ilo", "unsd"}
 
+    # ── Public capability + entity API ─────────────────────────────────
     def list_capabilities(self, *, include_internal: bool = True) -> list[dict[str, Any]]:
         self.seed_registry()
         items = self._store.list_source_capabilities()
@@ -300,6 +301,7 @@ class SourceCapabilityManager:
                 "duration_ms": duration_ms,
             }
 
+    # ── Status / health reporting ──────────────────────────────────────
     def get_status(self, source_id: str | None = None, *, include_internal: bool = True) -> dict[str, Any]:
         capabilities = (
             [self._store.get_source_capability(source_id)] if source_id else self.list_capabilities(include_internal=include_internal)
@@ -425,6 +427,7 @@ class SourceCapabilityManager:
             "calendar_connectors": calendar_block["connectors"],
         }
 
+    # ── Calendar connector health helpers ──────────────────────────────
     def _calendar_connectors_block(self) -> dict[str, Any]:
         """Read calendar-scheduler state and classify each connector.
 
@@ -504,6 +507,7 @@ class SourceCapabilityManager:
             "failing": failing,
         }
 
+    # ── Internal adapter management ────────────────────────────────────
     def _require_adapter(self, source_id: str) -> SourceCapabilityAdapter:
         adapter = self._adapters.get(source_id)
         if adapter is None:

@@ -56,7 +56,7 @@ the resolution layer.
 | **Sources** | ~25 upstream APIs / RSS feeds / HTML endpoints | Raw data |
 | **Ingestion** | `src/ingestion/` | Fetch, normalize, validate, write |
 | **Storage** | `src/storage/sqlite.py` (8.8k lines, ~60 tables) | Canonical persistence |
-| **Resolution** | `src/macro_data/service.py` + storage helpers | Cross-source ranking, PIT queries, unified views |
+| **Resolution** | `src/macro_data/service/` + storage helpers | Cross-source ranking, PIT queries, unified views |
 | **Service** | `src/macro_data/cli.py`, `server.py` | CLI + HTTP boundary |
 | **RAG sidecar** | `src/rag/` | Local semantic index + retrieval (Milvus optional) |
 
@@ -275,7 +275,14 @@ src/
     timeseries/, news/, documents/, trends/, market/, calendar/  One dir per domain
     _shared/                http_transport, url_canon, selector versioning
   macro_data/
-    service.py              LocalMacroDataService — the one interface downstream reads
+    service/                LocalMacroDataService — the one interface downstream reads
+      base.py               __init__, invoke router, _ensure_* one-shot seeders
+      _calendar.py          calendar econ + corp ops + event_to_dict
+      _timeseries.py        indicator/catalog/concept/release/surprise/fed-comm ops
+      _documents.py         document feed + cross-type list_items
+      _news.py              news + trends + article fetcher
+      _market.py            market snapshot + live-markets fetcher
+      _ops_health.py        refresh-all/run-schedule/source listing/health/alerts
     cli.py, server.py       Thin boundaries
     factory.py, client.py   Wiring + programmatic access
   rag/                      Local RAG (see src/rag/README.md)

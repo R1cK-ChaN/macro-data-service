@@ -348,6 +348,7 @@ class IngestionOrchestrator:
             raise KeyError(f"unknown ingestion source: {source}")
         return self._run_definition(definition)
 
+    # ── Default source registration ───────────────────────────────────
     def _register_default_sources(self) -> None:
         definitions = [
             self._build_calendar_source(),
@@ -568,6 +569,7 @@ class IngestionOrchestrator:
             store=self._store_indicator_observations,
         )
 
+    # ── Per-domain source builders ────────────────────────────────────
     def _build_calendar_source(self) -> IngestionSourceDefinition:
         return IngestionSourceDefinition(
             name="calendar",
@@ -1085,6 +1087,7 @@ class IngestionOrchestrator:
             except Exception:
                 pass  # sanity checks must never block ingestion
 
+    # ── Public refresh ops ────────────────────────────────────────────
     def refresh_calendar(self) -> dict[str, int]:
         return self.run_source("calendar").to_counts()
 
@@ -1158,6 +1161,7 @@ class IngestionOrchestrator:
             results.update(self.run_source(source).to_counts())
         return results
 
+    # ── Capability + catalog surface ──────────────────────────────────
     def list_source_capabilities(self, *, include_internal: bool = True) -> list[dict[str, Any]]:
         self._ensure_capability_manager()
         return self._capability_manager.list_capabilities(include_internal=include_internal)
@@ -1464,6 +1468,7 @@ class IngestionOrchestrator:
             reports.append(report)
         return reports
 
+    # ── Status / health / alerts ──────────────────────────────────────
     def get_schedule_status(self) -> list[dict[str, Any]]:
         """Return schedule status for all concepts (for CLI --show)."""
         self.store.seed_release_schedules()

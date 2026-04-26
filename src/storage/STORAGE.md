@@ -577,6 +577,52 @@ The HTML-scraped live refresh path is retired; legacy read helpers use
 `cal_econ_event`, and new consumers read `v_calendar_item` through
 `GET /v1/calendar`.
 
+## Record Dataclasses (`storage/models/`)
+
+Issue #58 Tier 2.1A extracted 40 frozen record dataclasses out of
+`sqlite.py` into per-domain submodules under `src/storage/models/`. Each
+file groups records by the bounded context they belong to:
+
+```
+storage/models/
+  __init__.py     — re-exports every record name; backwards-compatible.
+  analytical.py   — RegimeSnapshotRecord, GeneratedNoteRecord,
+                    AnalyticalObservationRecord, ResearchArtifactRecord.
+  calendar.py     — StoredEventRecord, CalendarIndicatorRecord,
+                    CalendarIndicatorAliasRecord,
+                    CalendarEventVintageRecord.
+  documents.py    — DocSourceRecord, DocReleaseFamilyRecord,
+                    DocumentRecord, DocumentBlobRecord,
+                    DocumentExtraRecord.
+  indicator.py    — IndicatorObservationRecord, IndicatorVintageRecord,
+                    ObsSourceRecord, ObsFamilyRecord,
+                    ObsFamilyDocumentRecord, ConceptMapRecord,
+                    ResolvedObservation, ReleaseScheduleRecord,
+                    ReleaseStatusRecord, CentralBankCommunicationRecord.
+  market.py       — MarketPriceRecord, MarketInstrumentRecord,
+                    MarketSymbolHistoryRecord, MarketPriceBarRecord.
+  messaging.py    — ClientProfileRecord, ConversationMessageRecord,
+                    DeliveryQueueRecord, GroupProfileRecord,
+                    GroupMemberRecord, GroupMessageRecord.
+  news.py         — NewsArticleRecord, TrendTopicRecord.
+  trading.py      — TradeSignalRecord, DecisionLogRecord,
+                    PositionStateRecord, PerformanceRecord,
+                    TradingArtifactRecord.
+```
+
+`storage.sqlite` re-exports every record name, so existing imports
+(`from storage.sqlite import StoredEventRecord`) keep working
+unchanged. New consumers should prefer the per-domain import path
+(`from storage.models.calendar import StoredEventRecord`) for tighter
+dependency surfaces and to avoid pulling the full `EngineStore`
+graph for record-only use cases.
+
+When adding a new record, drop it into the matching per-domain file
+and append the name to both the file's `__all__` (if present) and the
+re-export block in `storage/models/__init__.py`. Keep records frozen
+(`@dataclass(frozen=True)`) and leave all DDL / write helpers in
+`sqlite.py`.
+
 ## Running Tests
 
 ```bash
