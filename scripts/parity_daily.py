@@ -147,9 +147,11 @@ def main(argv: list[str] | None = None) -> int:
     state_path = args.state_path or default_state_path(engine_db.parent.parent)
     infra_streak_path = engine_db.parent / "logs" / INFRA_STREAK_FILE
 
+    parity_run_time = dt.datetime.now(dt.timezone.utc)
     summary: dict = {
         "target_date": target.isoformat(),
-        "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "started_at": parity_run_time.isoformat(),
+        "parity_run_time": parity_run_time.isoformat(),
         "dry_run": args.dry_run,
         "skip_fetch": args.skip_fetch,
     }
@@ -182,9 +184,20 @@ def main(argv: list[str] | None = None) -> int:
             summary["te_pull"] = "skipped"
 
         with store.get_connection() as conn:
-            reports = compare_daily(conn, target_date=target)
-        summary["agencies_with_anomalies"] = [r.agency_id for r in reports]
+            reports = compare_daily(
+                conn, target_date=target, now_utc=parity_run_time,
+            )
+        summary["agencies_with_anomalies"] = [
+            r.agency_id for r in reports if not r.clean
+        ]
         summary["total_anomalies"] = sum(r.total_anomalies for r in reports)
+        summary["lag_after_parity_count"] = sum(
+            r.total_lag_after_parity for r in reports
+        )
+        summary["lag_after_parity_by_agency"] = {
+            r.agency_id: r.total_lag_after_parity
+            for r in reports if r.lag_after_parity
+        }
 
         action_log = file_reports(
             reports=reports,
@@ -195,6 +208,7 @@ def main(argv: list[str] | None = None) -> int:
         summary["created_issues"] = [a for a, _ in action_log.created]
         summary["commented_issues"] = [a for a, _ in action_log.commented]
         summary["closed_issues"] = [a for a, _ in action_log.closed]
+        summary["lag_only_agencies"] = [a for a, _ in action_log.lag_only]
 
         # Reset infra strike counter on success.
         _save_infra_streak(infra_streak_path, 0)

@@ -53,6 +53,7 @@ class FilerActionLog:
     closed: list[tuple[str, int]] = field(default_factory=list)
     skipped_no_anomaly: list[str] = field(default_factory=list)
     suppressed: list[str] = field(default_factory=list)  # operator-closed, no refile
+    lag_only: list[tuple[str, int]] = field(default_factory=list)  # (agency_id, lag_count)
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +304,17 @@ def file_reports(
                 agency_state["suppressed_by_operator"] = True
                 agency_state["suppressed_issue"] = remembered
             agency_state["open_issue"] = None
+
+        if report is not None and report.clean and report.lag_after_parity:
+            # Lag-only path: vintages landed after parity_run_time.
+            # Per #38 these are not real drift — skip filing entirely
+            # and leave the clean-streak counter untouched (neither
+            # bumped nor reset) so the agency neither auto-closes nor
+            # opens a fresh issue from a sweep timing artifact.
+            log.lag_only.append(
+                (agency.agency_id, len(report.lag_after_parity)),
+            )
+            continue
 
         if report is not None and not report.clean:
             # Anomaly path.

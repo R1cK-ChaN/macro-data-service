@@ -14,6 +14,7 @@ import pytest
 
 from ingestion.calendar.parity_daily import (
     AgencyReport,
+    LagAfterParity,
     MissingRelease,
     ValueMismatch,
 )
@@ -253,6 +254,72 @@ def test_dry_run_real_runner_emits_no_subprocess(tmp_path: Path) -> None:
     assert log.created == [
         ("BLS", "Parity drift — US Bureau of Labor Statistics (2026-04-24)"),
     ]
+
+
+def _bls_report_with_lag_only(target: str = "2026-04-24") -> AgencyReport:
+    report = AgencyReport(
+        agency_id="BLS", label="US Bureau of Labor Statistics",
+        target_date=target,
+    )
+    report.lag_after_parity.append(LagAfterParity(
+        country="US", canonical="UNEMPLOYMENT_RATE",
+        reference_date="2026-03-01",
+        te_event_id="te-9", agency_event_id="bls-9",
+        agency_provider="bls",
+        te_actual="3.1",
+        agency_actual="3.1",
+        first_observed_at="2026-04-24T07:15:00+00:00",
+    ))
+    return report
+
+
+def test_lag_only_report_skips_filing_and_streak(tmp_path: Path) -> None:
+    """A lag-only report must not file, comment, or change the streak."""
+    runner = FakeRunner()
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({
+        "BLS": {"clean_streak": 4, "open_issue": None},
+    }))
+
+    log = file_reports(
+        reports=[_bls_report_with_lag_only()],
+        target_date=date(2026, 4, 24),
+        runner=runner,
+        state_path=state,
+    )
+
+    assert runner.creates == []
+    assert runner.comments == []
+    assert runner.closes == []
+    assert log.lag_only == [("BLS", 1)]
+    persisted = json.loads(state.read_text())
+    # Streak unchanged: lag is neutral, neither bump nor reset.
+    assert persisted["BLS"]["clean_streak"] == 4
+
+
+def test_lag_only_report_does_not_close_open_issue(tmp_path: Path) -> None:
+    """A lag-only report on an agency with an open drift issue must
+    leave the issue alone — neither comment nor close."""
+    runner = FakeRunner()
+    runner.open_by_label[runner._key("BLS")] = 88
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({
+        "BLS": {"clean_streak": 6, "open_issue": 88},
+    }))
+
+    log = file_reports(
+        reports=[_bls_report_with_lag_only()],
+        target_date=date(2026, 4, 24),
+        runner=runner,
+        state_path=state,
+    )
+
+    assert runner.comments == []
+    assert runner.closes == []
+    assert log.lag_only == [("BLS", 1)]
+    persisted = json.loads(state.read_text())
+    assert persisted["BLS"]["clean_streak"] == 6
+    assert persisted["BLS"]["open_issue"] == 88
 
 
 def test_infra_failure_creates_or_comments(tmp_path: Path) -> None:

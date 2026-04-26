@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from ingestion.calendar.parity_daily import (
     AgencyReport,
+    LagAfterParity,
     MissingRelease,
     ValueMismatch,
     compare_daily,
@@ -307,6 +308,157 @@ def test_missing_first_release_records_parse_failed(
     mm = reports[0].mismatches[0]
     assert mm.parse_failed is True
     assert "vintage" in mm.note
+
+
+def test_vintage_after_parity_run_classified_as_lag(
+    store: SQLiteEngineStore,
+) -> None:
+    """First-release vintage observed_at > parity_run_time → LagAfterParity,
+    not ValueMismatch. Issue #38."""
+    _insert_event(
+        store, provider="tradingeconomics", provider_event_id="te-9",
+        country_code="US", title="Unemployment Rate",
+        reference_date="2026-03-31T00:00:00",
+        event_time_utc="2026-04-24T03:30:00+00:00",
+        actual="3.1",
+    )
+    _insert_event(
+        store, provider="bls", provider_event_id="bls-9",
+        country_code="US", title="Unemployment Rate",
+        reference_date="2026-03-01",
+        event_time_utc="2026-04-24T03:30:00+00:00",
+        actual=None,
+    )
+    # Sweep wrote the vintage at 07:15 UTC — after the 06:00 parity cron.
+    _insert_vintage(
+        store, provider="bls", event_id="bls-9",
+        observed_at="2026-04-24T07:15:00+00:00", actual="3.1",
+    )
+
+    parity_run = datetime(2026, 4, 24, 6, 0, tzinfo=timezone.utc)
+    with store.get_connection() as conn:
+        reports = compare_daily(
+            conn, target_date=date(2026, 4, 24), now_utc=parity_run,
+        )
+
+    assert len(reports) == 1
+    report = reports[0]
+    assert report.clean is True
+    assert report.empty is False
+    assert len(report.lag_after_parity) == 1
+    lag = report.lag_after_parity[0]
+    assert lag.agency_event_id == "bls-9"
+    assert lag.first_observed_at == "2026-04-24T07:15:00+00:00"
+    assert lag.te_actual == "3.1"
+
+
+def test_vintage_before_parity_run_falls_through_to_normal_logic(
+    store: SQLiteEngineStore,
+) -> None:
+    """observed_at <= parity_run_time → normal value comparison applies."""
+    _insert_event(
+        store, provider="tradingeconomics", provider_event_id="te-10",
+        country_code="US", title="Unemployment Rate",
+        reference_date="2026-03-31T00:00:00",
+        event_time_utc="2026-04-24T03:30:00+00:00",
+        actual="3.1",
+    )
+    _insert_event(
+        store, provider="bls", provider_event_id="bls-10",
+        country_code="US", title="Unemployment Rate",
+        reference_date="2026-03-01",
+        event_time_utc="2026-04-24T03:30:00+00:00",
+        actual="3.1",
+    )
+    _insert_vintage(
+        store, provider="bls", event_id="bls-10",
+        observed_at="2026-04-24T05:55:00+00:00", actual="3.2",
+    )
+
+    parity_run = datetime(2026, 4, 24, 6, 0, tzinfo=timezone.utc)
+    with store.get_connection() as conn:
+        reports = compare_daily(
+            conn, target_date=date(2026, 4, 24), now_utc=parity_run,
+        )
+
+    assert len(reports) == 1
+    assert reports[0].lag_after_parity == []
+    assert len(reports[0].mismatches) == 1
+
+
+def test_late_vintage_with_mismatched_value_still_classified_as_lag(
+    store: SQLiteEngineStore,
+) -> None:
+    """Per the issue spec the lag classification is timing-based, not
+    value-based: a late vintage that disagrees with TE is still bucketed
+    under lag (no drift filed) but its agency_actual is captured so the
+    structured log shows the disagreement for operator triage."""
+    _insert_event(
+        store, provider="tradingeconomics", provider_event_id="te-12",
+        country_code="US", title="Unemployment Rate",
+        reference_date="2026-03-31T00:00:00",
+        event_time_utc="2026-04-24T03:30:00+00:00",
+        actual="3.1",
+    )
+    _insert_event(
+        store, provider="bls", provider_event_id="bls-12",
+        country_code="US", title="Unemployment Rate",
+        reference_date="2026-03-01",
+        event_time_utc="2026-04-24T03:30:00+00:00",
+        actual=None,
+    )
+    _insert_vintage(
+        store, provider="bls", event_id="bls-12",
+        observed_at="2026-04-24T07:15:00+00:00", actual="3.4",
+    )
+
+    parity_run = datetime(2026, 4, 24, 6, 0, tzinfo=timezone.utc)
+    with store.get_connection() as conn:
+        reports = compare_daily(
+            conn, target_date=date(2026, 4, 24), now_utc=parity_run,
+        )
+    assert len(reports) == 1
+    report = reports[0]
+    assert report.mismatches == []
+    assert len(report.lag_after_parity) == 1
+    lag = report.lag_after_parity[0]
+    assert lag.te_actual == "3.1"
+    assert lag.agency_actual == "3.4"
+
+
+def test_lag_only_report_returned_with_clean_true(
+    store: SQLiteEngineStore,
+) -> None:
+    """A report whose only entries are lag_after_parity is still
+    returned (so the structured log can record the count) but
+    ``clean`` is True so the filer skips drift handling."""
+    _insert_event(
+        store, provider="tradingeconomics", provider_event_id="te-11",
+        country_code="US", title="Unemployment Rate",
+        reference_date="2026-03-31T00:00:00",
+        event_time_utc="2026-04-24T03:30:00+00:00",
+        actual="3.1",
+    )
+    _insert_event(
+        store, provider="bls", provider_event_id="bls-11",
+        country_code="US", title="Unemployment Rate",
+        reference_date="2026-03-01",
+        event_time_utc="2026-04-24T03:30:00+00:00",
+        actual=None,
+    )
+    _insert_vintage(
+        store, provider="bls", event_id="bls-11",
+        observed_at="2026-04-24T07:15:00+00:00", actual="3.1",
+    )
+
+    parity_run = datetime(2026, 4, 24, 6, 0, tzinfo=timezone.utc)
+    with store.get_connection() as conn:
+        reports = compare_daily(
+            conn, target_date=date(2026, 4, 24), now_utc=parity_run,
+        )
+    assert len(reports) == 1
+    assert reports[0].clean is True
+    assert reports[0].total_lag_after_parity == 1
 
 
 def test_unowned_country_indicator_ignored(store: SQLiteEngineStore) -> None:
