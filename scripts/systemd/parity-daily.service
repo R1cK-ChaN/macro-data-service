@@ -1,0 +1,31 @@
+[Unit]
+Description=Macro-data daily TE parity tripwire (issue #22)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Replace REPO_ROOT below with the absolute path to your checkout, e.g.
+# /home/rick/Desktop/analyst/macro-data-service. The wrapper resolves
+# .macro-data/, .env, and scripts/ relative to it.
+Environment=REPO_ROOT=%h/Desktop/analyst/macro-data-service
+ExecStart=%h/Desktop/analyst/macro-data-service/scripts/parity_daily_wrapper.sh
+
+# Soft watchdog — the daily pull plus comparator plus gh issue calls
+# should comfortably finish in under 5 minutes; anything longer is a
+# stuck flock acquire or a TE 409 backoff loop and should be killed.
+TimeoutStartSec=600
+
+# Don't restart on failure — the script's own self-monitor records
+# strikes and surfaces the 2-strike infra issue. systemd retries would
+# fight the strike counter.
+Restart=no
+
+# Standard output / error stream into the journal so journalctl --user
+# -u parity-daily.service shows the run summary printed by the
+# Python entry-point alongside the structured log file.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

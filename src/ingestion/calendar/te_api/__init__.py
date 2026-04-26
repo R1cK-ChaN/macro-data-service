@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from .backfill import BackfillRunner, RunSummary, Window, plan_windows
 from .client import TEAPIClient, TEAuthMissing, TEThrottled
+from .daily import DailyPullSummary, pull_daily
 from .parser import (
     CalendarEventRecord,
     CalendarRawRecord,
@@ -29,6 +30,7 @@ __all__ = [
     "BackfillRunner",
     "CalendarEventRecord",
     "CalendarRawRecord",
+    "DailyPullSummary",
     "MUTABLE_FIELDS",
     "RunSummary",
     "TEAPIClient",
@@ -40,6 +42,7 @@ __all__ = [
     "parse_calendar_row",
     "plan_windows",
     "project_events",
+    "pull_daily",
     "record_drops",
     "row_content_hash",
     "store_raw",
