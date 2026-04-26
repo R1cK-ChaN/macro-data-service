@@ -182,6 +182,7 @@ def project_events(
             forecast=r.forecast,
             previous=r.previous,
             metadata_json=meta_json,
+            source_url=r.source_url or "",
         )
     return changed
 

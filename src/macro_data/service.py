@@ -3899,6 +3899,25 @@ class LocalMacroDataService:
             connectors=connectors,
         )
 
+        # Tail-of-sweep evidence archival (issue #36). Skipped on dry-run
+        # because nothing new could have been written. Failures are
+        # swallowed so an archive-side outage never fails the sweep run.
+        evidence_summary: dict[str, int] = {"scanned": 0, "archived": 0, "failed": 0}
+        if not dry_run:
+            from ingestion.calendar.evidence_archive import archive_pending
+            try:
+                evidence_conn = get_conn()
+                try:
+                    evidence_summary = archive_pending(evidence_conn)
+                    evidence_conn.commit()
+                finally:
+                    evidence_conn.close()
+            except Exception as exc:  # pragma: no cover — defensive
+                evidence_summary = {
+                    "scanned": 0, "archived": 0, "failed": 0,
+                    "error": repr(exc),  # type: ignore[dict-item]
+                }
+
         return {
             "dry_run":             summary.dry_run,
             "connectors_planned":  summary.connectors_planned,
@@ -3918,6 +3937,7 @@ class LocalMacroDataService:
             ],
             "stopped_reason":      "dry_run" if dry_run else None,
             "wall_seconds":        round(summary.wall_seconds, 3),
+            "evidence_archive":    evidence_summary,
         }
 
     def _op_calendar_econ_refresh_schedules(

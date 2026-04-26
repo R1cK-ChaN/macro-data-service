@@ -38,6 +38,7 @@ def append_calendar_event_vintage_if_changed_with_conn(
     previous: str | None,
     metadata_json: str = "{}",
     scraped_at: str | None = None,
+    source_url: str = "",
 ) -> bool:
     """Append-on-change vintage write using a caller-supplied connection.
 
@@ -45,6 +46,10 @@ def append_calendar_event_vintage_if_changed_with_conn(
     so out-of-order backfills capture genuine intermediate states.
     Returns True if a row was appended, False on no-op (triple matched
     the predecessor) or on UNIQUE collision via INSERT OR IGNORE.
+
+    ``source_url`` is snapshotted onto the row so revision-time URL
+    changes (BLS / BEA publish revisions at distinct press-release URLs)
+    keep their per-vintage citation anchor — see issue #36.
     """
     # Use julianday() rather than string <= so fractional-second ISO
     # timestamps compare against whole-second timestamps correctly.
@@ -62,12 +67,14 @@ def append_calendar_event_vintage_if_changed_with_conn(
     cursor = connection.execute(
         "INSERT OR IGNORE INTO calendar_event_vintages ("
         "event_id, provider, vintage_date, observed_at, "
-        "actual, forecast, previous, metadata_json, scraped_at"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "actual, forecast, previous, metadata_json, scraped_at, "
+        "source_url"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             event_id, provider, vintage_date, observed_at,
             actual, forecast, previous, metadata_json,
             scraped_at or utc_now().isoformat(),
+            source_url or "",
         ),
     )
     return cursor.rowcount > 0
@@ -483,6 +490,8 @@ class CalendarEventVintageRecord:
     forecast: str | None
     previous: str | None
     metadata: dict[str, Any] = field(default_factory=dict)
+    source_url: str = ""    # snapshotted at insert; revision-aware (issue #36)
+    evidence_archive_url: str | None = None  # Wayback snapshot URL when archived
 
 
 @dataclass(frozen=True)
@@ -1623,6 +1632,9 @@ class SQLiteEngineStore:
                     previous TEXT,
                     metadata_json TEXT NOT NULL DEFAULT '{}',
                     scraped_at TEXT NOT NULL,
+                    source_url TEXT NOT NULL DEFAULT '',
+                    evidence_archive_url TEXT,
+                    evidence_last_attempt_at TEXT,
                     UNIQUE(event_id, provider, vintage_date)
                 )
                 """
@@ -1630,6 +1642,26 @@ class SQLiteEngineStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_calendar_event_vintages_lookup "
                 "ON calendar_event_vintages(event_id, provider, observed_at)"
+            )
+            # Backfill the issue-#36 columns onto pre-existing engines.
+            self._ensure_table_columns(
+                connection,
+                table_name="calendar_event_vintages",
+                columns={
+                    "source_url": "TEXT NOT NULL DEFAULT ''",
+                    "evidence_archive_url": "TEXT",
+                    # Stamp on every Wayback submission attempt so failed
+                    # rows rotate to the back of the retry queue and a
+                    # block of unarchivable URLs cannot stall the head.
+                    "evidence_last_attempt_at": "TEXT",
+                },
+            )
+            # Partial index drives the retry-tail scan over rows whose
+            # archive submission has not yet succeeded.
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cal_evidence_pending "
+                "ON calendar_event_vintages(observed_at) "
+                "WHERE evidence_archive_url IS NULL"
             )
             connection.execute(
                 """
@@ -4666,6 +4698,7 @@ class SQLiteEngineStore:
                 metadata_json=json.dumps(
                     vintage.metadata, ensure_ascii=True, sort_keys=True
                 ),
+                source_url=vintage.source_url,
             )
 
     def calendar_actual_as_of(
@@ -4681,7 +4714,8 @@ class SQLiteEngineStore:
         with self._connection(commit=False) as connection:
             row = connection.execute(
                 "SELECT event_id, provider, vintage_date, observed_at, "
-                "actual, forecast, previous, metadata_json "
+                "actual, forecast, previous, metadata_json, "
+                "source_url, evidence_archive_url "
                 "FROM calendar_event_vintages "
                 "WHERE event_id = ? AND provider = ? "
                 "AND julianday(observed_at) <= julianday(?) "
@@ -4701,7 +4735,8 @@ class SQLiteEngineStore:
         with self._connection(commit=False) as connection:
             rows = connection.execute(
                 "SELECT event_id, provider, vintage_date, observed_at, "
-                "actual, forecast, previous, metadata_json "
+                "actual, forecast, previous, metadata_json, "
+                "source_url, evidence_archive_url "
                 "FROM calendar_event_vintages "
                 "WHERE event_id = ? AND provider = ? "
                 "ORDER BY julianday(observed_at) ASC, id ASC",
@@ -4720,6 +4755,8 @@ class SQLiteEngineStore:
             forecast=row["forecast"],
             previous=row["previous"],
             metadata=json.loads(row["metadata_json"]),
+            source_url=row["source_url"] or "",
+            evidence_archive_url=row["evidence_archive_url"],
         )
 
     # -- News articles -------------------------------------------------------
