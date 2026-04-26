@@ -109,6 +109,28 @@ class SDMXClient:
             ) from exc
         return response
 
+    def _response_json(
+        self, response: requests.Response, *, context: str = "",
+    ) -> dict[str, Any]:
+        """Decode ``response.json()``, tolerating empty bodies / 204.
+
+        ECB (and likely other SDMX 2.1 providers) returns HTTP 200 with a
+        zero-byte body when the requested dataflow/series matches no
+        observations. The default ``response.json()`` raises on byte 0,
+        which trips the connector's failure breaker for what is really a
+        "no data" signal. Returning ``{}`` lets downstream parsers emit
+        zero observations — the same shape they produce for a populated
+        dataset with no matching rows.
+        """
+        if response.status_code == 204 or not response.content:
+            suffix = f" ({context})" if context else ""
+            logger.info(
+                "%s returned empty body for %s%s — treating as zero observations",
+                self.config.provider_name, response.url, suffix,
+            )
+            return {}
+        return response.json()
+
     # ── Hook: date normalization ──────────────────────────────────────
 
     def _normalize_date(self, raw: str) -> str:
@@ -142,7 +164,9 @@ class SDMXClient:
     ) -> list[SDMXObservation]:
         """Default: SDMX-JSON. Override for CSV (BIS) or other formats."""
         return parse_sdmx_json_observations(
-            response.json(),
+            self._response_json(
+                response, context=f"{dataflow}/{series_id or '*'}",
+            ),
             series_id=series_id,
             dataflow=dataflow,
             limit=limit,
@@ -186,7 +210,15 @@ class SDMXClient:
 
         url = self._build_dataflow_list_url()
         response = self._get(url, headers={"Accept": "application/json"})
-        data = response.json()
+        # A catalog endpoint returning an empty body is an outage, not a
+        # "no data" signal — raising here keeps `refresh_catalog()` and
+        # config generators from silently reporting a zero-flow success.
+        if response.status_code == 204 or not response.content:
+            raise self._api_error_cls(
+                f"{self.config.provider_name} returned empty body for "
+                f"dataflow catalog at {url}"
+            )
+        data = self._response_json(response, context="dataflow catalog")
 
         dataflows: list[SDMXDataflow] = []
         for df_node in data.get("data", {}).get("dataflows", []):
@@ -246,7 +278,9 @@ class SDMXClient:
         url = self._build_structure_url(dataflow_id, df_version)
         params: dict[str, str] = {"references": "all"}
         response = self._get(url, params, headers={"Accept": "application/json"})
-        data = response.json()
+        data = self._response_json(
+            response, context=f"DSD {dataflow_id}/{df_version}",
+        )
 
         structures = data.get("data", {}).get("dataStructures", [])
         if not structures:
@@ -401,6 +435,10 @@ class SDMXClient:
         """Probe a dataflow with limit=1 to estimate total size."""
         total_series = 0
         time_periods = 1
+        # An explicit zero-observation response from upstream means the
+        # dataflow truly has no data — return 0 instead of falling back to
+        # the codelist-product, which would advertise a fake nonzero size.
+        probe_was_empty = False
 
         try:
             url = self._build_estimate_url(dataflow_id, **kwargs)
@@ -409,7 +447,11 @@ class SDMXClient:
                 "lastNObservations": "1",
             }
             response = self._get(url, params)
-            data = response.json()
+            if response.status_code == 204 or not response.content:
+                probe_was_empty = True
+            data = self._response_json(
+                response, context=f"estimate {dataflow_id}",
+            )
             datasets = data.get("dataSets", [])
             if datasets:
                 all_series = datasets[0].get("series", {})
@@ -417,7 +459,7 @@ class SDMXClient:
         except (SDMXAPIError, SDMXRateLimitError):
             pass
 
-        if total_series == 0:
+        if total_series == 0 and not probe_was_empty:
             try:
                 structure = self.get_datastructure(dataflow_id, version, **kwargs)
                 total_series = 1
