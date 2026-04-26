@@ -3661,7 +3661,8 @@ class CalendarOpsMixin(LocalMacroDataServiceBase):
                          ``["bls", "bea", "census", "ism", "umich",
                          "conference-board", "nar", "ecb", "eurostat", "destatis",
                          "zew", "ifo", "gfk", "hcob", "ec-bcs", "insee", "ine", "istat",
-                         "fed-values", "stat-bureau-jp-values", "boj-values",
+                         "fed-values", "nbs-values",
+                         "stat-bureau-jp-values", "boj-values",
                          "boj-tankan-values", "mof-jp-values", "cao-values",
                          "cao-gdp-values", "meti-values"]``.
           start_year   — optional int; default ``current_year − 1``.
@@ -3670,8 +3671,11 @@ class CalendarOpsMixin(LocalMacroDataServiceBase):
           start_period — optional SDMX period string (ECB / Eurostat).
           end_period   — optional SDMX period string (ECB / Eurostat).
 
-        NBS currently contributes schedule-side rows; per-release value
-        scraping for NBS indicators is a future slice.
+        NBS contributes schedule-side rows for every indicator; the
+        ``nbs-values`` connector (issue #49) fills ``actual`` for CPI
+        / PPI / Industrial Production / Fixed Asset Investment /
+        Retail Sales from the English press-release listing. PMI /
+        GDP remain schedule-only.
         """
         from ingestion.calendar.scheduler import (
             ALL_VALUE_SIDE_CONNECTORS,
@@ -4128,6 +4132,59 @@ class CalendarOpsMixin(LocalMacroDataServiceBase):
             "rows_raw_inserted":    summary.rows_raw_inserted,
             "events_upserted":      summary.events_upserted,
             "wall_seconds":       round(summary.wall_seconds, 3),
+        }
+
+    def _op_calendar_econ_fetch_nbs_values(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Sweep the NBS English press-release listing for due actuals (issue #49).
+
+        Auto-discovers ``actual IS NULL`` rows already staged by
+        ``calendar_econ_fetch_nbs`` whose ``event_time_utc`` has
+        passed, resolves each release's article URL on the public
+        press-release listing, downloads the article, parses the
+        headline value (CPI / PPI / Industrial Production / Fixed
+        Asset Investment / Retail Sales), and upserts via the shared
+        ``provider_event_id``.
+
+        Arguments:
+          dry_run — default True. No HTTP, no DB writes.
+
+        Dry-run returns the value-side indicator plan; execute mode
+        runs the sweep.
+        """
+        from ingestion.calendar.nbs_api import fetch_nbs_values
+
+        dry_run = bool(arguments.get("dry_run", True))
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        connection = get_conn()
+        try:
+            summary = fetch_nbs_values(connection, dry_run=dry_run)
+            if not dry_run:
+                connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        return {
+            "dry_run":             summary.dry_run,
+            "indicators_planned":  summary.indicators_planned,
+            "pending_releases":    summary.pending_releases,
+            "listing_misses":      summary.listing_misses,
+            "observations_seen":   summary.observations_seen,
+            "rows_raw_inserted":   summary.rows_raw_inserted,
+            "events_upserted":     summary.events_upserted,
+            "series_ok":           summary.series_ok,
+            "series_empty":        summary.series_empty,
+            "series_failed":       summary.series_failed,
+            "stopped_reason":      "dry_run" if dry_run else None,
+            "wall_seconds":        round(summary.wall_seconds, 3),
         }
 
     def _op_get_recent_releases(self, arguments: dict[str, Any]) -> dict[str, Any]:
