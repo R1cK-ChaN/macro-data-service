@@ -102,6 +102,8 @@ from .kostat_api import fetch_kostat_calendar
 from .bok_api import fetch_bok_calendar
 from .ibge_api import fetch_ibge_calendar
 from .bcb_api import fetch_bcb_calendar
+from .tuik_api import fetch_tuik_calendar
+from .tcmb_api import fetch_tcmb_calendar
 from .zew_api import fetch_zew_calendar, schedule_zew_calendar
 from .ifo_api import fetch_ifo_calendar, schedule_ifo_calendar
 from .gfk_api import fetch_gfk_calendar, schedule_gfk_calendar
@@ -292,6 +294,28 @@ def _bcb(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_bcb_calendar(conn, dry_run=dry_run)
 
 
+def _tuik(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # TÜİK national release-calendar JSON sweep — schedule-only slice
+    # (issue #86). The unified national feed covers every Turkish
+    # statistical agency; the connector filters to ``sorumluKisaAd ==
+    # 'TÜİK'`` and matches each row's ``adi`` against an indicator
+    # allowlist (CPI / PPI / GDP / IP / Unemployment / Trade Balance).
+    # The fetcher walks a rolling year window (current + next year)
+    # so a daily sweep keeps the calendar's lookahead fresh.
+    # ``actual=NULL`` until the P2 per-release detail-page scrape lands.
+    return fetch_tuik_calendar(conn, dry_run=dry_run)
+
+
+def _tcmb(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # TCMB 1-Week Repo rate-history HTML re-fetch picks up any new PPK
+    # rate-change decision since the last sweep. The page lists *only*
+    # rate changes (hold decisions deferred to P2); each row carries
+    # the new policy rate inline next to the announcement date, so the
+    # P1 slice ships value-bearing events on day one and ``(TR,
+    # TCMB_RATE)`` joins the parity whitelist immediately.
+    return fetch_tcmb_calendar(conn, dry_run=dry_run)
+
+
 def _eurostat(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_eurostat_calendar(conn, dry_run=dry_run)
 
@@ -432,6 +456,8 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("bok", _bok),
     ("ibge", _ibge),
     ("bcb", _bcb),
+    ("tuik", _tuik),
+    ("tcmb", _tcmb),
     ("eurostat", _eurostat),
     ("destatis", _destatis),
     ("zew", _zew),
@@ -493,6 +519,8 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "bok",
     "ibge",
     "bcb",
+    "tuik",
+    "tcmb",
     "eurostat",
     "destatis",
     "zew",
@@ -1375,6 +1403,20 @@ def sweep_value_side(
         # rate inline, so the same op fills schedule and value.
         return fetch_bcb_calendar(conn, dry_run=dry_run)
 
+    def _tuik_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # TÜİK national-calendar re-fetch picks up newly-published
+        # indicator releases. P1 publishes schedule-only rows; the
+        # per-release detail-page scrape that fills ``actual`` is the
+        # P2 follow-up.
+        return fetch_tuik_calendar(conn, dry_run=dry_run)
+
+    def _tcmb_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # TCMB 1-Week Repo rate-history re-fetch picks up any new PPK
+        # rate-change decision since the last sweep. The page returns
+        # announcement date + new rate inline, so the same op fills
+        # schedule and value (rate changes only — holds deferred to P2).
+        return fetch_tcmb_calendar(conn, dry_run=dry_run)
+
     def _fed_speeches_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # Fed speeches archive re-fetch picks up newly-posted Board
         # speeches throughout the day. Schedule-only — no value to
@@ -1527,6 +1569,8 @@ def sweep_value_side(
         "bok":        _bok_values,
         "ibge":       _ibge_values,
         "bcb":        _bcb_values,
+        "tuik":       _tuik_values,
+        "tcmb":       _tcmb_values,
         "eurostat":   _eurostat_values,
         "destatis":   _destatis_values,
         "zew":        _zew_values,
