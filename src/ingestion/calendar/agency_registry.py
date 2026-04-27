@@ -486,6 +486,49 @@ AGENCIES: tuple[AgencyDecl, ...] = (
         indicators=frozenset(),
     ),
     AgencyDecl(
+        agency_id="FED_SPEECHES",
+        label="US Federal Reserve — Board speeches",
+        # Provider attribution only — the P1 Fed-speeches slice ships
+        # schedule-only events (``actual=NULL``) anchoring each Board
+        # / Vice Chair / Chair speech as a calendar event. There's no
+        # numeric value to align against TE; the connector serves as
+        # an event anchor for downstream research / impact analysis.
+        # Same shape as the BOK / RBI / KOSTAT schedule-only deferral.
+        providers=("fed-speeches",),
+        indicators=frozenset(),
+    ),
+    AgencyDecl(
+        agency_id="ECB_SPEECHES",
+        label="European Central Bank — Executive Board speeches",
+        # Provider attribution only — same schedule-only shape as
+        # FED_SPEECHES. The ECB CSV's ``contents`` column carries
+        # the full transcript text but is preserved in the raw row's
+        # payload and not projected to ``cal_econ_event``.
+        providers=("ecb-speeches",),
+        indicators=frozenset(),
+    ),
+    AgencyDecl(
+        agency_id="BOE_SPEECHES",
+        label="Bank of England — Speeches",
+        # Provider attribution only — same schedule-only shape. BoE
+        # speeches anchor at month precision (the sitemap doesn't
+        # publish day-level dates); per-speech HTTP fan-out for
+        # day precision is deferred to a future slice.
+        providers=("boe-speeches",),
+        indicators=frozenset(),
+    ),
+    AgencyDecl(
+        agency_id="BOJ_SPEECHES",
+        label="Bank of Japan — Policy Board speeches",
+        # Provider attribution only — same schedule-only shape. The
+        # connector filters BoJ archive rows to rate-setting roles
+        # (Governor + Deputy Governor + Member of the Policy Board);
+        # Executive Directors / Officers / Counsellors are skipped
+        # to match the issue's "rate-setters only" scope.
+        providers=("boj-speeches",),
+        indicators=frozenset(),
+    ),
+    AgencyDecl(
         agency_id="BOK",
         label="Bank of Korea",
         # Provider attribution only — the P1 BOK slice projects each
