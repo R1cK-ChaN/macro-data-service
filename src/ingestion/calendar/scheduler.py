@@ -104,6 +104,8 @@ from .ibge_api import fetch_ibge_calendar
 from .bcb_api import fetch_bcb_calendar
 from .tuik_api import fetch_tuik_calendar
 from .tcmb_api import fetch_tcmb_calendar
+from .inegi_api import fetch_inegi_calendar
+from .banxico_api import fetch_banxico_calendar
 from .zew_api import fetch_zew_calendar, schedule_zew_calendar
 from .ifo_api import fetch_ifo_calendar, schedule_ifo_calendar
 from .gfk_api import fetch_gfk_calendar, schedule_gfk_calendar
@@ -316,6 +318,28 @@ def _tcmb(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_tcmb_calendar(conn, dry_run=dry_run)
 
 
+def _inegi(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # INEGI saladeprensa calendar JSON sweep — schedule-only slice
+    # (issue #88). One POST per distinct ``idPrograma`` referenced by
+    # the indicator set, against a 90-day-back / 365-day-forward date
+    # window. Indicators that share a programme id (CPI / INPC_15 both
+    # key on idPrograma 2353) are post-filtered by ``programa``
+    # substring + cadence shape. ``actual=NULL`` until the P2 per-
+    # release boletín scrape lands.
+    return fetch_inegi_calendar(conn, dry_run=dry_run)
+
+
+def _banxico(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # Banxico Tasa Objetivo decisions HTML re-fetch picks up any new
+    # Junta de Gobierno announcement since the last sweep. The page
+    # encodes both holds (absolute rate inline) and changes (basis-
+    # point delta inline); a cumulative walk seeded from the oldest
+    # hold yields the absolute rate for every decision, so the P1
+    # slice ships value-bearing events on day one and ``(MX,
+    # BANXICO_RATE)`` joins the parity whitelist immediately.
+    return fetch_banxico_calendar(conn, dry_run=dry_run)
+
+
 def _eurostat(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_eurostat_calendar(conn, dry_run=dry_run)
 
@@ -458,6 +482,8 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("bcb", _bcb),
     ("tuik", _tuik),
     ("tcmb", _tcmb),
+    ("inegi", _inegi),
+    ("banxico", _banxico),
     ("eurostat", _eurostat),
     ("destatis", _destatis),
     ("zew", _zew),
@@ -521,6 +547,8 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "bcb",
     "tuik",
     "tcmb",
+    "inegi",
+    "banxico",
     "eurostat",
     "destatis",
     "zew",
@@ -1417,6 +1445,20 @@ def sweep_value_side(
         # schedule and value (rate changes only — holds deferred to P2).
         return fetch_tcmb_calendar(conn, dry_run=dry_run)
 
+    def _inegi_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # INEGI saladeprensa calendar re-fetch picks up newly-published
+        # boletín entries. P1 publishes schedule-only rows; the per-
+        # release detail-page scrape that fills ``actual`` is the P2
+        # follow-up.
+        return fetch_inegi_calendar(conn, dry_run=dry_run)
+
+    def _banxico_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # Banxico Tasa Objetivo decisions re-fetch picks up any new
+        # Junta de Gobierno announcement since the last sweep. Each
+        # fetch returns the cumulative-walked absolute rate inline,
+        # so the same op fills schedule and value.
+        return fetch_banxico_calendar(conn, dry_run=dry_run)
+
     def _fed_speeches_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # Fed speeches archive re-fetch picks up newly-posted Board
         # speeches throughout the day. Schedule-only — no value to
@@ -1571,6 +1613,8 @@ def sweep_value_side(
         "bcb":        _bcb_values,
         "tuik":       _tuik_values,
         "tcmb":       _tcmb_values,
+        "inegi":      _inegi_values,
+        "banxico":    _banxico_values,
         "eurostat":   _eurostat_values,
         "destatis":   _destatis_values,
         "zew":        _zew_values,

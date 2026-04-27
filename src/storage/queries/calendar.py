@@ -197,6 +197,10 @@ _CALENDAR_COUNTRY_ALIASES: dict[str, str] = {
     "TURKIYE": "TR",
     "TÜRKIYE": "TR",
     "TÜRKİYE": "TR",
+    "MX": "MX",
+    "MEX": "MX",
+    "MEXICO": "MX",
+    "MÉXICO": "MX",
 }
 
 _CALENDAR_COUNTRY_DISPLAY: dict[str, str] = {
@@ -215,6 +219,7 @@ _CALENDAR_COUNTRY_DISPLAY: dict[str, str] = {
     "KR": "South Korea",
     "BR": "Brazil",
     "TR": "Turkey",
+    "MX": "Mexico",
 }
 
 
