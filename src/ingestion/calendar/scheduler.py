@@ -91,6 +91,8 @@ from .ons_api import fetch_ons_calendar
 from .boe_api import fetch_boe_calendar
 from .statcan_api import fetch_statcan_calendar
 from .boc_api import fetch_boc_calendar
+from .abs_api import fetch_abs_calendar
+from .rba_api import fetch_rba_calendar
 from .zew_api import fetch_zew_calendar, schedule_zew_calendar
 from .ifo_api import fetch_ifo_calendar, schedule_ifo_calendar
 from .gfk_api import fetch_gfk_calendar, schedule_gfk_calendar
@@ -207,6 +209,25 @@ def _boc(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_boc_calendar(conn, dry_run=dry_run)
 
 
+def _abs(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # ABS release-calendar HTML scrape — schedule-only slice. Each
+    # release card carries a UTC ``<time datetime>`` and a URL slug
+    # encoding the reference period, so the projector lands the
+    # event on its actual publication time without a separate
+    # value-side fetch. ``actual=NULL`` until the P2 SDMX value
+    # lookup ships.
+    return fetch_abs_calendar(conn, dry_run=dry_run)
+
+
+def _rba(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # RBA cash-rate-target HTML re-fetch picks up any new MPB
+    # decision (change OR hold) since the last sweep. Unlike the
+    # BoC Valet pattern, the RBA table publishes hold decisions in
+    # the same row format as moves, so the connector covers every
+    # scheduled MPB announcement in P1.
+    return fetch_rba_calendar(conn, dry_run=dry_run)
+
+
 def _eurostat(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_eurostat_calendar(conn, dry_run=dry_run)
 
@@ -309,6 +330,8 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("boe", _boe),
     ("statcan", _statcan),
     ("boc", _boc),
+    ("abs", _abs),
+    ("rba", _rba),
     ("eurostat", _eurostat),
     ("destatis", _destatis),
     ("zew", _zew),
@@ -358,6 +381,8 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "boe",
     "statcan",
     "boc",
+    "abs",
+    "rba",
     "eurostat",
     "destatis",
     "zew",
@@ -880,14 +905,15 @@ _VALUE_SIDE_DUE_ROW_FILTERS: dict[ConnectorName, str] = {
     # through to the hourly baseline here is an explicit slice cap
     # — Issue #37 P2 candidate to add a separate trigger /
     # completion-row tracker for ECB.
-    # EIA + DOL + ONS + BoE + StatCan + BoC intentionally absent —
-    # each connector writes rows only after the value is published
-    # (the API / press-release / Bank Rate page carries period +
-    # value together), so a pre-release schedule row never exists
-    # for the burst's "until ``actual`` lands" check to fire on.
-    # Falls through to the hourly baseline (same explicit slice
-    # cap as ECB above). Adding a release-time-based trigger that
-    # pre-seeds rows is the issue #37 P2 follow-up.
+    # EIA + DOL + ONS + BoE + StatCan + BoC + ABS + RBA intentionally
+    # absent — each connector writes rows only after the value is
+    # published (the API / press-release / Bank Rate page / ABS
+    # release-calendar HTML / RBA cash-rate table carries period +
+    # value together), so a pre-release schedule row never exists for
+    # the burst's "until ``actual`` lands" check to fire on. Falls
+    # through to the hourly baseline (same explicit slice cap as ECB
+    # above). Adding a release-time-based trigger that pre-seeds rows
+    # is the issue #37 P2 follow-up.
     "eurostat":              "provider = 'eurostat'",
     "destatis":              "provider = 'destatis'",
     "zew":                   "provider = 'zew'",
@@ -1181,6 +1207,17 @@ def sweep_value_side(
         # rate change since the last sweep.
         return fetch_boc_calendar(conn, dry_run=dry_run)
 
+    def _abs_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # ABS release-calendar HTML scrape re-runs to pick up any
+        # newly-published indicator releases. P1 publishes
+        # schedule-only rows; the value lookup is the P2 follow-up.
+        return fetch_abs_calendar(conn, dry_run=dry_run)
+
+    def _rba_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # RBA cash-rate page re-fetch picks up the latest MPB
+        # decision (change OR hold) since the last sweep.
+        return fetch_rba_calendar(conn, dry_run=dry_run)
+
     def _eurostat_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # Eurostat JSON-stat has no auth.
         from ingestion.timeseries.sdmx.providers.eurostat import EurostatClient
@@ -1302,6 +1339,8 @@ def sweep_value_side(
         "boe":        _boe_values,
         "statcan":    _statcan_values,
         "boc":        _boc_values,
+        "abs":        _abs_values,
+        "rba":        _rba_values,
         "eurostat":   _eurostat_values,
         "destatis":   _destatis_values,
         "zew":        _zew_values,

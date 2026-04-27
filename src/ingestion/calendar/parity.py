@@ -64,6 +64,8 @@ OFFICIAL_PROVIDERS: tuple[str, ...] = (
     "ons", "boe",
     # Issue #52 — Canada coverage (StatCan WDS + BoC Valet rate decisions).
     "statcan", "boc",
+    # Issue #53 — Australia coverage (ABS release calendar + RBA cash-rate decisions).
+    "abs", "rba",
 )
 
 

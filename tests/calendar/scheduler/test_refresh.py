@@ -40,6 +40,7 @@ def test_default_connectors_cover_every_official_source() -> None:
     assert ALL_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
         "nar", "ecb", "eia", "dol", "ons", "boe", "statcan", "boc",
+        "abs", "rba",
         "eurostat", "destatis", "zew", "ifo", "gfk", "hcob", "ec-bcs", "insee", "ine", "istat",
         "fed-fomc", "fed-releases", "nbs", "stat-bureau-jp", "boj",
         "boj-tankan", "mof-jp", "cao", "cao-gdp", "meti",
@@ -477,10 +478,13 @@ def test_value_side_default_plan_covers_connectors() -> None:
     five China indicators; issue #50 adds ``eia`` + ``dol`` (both
     combine schedule + value); issue #51 adds ``ons`` + ``boe``
     (UK coverage; same schedule-and-value-together shape); issue
-    #52 adds ``statcan`` + ``boc`` (Canada coverage)."""
+    #52 adds ``statcan`` + ``boc`` (Canada coverage); issue #53 adds
+    ``abs`` + ``rba`` (Australia coverage; ABS schedule-only,
+    RBA schedule-and-value-together)."""
     assert ALL_VALUE_SIDE_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
         "nar", "ecb", "eia", "dol", "ons", "boe", "statcan", "boc",
+        "abs", "rba",
         "eurostat", "destatis", "zew", "ifo", "gfk", "hcob",
         "ec-bcs", "insee", "ine", "istat",
         "fed-values", "nbs-values",
@@ -527,35 +531,8 @@ def test_value_side_missing_api_key_isolates_to_one_connector(
             return _FakeSummary(connector=name, dry_run=dry_run, calls=1)
         return _fn
 
-    overrides = {
-        "bls":        _no_key,
-        "bea":        _ok("bea"),
-        "census":     _ok("census"),
-        "ism":        _ok("ism"),
-        "umich":      _ok("umich"),
-        "conference-board": _ok("conference-board"),
-        "nar":        _ok("nar"),
-        "ecb":        _ok("ecb"),
-        "eia":        _ok("eia"),
-        "dol":        _ok("dol"),
-        "eurostat":   _ok("eurostat"),
-        "destatis":   _ok("destatis"),
-        "zew":        _ok("zew"),
-        "ifo":        _ok("ifo"),
-        "gfk":        _ok("gfk"),
-        "hcob":       _ok("hcob"),
-        "insee":      _ok("insee"),
-        "ine":        _ok("ine"),
-        "istat":      _ok("istat"),
-        "fed-values": _ok("fed-values"),
-        "stat-bureau-jp-values": _ok("stat-bureau-jp-values"),
-        "boj-values": _ok("boj-values"),
-        "boj-tankan-values": _ok("boj-tankan-values"),
-        "mof-jp-values": _ok("mof-jp-values"),
-        "cao-values":  _ok("cao-values"),
-        "cao-gdp-values": _ok("cao-gdp-values"),
-        "meti-values": _ok("meti-values"),
-    }
+    overrides = {name: _ok(name) for name in ALL_VALUE_SIDE_CONNECTORS}
+    overrides["bls"] = _no_key
     summary = sweep_value_side(
         store.get_connection,
         dry_run=False,
