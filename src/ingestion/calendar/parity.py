@@ -70,6 +70,8 @@ OFFICIAL_PROVIDERS: tuple[str, ...] = (
     "mospi", "rbi",
     # Issue #55 — Korea coverage (KOSTAT release schedule + BOK MPB meeting dates).
     "kostat", "bok",
+    # Issue #84 — Brazil coverage (IBGE release calendar + BCB Copom history).
+    "ibge", "bcb",
 )
 
 

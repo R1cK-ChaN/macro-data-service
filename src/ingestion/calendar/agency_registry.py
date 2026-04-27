@@ -541,6 +541,32 @@ AGENCIES: tuple[AgencyDecl, ...] = (
         providers=("bok",),
         indicators=frozenset(),
     ),
+    AgencyDecl(
+        agency_id="IBGE",
+        label="Instituto Brasileiro de Geografia e Estatística",
+        # Provider attribution only — the P1 IBGE slice ships
+        # schedule-only events (``actual=NULL``) for IPCA / IPCA-15 /
+        # Industrial Production / Unemployment Rate / GDP. Wiring the
+        # ``(BR, ...)`` pairs into the parity whitelist would trip the
+        # parse_failed-on-missing-actual path on every release. Same
+        # deferral as the ABS / MoSPI / KOSTAT slice — P2 adds the per-
+        # release detail-page scrape to fill ``actual``.
+        providers=("ibge",),
+        indicators=frozenset(),
+    ),
+    AgencyDecl(
+        agency_id="BCB",
+        label="Banco Central do Brasil",
+        # The BCB Copom history JSON exposes target-Selic-rate +
+        # announcement date inline (RBA-style coverage), so the P1
+        # slice ships value-bearing events for every Copom decision —
+        # change OR hold OR extraordinary OR monocratic-presidential.
+        # The parity whitelist lights up in P1 without a separate
+        # value-side scrape (unlike the BoC / RBI / BOK schedule-only
+        # deferral).
+        providers=("bcb",),
+        indicators=frozenset({("BR", "BCB_RATE")}),
+    ),
     # NBS deliberately stays out of the parity registry in this
     # slice. The schedule connector anchors NBS rows on the *release*
     # month (April 13 release → reference_date=2026-04-01) while
