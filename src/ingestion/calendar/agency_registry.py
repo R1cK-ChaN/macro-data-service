@@ -360,6 +360,31 @@ AGENCIES: tuple[AgencyDecl, ...] = (
             ("JP", "TANKAN_LARGE_NONMFG"),
         }),
     ),
+    AgencyDecl(
+        agency_id="ONS",
+        label="UK Office for National Statistics",
+        # CPI / Unemployment Rate / GDP all ship as percent values
+        # directly comparable to TE's UK rows ("United Kingdom
+        # Inflation Rate", "United Kingdom Unemployment Rate", "United
+        # Kingdom GDP Growth Rate"). Country code is "UK" per the
+        # storage-layer alias map (storage/sqlite.py: GB → UK).
+        providers=("ons",),
+        indicators=frozenset({
+            ("UK", "CPI"),
+            ("UK", "UNEMPLOYMENT_RATE"),
+            ("UK", "GDP"),
+        }),
+    ),
+    AgencyDecl(
+        agency_id="BOE",
+        label="Bank of England",
+        # BOE_RATE ships as the percent value (3.75) directly
+        # comparable to TE's "BoE Interest Rate Decision" actual.
+        providers=("boe",),
+        indicators=frozenset({
+            ("UK", "BOE_RATE"),
+        }),
+    ),
     # NBS deliberately stays out of the parity registry in this
     # slice. The schedule connector anchors NBS rows on the *release*
     # month (April 13 release → reference_date=2026-04-01) while

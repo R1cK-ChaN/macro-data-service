@@ -156,13 +156,16 @@ def test_cal_provider_seeded(store: SQLiteEngineStore) -> None:
     assert rows == [
         ("bea",              "government_agency", "economic",  100),
         ("bls",              "government_agency", "economic",  100),
+        ("boe",              "central_bank",      "economic",  100),
         ("boj",              "central_bank",      "economic",  100),
         ("cao",              "government_agency", "economic",  100),
         ("census",           "government_agency", "economic",  100),
         ("conference-board",  "market_data",       "economic",  100),
         ("destatis",          "government_agency", "economic",  100),
+        ("dol",              "government_agency", "economic",  100),
         ("ec-bcs",           "government_agency", "economic",  100),
         ("ecb",              "central_bank",      "economic",  100),
+        ("eia",              "government_agency", "economic",  100),
         ("eodhd",            "data_aggregator",   "corporate", 10),
         ("eurostat",         "government_agency", "economic",  100),
         ("federal-reserve",  "central_bank",      "economic",  100),
@@ -177,6 +180,7 @@ def test_cal_provider_seeded(store: SQLiteEngineStore) -> None:
         ("mof-jp",           "government_agency", "economic",  100),
         ("nar",              "market_data",       "economic",  100),
         ("nbs",              "government_agency", "economic",  100),
+        ("ons",              "government_agency", "economic",  100),
         ("stat-bureau-jp",   "government_agency", "economic",  100),
         ("tradingeconomics", "data_aggregator",   "economic",  10),
         ("umich",            "market_data",       "economic",  100),
@@ -191,7 +195,7 @@ def test_cal_provider_seed_idempotent(tmp_path: Path) -> None:
     second = SQLiteEngineStore(db_path=db)
     with second._connection(commit=False) as c:
         n = c.execute("SELECT COUNT(*) FROM cal_provider").fetchone()[0]
-    assert n == 27
+    assert n == 31
 
 
 def test_importance_flows_through_view_as_enum_string(store: SQLiteEngineStore) -> None:

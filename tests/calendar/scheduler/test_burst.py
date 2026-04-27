@@ -70,14 +70,16 @@ def _insert_pending_event(
 
 
 def test_burst_filters_cover_every_burst_eligible_connector() -> None:
-    """Every value-side connector EXCEPT ECB has a burst predicate.
-    ECB is intentionally absent — its value fetcher writes new rows
-    rather than filling ``actual`` on schedule rows, so neither row
-    shape supports the burst's completion check. ECB falls through
-    to the hourly baseline."""
+    """Every value-side connector except the documented exclusions has
+    a burst predicate. ECB / EIA / DOL / ONS / BoE are intentionally
+    absent — their value fetchers write rows only after publication
+    (the API / press-release / Bank Rate page carries period + value
+    together), so a pre-release schedule row never exists for the
+    burst's "until ``actual`` lands" completion check. They fall
+    through to the hourly baseline."""
     from ingestion.calendar.scheduler import _VALUE_SIDE_DUE_ROW_FILTERS
 
-    expected = set(ALL_VALUE_SIDE_CONNECTORS) - {"ecb"}
+    expected = set(ALL_VALUE_SIDE_CONNECTORS) - {"ecb", "eia", "dol", "ons", "boe"}
     assert set(_VALUE_SIDE_DUE_ROW_FILTERS.keys()) == expected
 
 

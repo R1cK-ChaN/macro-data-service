@@ -2470,6 +2470,9 @@ class SQLiteEngineStore:
                     # Issue #50 — DOL UI Weekly Claims + EIA weekly stocks.
                     ("dol",              "government_agency", "economic",  100, _now_iso, _now_iso),
                     ("eia",              "government_agency", "economic",  100, _now_iso, _now_iso),
+                    # Issue #51 — UK coverage: ONS releases + Bank of England.
+                    ("ons",              "government_agency", "economic",  100, _now_iso, _now_iso),
+                    ("boe",              "central_bank",      "economic",  100, _now_iso, _now_iso),
                 ],
             )
 

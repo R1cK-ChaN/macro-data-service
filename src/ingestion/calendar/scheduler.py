@@ -87,6 +87,8 @@ from .eia_api import fetch_eia_calendar
 from .eurostat_api import fetch_eurostat_calendar, schedule_eurostat_calendar
 from .destatis_api import fetch_destatis_calendar, schedule_destatis_calendar
 from .dol_api import fetch_dol_calendar
+from .ons_api import fetch_ons_calendar
+from .boe_api import fetch_boe_calendar
 from .zew_api import fetch_zew_calendar, schedule_zew_calendar
 from .ifo_api import fetch_ifo_calendar, schedule_ifo_calendar
 from .gfk_api import fetch_gfk_calendar, schedule_gfk_calendar
@@ -173,6 +175,20 @@ def _dol(conn: sqlite3.Connection, dry_run: bool) -> Any:
     # DOL combines schedule + value too — each Thursday press
     # release carries the headline figures and reference week.
     return fetch_dol_calendar(conn, dry_run=dry_run)
+
+
+def _ons(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # ONS exposes per-indicator JSON timeseries that carry the
+    # latest observation plus its publication ``updateDate`` —
+    # schedule and value land together, like DOL / EIA.
+    return fetch_ons_calendar(conn, dry_run=dry_run)
+
+
+def _boe(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # BoE Bank-Rate.asp page lists every rate-change MPC decision
+    # with date + new rate. Combined schedule + value, mirroring
+    # the FOMC-statement-values shape but for past announcements.
+    return fetch_boe_calendar(conn, dry_run=dry_run)
 
 
 def _eurostat(conn: sqlite3.Connection, dry_run: bool) -> Any:
@@ -273,6 +289,8 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("ecb", _ecb),
     ("eia", _eia),
     ("dol", _dol),
+    ("ons", _ons),
+    ("boe", _boe),
     ("eurostat", _eurostat),
     ("destatis", _destatis),
     ("zew", _zew),
@@ -318,6 +336,8 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "ecb",
     "eia",
     "dol",
+    "ons",
+    "boe",
     "eurostat",
     "destatis",
     "zew",
@@ -840,13 +860,14 @@ _VALUE_SIDE_DUE_ROW_FILTERS: dict[ConnectorName, str] = {
     # through to the hourly baseline here is an explicit slice cap
     # — Issue #37 P2 candidate to add a separate trigger /
     # completion-row tracker for ECB.
-    # EIA + DOL intentionally absent — both connectors write rows
-    # only after the value is published (the API / press-release
-    # carries period + value together), so a pre-release schedule
-    # row never exists for the burst's "until ``actual`` lands"
-    # check to fire on. Falls through to the hourly baseline (same
-    # explicit slice cap as ECB above). Adding a release-time-based
-    # trigger that pre-seeds rows is the issue #37 P2 follow-up.
+    # EIA + DOL + ONS + BoE intentionally absent — each connector
+    # writes rows only after the value is published (the API /
+    # press-release / Bank Rate page carries period + value
+    # together), so a pre-release schedule row never exists for
+    # the burst's "until ``actual`` lands" check to fire on. Falls
+    # through to the hourly baseline (same explicit slice cap as
+    # ECB above). Adding a release-time-based trigger that
+    # pre-seeds rows is the issue #37 P2 follow-up.
     "eurostat":              "provider = 'eurostat'",
     "destatis":              "provider = 'destatis'",
     "zew":                   "provider = 'zew'",
@@ -1120,6 +1141,16 @@ def sweep_value_side(
         # use the browser-shaped session in :mod:`dol_api.listing`.
         return fetch_dol_calendar(conn, dry_run=dry_run)
 
+    def _ons_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # ONS JSON timeseries — each fetch returns latest period +
+        # value, so the same op fills schedule and value.
+        return fetch_ons_calendar(conn, dry_run=dry_run)
+
+    def _boe_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # BoE Bank-Rate.asp re-fetch picks up any new rate-change
+        # decision row published since the last sweep.
+        return fetch_boe_calendar(conn, dry_run=dry_run)
+
     def _eurostat_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # Eurostat JSON-stat has no auth.
         from ingestion.timeseries.sdmx.providers.eurostat import EurostatClient
@@ -1237,6 +1268,8 @@ def sweep_value_side(
         "ecb":        _ecb_values,
         "eia":        _eia_values,
         "dol":        _dol_values,
+        "ons":        _ons_values,
+        "boe":        _boe_values,
         "eurostat":   _eurostat_values,
         "destatis":   _destatis_values,
         "zew":        _zew_values,

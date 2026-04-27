@@ -39,7 +39,8 @@ def test_default_connectors_cover_every_official_source() -> None:
     """The default plan is the full official-source suite."""
     assert ALL_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
-        "nar", "ecb", "eia", "dol", "eurostat", "destatis", "zew", "ifo", "gfk", "hcob", "ec-bcs", "insee", "ine", "istat",
+        "nar", "ecb", "eia", "dol", "ons", "boe",
+        "eurostat", "destatis", "zew", "ifo", "gfk", "hcob", "ec-bcs", "insee", "ine", "istat",
         "fed-fomc", "fed-releases", "nbs", "stat-bureau-jp", "boj",
         "boj-tankan", "mof-jp", "cao", "cao-gdp", "meti",
     )
@@ -474,10 +475,12 @@ def test_value_side_default_plan_covers_connectors() -> None:
     (``fed-fomc`` / ``fed-releases``) — the value-bearing Fed op
     lives under ``fed-values``. Issue #49 adds ``nbs-values`` for
     five China indicators; issue #50 adds ``eia`` + ``dol`` (both
-    combine schedule + value)."""
+    combine schedule + value); issue #51 adds ``ons`` + ``boe``
+    (UK coverage; same schedule-and-value-together shape)."""
     assert ALL_VALUE_SIDE_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
-        "nar", "ecb", "eia", "dol", "eurostat", "destatis", "zew", "ifo", "gfk", "hcob",
+        "nar", "ecb", "eia", "dol", "ons", "boe",
+        "eurostat", "destatis", "zew", "ifo", "gfk", "hcob",
         "ec-bcs", "insee", "ine", "istat",
         "fed-values", "nbs-values",
         "stat-bureau-jp-values", "boj-values", "boj-tankan-values",
