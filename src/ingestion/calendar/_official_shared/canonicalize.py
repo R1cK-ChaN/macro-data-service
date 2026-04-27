@@ -550,6 +550,53 @@ _ALIASES: dict[str, str] = {
     "1 hafta repo": "TCMB_RATE",
     "1 hafta repo faiz oranı": "TCMB_RATE",
     "tcmb_rate": "TCMB_RATE",
+    # ── Mexico (INEGI / Banxico, issue #88 P1) ─────────────────
+    "mexico consumer price index": "CPI",
+    "mexico cpi": "CPI",
+    "mexico inflation rate": "CPI",
+    "mexican cpi": "CPI",
+    "inpc": "CPI",
+    "índice nacional de precios al consumidor": "CPI",
+    "indice nacional de precios al consumidor": "CPI",
+    # INEGI's INPC quincenal mid-month preview is a distinct release
+    # that gets its own canonical token, mirroring IPCA-15 / IPCA from
+    # the Brazil slice.
+    "mexico inpc mid-month cpi": "INPC_15",
+    "mexico inpc mid month cpi": "INPC_15",
+    "mexico inpc 15": "INPC_15",
+    "mexico mid-month inflation rate": "INPC_15",
+    "mid month inflation rate": "INPC_15",
+    "inpc_15": "INPC_15",
+    "mexico gdp": "GDP",
+    "mexico gdp growth rate": "GDP",
+    "mexican gdp": "GDP",
+    "producto interno bruto trimestral": "GDP",
+    "producto interno bruto": "GDP",
+    "mexico industrial production": "INDUSTRIAL_PRODUCTION",
+    "indicador mensual de la actividad industrial": "INDUSTRIAL_PRODUCTION",
+    "imai": "INDUSTRIAL_PRODUCTION",
+    "mexico unemployment rate": "UNEMPLOYMENT_RATE",
+    "mexican unemployment rate": "UNEMPLOYMENT_RATE",
+    "encuesta nacional de ocupación y empleo": "UNEMPLOYMENT_RATE",
+    "encuesta nacional de ocupacion y empleo": "UNEMPLOYMENT_RATE",
+    "enoe": "UNEMPLOYMENT_RATE",
+    "mexico balance of trade": "TRADE_BALANCE",
+    "mexico trade balance": "TRADE_BALANCE",
+    "mexican balance of trade": "TRADE_BALANCE",
+    "balanza comercial de mercancías de méxico": "TRADE_BALANCE",
+    "balanza comercial de mercancias de mexico": "TRADE_BALANCE",
+    # Banxico Tasa Objetivo (overnight interbank target rate), the
+    # operational policy rate since 21 January 2008.
+    "banxico interest rate decision": "BANXICO_RATE",
+    "banco de méxico interest rate decision": "BANXICO_RATE",
+    "banco de mexico interest rate decision": "BANXICO_RATE",
+    "mexico interest rate decision": "BANXICO_RATE",
+    "banxico rate decision": "BANXICO_RATE",
+    "banxico target rate": "BANXICO_RATE",
+    "tasa objetivo": "BANXICO_RATE",
+    "tasa de interés interbancaria a 1 día": "BANXICO_RATE",
+    "tasa de interes interbancaria a 1 dia": "BANXICO_RATE",
+    "banxico_rate": "BANXICO_RATE",
 }
 
 

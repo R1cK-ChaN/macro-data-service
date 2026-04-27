@@ -599,6 +599,37 @@ AGENCIES: tuple[AgencyDecl, ...] = (
         providers=("tcmb",),
         indicators=frozenset(),
     ),
+    AgencyDecl(
+        agency_id="INEGI",
+        label="Instituto Nacional de Estadística y Geografía",
+        # Provider attribution only — the P1 INEGI slice ships
+        # schedule-only events (``actual=NULL``) for CPI / INPC_15 /
+        # GDP / Industrial Production / Unemployment Rate / Trade
+        # Balance. Wiring the ``(MX, ...)`` pairs into the parity
+        # whitelist would trip the parse_failed-on-missing-actual
+        # path on every release. Same deferral as the IBGE / KOSTAT
+        # / MoSPI / TÜİK slice — P2 adds the per-release boletín
+        # scrape to fill ``actual``.
+        providers=("inegi",),
+        indicators=frozenset(),
+    ),
+    AgencyDecl(
+        agency_id="BANXICO",
+        label="Banco de México",
+        # The Banxico anuncios HTML page exposes the announcement date
+        # alongside either the absolute Tasa Objetivo (hold rows) or a
+        # basis-point delta (change rows). A cumulative walk seeded
+        # from the oldest hold under the modern Tasa Objetivo regime
+        # (21 January 2008) yields the absolute rate for every
+        # decision, so the P1 slice ships value-bearing events for
+        # every Junta de Gobierno announcement — change OR hold.
+        # Mirrors the BCB / RBA value-bearing pattern: parity
+        # whitelist lights up in P1 without a separate value-side
+        # scrape (unlike the BoC / RBI / BOK / TCMB schedule-only
+        # deferral).
+        providers=("banxico",),
+        indicators=frozenset({("MX", "BANXICO_RATE")}),
+    ),
     # NBS deliberately stays out of the parity registry in this
     # slice. The schedule connector anchors NBS rows on the *release*
     # month (April 13 release → reference_date=2026-04-01) while
