@@ -492,6 +492,64 @@ _ALIASES: dict[str, str] = {
     "copom rate decision": "BCB_RATE",
     "meta selic": "BCB_RATE",
     "bcb_rate": "BCB_RATE",
+    # ── Turkey (TÜİK / TCMB, issue #86 P1) ──────────────────────
+    # Turkish ``İ`` (U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE)
+    # lowercases to ``i`` + ``̇`` COMBINING DOT ABOVE under
+    # Python's default ``str.lower()`` — *not* a plain ``i``. Aliases
+    # whose source text contains ``İ`` carry the combining-dot form
+    # so the post-lowercase lookup matches. ASCII-fold fallbacks
+    # cover the dotless transliteration (``isgucu``, ``donemsel``)
+    # that appears in some upstream titles.
+    "turkey consumer price index": "CPI",
+    "turkey cpi": "CPI",
+    "turkish cpi": "CPI",
+    "turkey inflation rate": "CPI",
+    "tuik consumer price index": "CPI",
+    "tüfe": "CPI",
+    "tufe": "CPI",
+    "tüketici fiyat endeksi": "CPI",
+    "tuketici fiyat endeksi": "CPI",
+    "turkey producer price index": "PPI",
+    "turkey ppi": "PPI",
+    "turkish ppi": "PPI",
+    "yurt i̇çi üretici fiyat endeksi": "PPI",
+    "yurt ici uretici fiyat endeksi": "PPI",
+    "d-ppi": "PPI",
+    "yi̇-üfe": "PPI",
+    "yi-ufe": "PPI",
+    "turkey gdp": "GDP",
+    "turkish gdp": "GDP",
+    "turkey gdp growth rate": "GDP",
+    "dönemsel gayrisafi yurt i̇çi hasıla": "GDP",
+    "donemsel gayrisafi yurt ici hasila": "GDP",
+    "gayrisafi yurt i̇çi hasıla": "GDP",
+    "gayrisafi yurt ici hasila": "GDP",
+    "turkey industrial production": "INDUSTRIAL_PRODUCTION",
+    "sanayi üretim endeksi": "INDUSTRIAL_PRODUCTION",
+    "sanayi uretim endeksi": "INDUSTRIAL_PRODUCTION",
+    "turkey unemployment rate": "UNEMPLOYMENT_RATE",
+    "turkish unemployment rate": "UNEMPLOYMENT_RATE",
+    "i̇şgücü i̇statistikleri": "UNEMPLOYMENT_RATE",
+    "isgucu istatistikleri": "UNEMPLOYMENT_RATE",
+    "turkey balance of trade": "TRADE_BALANCE",
+    "turkish balance of trade": "TRADE_BALANCE",
+    "turkey trade balance": "TRADE_BALANCE",
+    "dış ticaret i̇statistikleri": "TRADE_BALANCE",
+    "dis ticaret istatistikleri": "TRADE_BALANCE",
+    # TCMB policy-rate aliases — the 1-Week Repo Auction Rate has
+    # been the operational policy rate since 20 May 2010.
+    "tcmb interest rate decision": "TCMB_RATE",
+    "central bank of turkey interest rate decision": "TCMB_RATE",
+    "tcmb rate decision": "TCMB_RATE",
+    "turkey interest rate decision": "TCMB_RATE",
+    "tcmb policy rate": "TCMB_RATE",
+    "1 week repo rate": "TCMB_RATE",
+    "1-week repo rate": "TCMB_RATE",
+    "one week repo rate": "TCMB_RATE",
+    "one-week repo rate": "TCMB_RATE",
+    "1 hafta repo": "TCMB_RATE",
+    "1 hafta repo faiz oranı": "TCMB_RATE",
+    "tcmb_rate": "TCMB_RATE",
 }
 
 

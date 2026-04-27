@@ -1647,6 +1647,9 @@ def apply_schema(connection: sqlite3.Connection) -> None:
             # Issue #84 — Brazil coverage: IBGE + Banco Central do Brasil.
             ("ibge",             "government_agency", "economic",  100, _now_iso, _now_iso),
             ("bcb",              "central_bank",      "economic",  100, _now_iso, _now_iso),
+            # Issue #86 — Turkey coverage: TÜİK + Türkiye Cumhuriyet Merkez Bankası.
+            ("tuik",             "government_agency", "economic",  100, _now_iso, _now_iso),
+            ("tcmb",             "central_bank",      "economic",  100, _now_iso, _now_iso),
             # Issue #56 — central-bank speeches calendar (Fed / ECB / BoE / BoJ).
             # Each speech connector writes its own provider id; the parity
             # harness and provider-metadata lookups need a row per id even

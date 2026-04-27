@@ -567,6 +567,38 @@ AGENCIES: tuple[AgencyDecl, ...] = (
         providers=("bcb",),
         indicators=frozenset({("BR", "BCB_RATE")}),
     ),
+    AgencyDecl(
+        agency_id="TUIK",
+        label="Türkiye İstatistik Kurumu",
+        # Provider attribution only — the P1 TÜİK slice ships
+        # schedule-only events (``actual=NULL``) for CPI / PPI / GDP /
+        # Industrial Production / Unemployment / Trade Balance. Wiring
+        # the ``(TR, ...)`` pairs into the parity whitelist would trip
+        # the parse_failed-on-missing-actual path on every release.
+        # Same deferral as the IBGE / KOSTAT / MoSPI slice — P2 adds
+        # the per-release detail-page scrape to fill ``actual``.
+        providers=("tuik",),
+        indicators=frozenset(),
+    ),
+    AgencyDecl(
+        agency_id="TCMB",
+        label="Türkiye Cumhuriyet Merkez Bankası",
+        # Provider attribution only — parity whitelist stays empty in
+        # P1. Two compounding reasons mirror the BoC Valet deferral:
+        # (a) the rate-history page's ``Tarih`` column is the new
+        # rate's *effective date*, which is one business day after
+        # the PPK announcement under TCMB's modern Thursday-meeting /
+        # Friday-effective cadence — TE buckets on the announcement
+        # date, so wiring ``(TR, TCMB_RATE)`` would generate a daily
+        # off-by-one MissingRelease alert; (b) the page lists
+        # *changes only*, so TE's hold-meeting rows have no agency
+        # counterpart and would compound the same alert class. The
+        # P2 slice that ingests per-meeting ``/Duyurular/Basin/...``
+        # press releases will give us authoritative announcement
+        # dates AND hold-decision coverage; the whitelist joins then.
+        providers=("tcmb",),
+        indicators=frozenset(),
+    ),
     # NBS deliberately stays out of the parity registry in this
     # slice. The schedule connector anchors NBS rows on the *release*
     # month (April 13 release → reference_date=2026-04-01) while

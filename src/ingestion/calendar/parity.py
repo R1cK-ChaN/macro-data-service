@@ -72,6 +72,8 @@ OFFICIAL_PROVIDERS: tuple[str, ...] = (
     "kostat", "bok",
     # Issue #84 — Brazil coverage (IBGE release calendar + BCB Copom history).
     "ibge", "bcb",
+    # Issue #86 — Turkey coverage (TÜİK release calendar + TCMB 1-week repo history).
+    "tuik", "tcmb",
 )
 
 
