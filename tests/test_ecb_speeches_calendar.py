@@ -3,9 +3,12 @@
 The captured fixture
 ``tests/fixtures/ecb_speeches/all_ECB_speeches.csv`` was downloaded
 live on 2026-04-27 from
-``ecb.europa.eu/press/key/shared/data/all_ECB_speeches.csv``.
-~3,000 rows covering Executive Board speeches back to the late
-1990s.
+``ecb.europa.eu/press/key/shared/data/all_ECB_speeches.csv``ed and trimmed
+to 2018-01-01 onward (~880 rows). The full upstream CSV is ~3,000
+rows / 57 MB and exceeds GitHub's recommended max file size; the
+slimmed fixture covers the same parser surfaces (Executive Board
+speakers, monthly density, recent + lookback) without bloating the
+repo.
 
 No real HTTP in CI — every test injects the ``csv_fetcher`` seam.
 """
@@ -47,7 +50,7 @@ def test_parse_speeches_csv_extracts_recent_entries() -> None:
     """The fixture's most recent entries (2026-Q1) must parse with
     speaker / title / subtitle intact."""
     speeches = parse_speeches_csv(_csv_text())
-    assert len(speeches) >= 2_000
+    assert len(speeches) >= 500
     schnabel = next(
         s for s in speeches
         if s.delivery_date.isoformat() == "2026-03-27"
@@ -172,9 +175,9 @@ def test_speech_to_records_falls_back_to_bare_title_for_empty_speaker() -> None:
 def test_fetch_ecb_speeches_calendar_writes_one_event_per_speech(
     store: SQLiteEngineStore,
 ) -> None:
-    """The 2026-04 fixture lists ~3,000 speeches back to the late
-    1990s. Use ≥ 2,000 to absorb any historical addition between
-    fixture capture and CI runs."""
+    """The trimmed fixture (2018+) lists ~880 speeches; use ≥ 500 to
+    absorb any future re-trim while still exercising the multi-row
+    projection surface."""
     def fetcher() -> str:
         return _csv_text()
 
@@ -186,7 +189,7 @@ def test_fetch_ecb_speeches_calendar_writes_one_event_per_speech(
             snapshot_epoch_ms=1_800_000_000_000,
         )
     assert summary.fetch_error is None
-    assert summary.speeches_parsed >= 2_000
+    assert summary.speeches_parsed >= 500
     assert summary.events_upserted == summary.speeches_parsed
 
 
@@ -231,11 +234,11 @@ def test_fetch_ecb_speeches_calendar_idempotent_on_repeat(
     store: SQLiteEngineStore,
 ) -> None:
     """A second sweep over the same CSV must not add new rows. The
-    historical CSV carries a small number of (date, title) pairs
-    that collide intentionally (an upstream T2S Framework Agreement
-    address is the worked example) — those collapse to one event id
-    and the row count after the second sweep equals the row count
-    after the first."""
+    slug-anchored provider_event_id collapses re-projected rows on
+    upsert; a small number of historical (date, title) pairs in the
+    upstream CSV (an old T2S Framework Agreement address is the
+    canonical example, dropped from the trimmed 2018+ fixture)
+    would collapse the same way."""
     def fetcher() -> str:
         return _csv_text()
     with store._connection(commit=True) as conn:
