@@ -196,8 +196,10 @@ def test_cal_provider_seeded(store: SQLiteEngineStore) -> None:
         ("ons",              "government_agency", "economic",  100),
         ("rba",              "central_bank",      "economic",  100),
         ("rbi",              "central_bank",      "economic",  100),
+        ("sarb",             "central_bank",      "economic",  100),
         ("stat-bureau-jp",   "government_agency", "economic",  100),
         ("statcan",          "government_agency", "economic",  100),
+        ("statssa",          "government_agency", "economic",  100),
         ("tcmb",             "central_bank",      "economic",  100),
         ("tradingeconomics", "data_aggregator",   "economic",  10),
         ("tuik",             "government_agency", "economic",  100),
@@ -213,8 +215,9 @@ def test_cal_provider_seed_idempotent(tmp_path: Path) -> None:
     second = SQLiteEngineStore(db_path=db)
     with second._connection(commit=False) as c:
         n = c.execute("SELECT COUNT(*) FROM cal_provider").fetchone()[0]
-    # 43 (#56 baseline) + 4 (#84 ibge/bcb, #86 tuik/tcmb) + 2 (#88 inegi/banxico) = 49.
-    assert n == 49
+    # 43 (#56 baseline) + 4 (#84 ibge/bcb, #86 tuik/tcmb) + 2 (#88 inegi/banxico)
+    # + 2 (#90 statssa/sarb) = 51.
+    assert n == 51
 
 
 def test_importance_flows_through_view_as_enum_string(store: SQLiteEngineStore) -> None:

@@ -630,6 +630,38 @@ AGENCIES: tuple[AgencyDecl, ...] = (
         providers=("banxico",),
         indicators=frozenset({("MX", "BANXICO_RATE")}),
     ),
+    AgencyDecl(
+        agency_id="STATSSA",
+        label="Statistics South Africa",
+        # Provider attribution only — the P1 Stats SA slice ships
+        # schedule-only events (``actual=NULL``) for CPI / PPI / GDP /
+        # QLFS / Mining / Manufacturing / Retail Sales. Wiring the
+        # ``(ZA, ...)`` pairs into the parity whitelist would trip the
+        # parse_failed-on-missing-actual path on every release. Same
+        # deferral pattern as IBGE / KOSTAT / MoSPI / TÜİK / INEGI —
+        # P2 adds the per-release detail-page scrape to fill ``actual``.
+        providers=("statssa",),
+        indicators=frozenset(),
+    ),
+    AgencyDecl(
+        agency_id="SARB",
+        label="South African Reserve Bank",
+        # Provider attribution only — parity whitelist stays empty in
+        # P1. Two compounding reasons mirror the BoC Valet / TCMB
+        # rate-history deferral: (a) the MRDREPOR ``Period`` field is
+        # the new rate's *effective date*, which is one business day
+        # after the SARB MPC announcement under the modern Thursday-
+        # meeting cadence — TE buckets on the announcement date, so
+        # wiring ``(ZA, SARB_RATE)`` would generate a daily off-by-one
+        # MissingRelease alert; (b) the endpoint lists *changes only*,
+        # so TE's hold-meeting rows have no agency counterpart and
+        # would compound the same alert class. The P2 slice that
+        # ingests the per-meeting MPC statements gives us authoritative
+        # announcement dates AND hold-decision coverage; the whitelist
+        # joins then.
+        providers=("sarb",),
+        indicators=frozenset(),
+    ),
     # NBS deliberately stays out of the parity registry in this
     # slice. The schedule connector anchors NBS rows on the *release*
     # month (April 13 release → reference_date=2026-04-01) while

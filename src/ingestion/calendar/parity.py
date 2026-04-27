@@ -76,6 +76,8 @@ OFFICIAL_PROVIDERS: tuple[str, ...] = (
     "tuik", "tcmb",
     # Issue #88 — Mexico coverage (INEGI release calendar + Banxico Tasa Objetivo history).
     "inegi", "banxico",
+    # Issue #90 — South Africa coverage (Stats SA Publication Schedule + SARB MRDREPOR repo-rate history).
+    "statssa", "sarb",
 )
 
 

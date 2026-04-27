@@ -106,6 +106,8 @@ from .tuik_api import fetch_tuik_calendar
 from .tcmb_api import fetch_tcmb_calendar
 from .inegi_api import fetch_inegi_calendar
 from .banxico_api import fetch_banxico_calendar
+from .statssa_api import fetch_statssa_calendar
+from .sarb_api import fetch_sarb_calendar
 from .zew_api import fetch_zew_calendar, schedule_zew_calendar
 from .ifo_api import fetch_ifo_calendar, schedule_ifo_calendar
 from .gfk_api import fetch_gfk_calendar, schedule_gfk_calendar
@@ -340,6 +342,26 @@ def _banxico(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_banxico_calendar(conn, dry_run=dry_run)
 
 
+def _statssa(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # Stats SA Publication Schedule AJAX sweep — schedule-only slice
+    # (issue #90). One POST per month inside a current + 14-month
+    # rolling window. Indicators match on the Stats SA Publication
+    # Number (``PPN``) plus a per-indicator cadence filter.
+    # ``actual=NULL`` until the P2 per-release detail-page scrape lands.
+    return fetch_statssa_calendar(conn, dry_run=dry_run)
+
+
+def _sarb(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # SARB MRDREPOR JSON timeseries re-fetch picks up any new repo-rate
+    # change since the last sweep. The endpoint lists *changes only*
+    # (hold decisions deferred to P2); each row carries the new policy
+    # rate inline next to the effective date, so the P1 slice ships
+    # value-bearing events on day one. Same TCMB-shape deferral —
+    # parity whitelist stays empty until a P2 MPC-statement scrape
+    # delivers authoritative announcement dates AND hold coverage.
+    return fetch_sarb_calendar(conn, dry_run=dry_run)
+
+
 def _eurostat(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_eurostat_calendar(conn, dry_run=dry_run)
 
@@ -484,6 +506,8 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("tcmb", _tcmb),
     ("inegi", _inegi),
     ("banxico", _banxico),
+    ("statssa", _statssa),
+    ("sarb", _sarb),
     ("eurostat", _eurostat),
     ("destatis", _destatis),
     ("zew", _zew),
@@ -549,6 +573,8 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "tcmb",
     "inegi",
     "banxico",
+    "statssa",
+    "sarb",
     "eurostat",
     "destatis",
     "zew",
@@ -1459,6 +1485,21 @@ def sweep_value_side(
         # so the same op fills schedule and value.
         return fetch_banxico_calendar(conn, dry_run=dry_run)
 
+    def _statssa_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # Stats SA Publication Schedule re-fetch picks up newly-
+        # scheduled indicator releases. P1 publishes schedule-only
+        # rows; the per-release detail-page scrape that fills
+        # ``actual`` is the P2 follow-up.
+        return fetch_statssa_calendar(conn, dry_run=dry_run)
+
+    def _sarb_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # SARB MRDREPOR JSON re-fetch picks up any new repo-rate
+        # change since the last sweep. Each fetch returns the new
+        # policy rate inline next to the effective date, so the same
+        # op fills schedule and value (rate changes only — holds
+        # deferred to P2).
+        return fetch_sarb_calendar(conn, dry_run=dry_run)
+
     def _fed_speeches_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # Fed speeches archive re-fetch picks up newly-posted Board
         # speeches throughout the day. Schedule-only — no value to
@@ -1615,6 +1656,8 @@ def sweep_value_side(
         "tcmb":       _tcmb_values,
         "inegi":      _inegi_values,
         "banxico":    _banxico_values,
+        "statssa":    _statssa_values,
+        "sarb":       _sarb_values,
         "eurostat":   _eurostat_values,
         "destatis":   _destatis_values,
         "zew":        _zew_values,

@@ -1653,6 +1653,9 @@ def apply_schema(connection: sqlite3.Connection) -> None:
             # Issue #88 — Mexico coverage: INEGI + Banco de México.
             ("inegi",            "government_agency", "economic",  100, _now_iso, _now_iso),
             ("banxico",          "central_bank",      "economic",  100, _now_iso, _now_iso),
+            # Issue #90 — South Africa coverage: Stats SA + SARB.
+            ("statssa",          "government_agency", "economic",  100, _now_iso, _now_iso),
+            ("sarb",             "central_bank",      "economic",  100, _now_iso, _now_iso),
             # Issue #56 — central-bank speeches calendar (Fed / ECB / BoE / BoJ).
             # Each speech connector writes its own provider id; the parity
             # harness and provider-metadata lookups need a row per id even
