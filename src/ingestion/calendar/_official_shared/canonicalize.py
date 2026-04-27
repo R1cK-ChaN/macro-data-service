@@ -357,6 +357,22 @@ _ALIASES: dict[str, str] = {
     "japan retail sales": "RETAIL_SALES",
     "china manufacturing pmi": "MFG_PMI",
     "china non-manufacturing pmi": "NON_MFG_PMI",
+    # ── United Kingdom (ONS / BoE, issue #51 P1) ────────────────
+    "uk inflation rate": "CPI",
+    "uk consumer price index": "CPI",
+    "united kingdom inflation rate": "CPI",
+    "uk gdp": "GDP",
+    "uk gdp growth rate": "GDP",
+    "united kingdom gdp": "GDP",
+    "united kingdom gdp growth rate": "GDP",
+    "uk unemployment rate": "UNEMPLOYMENT_RATE",
+    "united kingdom unemployment rate": "UNEMPLOYMENT_RATE",
+    "boe interest rate decision": "BOE_RATE",
+    "bank of england interest rate decision": "BOE_RATE",
+    "uk bank rate": "BOE_RATE",
+    "uk official bank rate": "BOE_RATE",
+    "official bank rate": "BOE_RATE",
+    "boe_rate": "BOE_RATE",
 }
 
 

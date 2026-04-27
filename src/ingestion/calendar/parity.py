@@ -58,6 +58,10 @@ OFFICIAL_PROVIDERS: tuple[str, ...] = (
     "bls", "bea", "census", "ism", "umich", "conference-board",
     "nar", "ecb", "eurostat", "destatis", "zew", "ifo", "gfk", "hcob", "ec-bcs", "insee", "ine", "istat", "federal-reserve", "nbs", "mof-jp", "cao",
     "meti", "stat-bureau-jp",
+    # Issue #51 — UK coverage (ONS releases + BoE rate decisions).
+    # Without these ids, parity rows from the new connectors are
+    # classified as TE-only and surface as false gaps.
+    "ons", "boe",
 )
 
 

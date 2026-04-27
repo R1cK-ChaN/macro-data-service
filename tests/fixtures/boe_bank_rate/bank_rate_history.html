@@ -1,0 +1,1688 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+    <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-type" content="text/html; charset=utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="format-detection" content="telephone=no">
+    <title>Bank Rate history and data | Bank of England Database</title>
+    <link rel="shortcut icon" href="favicon.ico" type="image/x-icon">
+<link rel="stylesheet" href="assets/css/layout.css">
+    <link rel="stylesheet" href="assets/css/style.css">
+    <link rel="stylesheet" href="assets/css/print.css" media="print">
+    <script>
+// akam-sw.js install script version 1.3.6
+"serviceWorker"in navigator&&"find"in[]&&function(){var e=new Promise(function(e){"complete"===document.readyState||!1?e():(window.addEventListener("load",function(){e()}),setTimeout(function(){"complete"!==document.readyState&&e()},1e4))}),n=window.akamServiceWorkerInvoked,r="1.3.6";if(n)aka3pmLog("akam-setup already invoked");else{window.akamServiceWorkerInvoked=!0,window.aka3pmLog=function(){window.akamServiceWorkerDebug&&console.log.apply(console,arguments)};function o(e){(window.BOOMR_mq=window.BOOMR_mq||[]).push(["addVar",{"sm.sw.s":e,"sm.sw.v":r}])}var i="/akam-sw.js",a=new Map;navigator.serviceWorker.addEventListener("message",function(e){var n,r,o=e.data;if(o.isAka3pm)if(o.command){var i=(n=o.command,(r=a.get(n))&&r.length>0?r.shift():null);i&&i(e.data.response)}else if(o.commandToClient)switch(o.commandToClient){case"enableDebug":window.akamServiceWorkerDebug||(window.akamServiceWorkerDebug=!0,aka3pmLog("Setup script debug enabled via service worker message"),v());break;case"boomerangMQ":o.payload&&(window.BOOMR_mq=window.BOOMR_mq||[]).push(o.payload)}aka3pmLog("akam-sw message: "+JSON.stringify(e.data))});var t=function(e){return new Promise(function(n){var r,o;r=e.command,o=n,a.has(r)||a.set(r,[]),a.get(r).push(o),navigator.serviceWorker.controller&&(e.isAka3pm=!0,navigator.serviceWorker.controller.postMessage(e))})},c=function(e){return t({command:"navTiming",navTiming:e})},s=null,m={},d=function(){var e=i;return s&&(e+="?othersw="+encodeURIComponent(s)),function(e,n){return new Promise(function(r,i){aka3pmLog("Registering service worker with URL: "+e),navigator.serviceWorker.register(e,n).then(function(e){aka3pmLog("ServiceWorker registration successful with scope: ",e.scope),r(e),o(1)}).catch(function(e){aka3pmLog("ServiceWorker registration failed: ",e),o(0),i(e)})})}(e,m)},g=navigator.serviceWorker.__proto__.register;if(navigator.serviceWorker.__proto__.register=function(n,r){return n.includes(i)?g.call(this,n,r):(aka3pmLog("Overriding registration of service worker for: "+n),s=new URL(n,window.location.href),m=r,navigator.serviceWorker.controller?new Promise(function(n,r){var o=navigator.serviceWorker.controller.scriptURL;if(o.includes(i)){var a=encodeURIComponent(s);o.includes(a)?(aka3pmLog("Cancelling registration as we already integrate other SW: "+s),navigator.serviceWorker.getRegistration().then(function(e){n(e)})):e.then(function(){aka3pmLog("Unregistering existing 3pm service worker"),navigator.serviceWorker.getRegistration().then(function(e){e.unregister().then(function(){return d()}).then(function(e){n(e)}).catch(function(e){r(e)})})})}else aka3pmLog("Cancelling registration as we already have akam-sw.js installed"),navigator.serviceWorker.getRegistration().then(function(e){n(e)})}):g.call(this,n,r))},navigator.serviceWorker.controller){var u=navigator.serviceWorker.controller.scriptURL;u.includes("/akam-sw.js")||u.includes("/akam-sw-preprod.js")||u.includes("/threepm-sw.js")||(aka3pmLog("Detected existing service worker. Removing and re-adding inside akam-sw.js"),s=new URL(u,window.location.href),e.then(function(){navigator.serviceWorker.getRegistration().then(function(e){m={scope:e.scope},e.unregister(),d()})}))}else e.then(function(){window.akamServiceWorkerPreprod&&(i="/akam-sw-preprod.js"),d()});if(window.performance){var w=window.performance.timing,l=w.responseEnd-w.responseStart;c(l)}e.then(function(){t({command:"pageLoad"})});var k=!1;function v(){window.akamServiceWorkerDebug&&!k&&(k=!0,aka3pmLog("Initializing debug functions at window scope"),window.aka3pmInjectSwPolicy=function(e){return t({command:"updatePolicy",policy:e})},window.aka3pmDisableInjectedPolicy=function(){return t({command:"disableInjectedPolicy"})},window.aka3pmDeleteInjectedPolicy=function(){return t({command:"deleteInjectedPolicy"})},window.aka3pmGetStateAsync=function(){return t({command:"getState"})},window.aka3pmDumpState=function(){aka3pmGetStateAsync().then(function(e){aka3pmLog(JSON.stringify(e,null,"\t"))})},window.aka3pmInjectTiming=function(e){return c(e)},window.aka3pmUpdatePolicyFromNetwork=function(){return t({command:"pullPolicyFromNetwork"})})}v()}}();</script>
+<script>
+        var el = document.getElementsByTagName('html')[0];
+        if(el.classList){el.classList.remove('no-js')}else{el.className = el.className.replace('no-js', '')}
+    </script>
+    <script src="assets/js/jquery-2.2.4.min.js"></script>
+
+<!--[if lte IE 9]>
+    <link rel="stylesheet" href="/assets/css/ie.css">
+<![endif]-->
+    <!--[if (lt IE 9) & (!IEMobile)]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.2/html5shiv.min.js"></script>
+<![endif]-->
+
+	<!-- Google Tag Manager -->
+	<script>
+
+		var CheckCookies = {
+			getCookie: function (cname) {
+				var name = cname + "=";
+				var decodedCookie = decodeURIComponent(document.cookie);
+				var ca = decodedCookie.split(';');
+				for (var i = 0; i < ca.length; i++) {
+					var c = ca[i];
+					while (c.charAt(0) === ' ') {
+						c = c.substring(1);
+					}
+					if (c.indexOf(name) === 0) {
+						return c.substring(name.length, c.length);
+					}
+				}
+				return "";
+			}
+		};
+		var SetAnalytics = {
+			setTagManager: function () {
+
+				var hasConsentAnalytics = CheckCookies.getCookie('boeconsent');
+
+				if (hasConsentAnalytics === "analytics") {
+					(function (w, d, s, l, i) {
+						w[l] = w[l] || []; w[l].push({
+							'gtm.start':
+								new Date().getTime(), event: 'gtm.js'
+						}); var f = d.getElementsByTagName(s)[0],
+							j = d.createElement(s), dl = l != 'dataLayer' ? '&l=' + l : ''; j.async = true; j.src =
+								'https://www.googletagmanager.com/gtm.js?id=' + i + dl; f.parentNode.insertBefore(j, f);
+					})(window, document, 'script', 'dataLayer', 'GTM-TH2H9ZC');
+				}
+			},
+		}
+		SetAnalytics.setTagManager();
+	</script>
+	<!-- End Google Tag Manager -->
+
+<link rel="stylesheet" href="assets/DataTables/dataTables.min.css">
+<script src="assets/DataTables/jquery.dataTables.min.js"> </script>
+<script src="assets/DataTables/moment.min.js"></script>
+<script src="assets/DataTables/datetime-moment.js"></script>
+
+<!-- Data export scripts -->
+
+<script type="text/javascript" src="assets/DataTables/JSZip-2.5.0/jszip.min.js"></script>
+
+<script type="text/javascript" src="assets/DataTables/Buttons-1.4.2/js/dataTables.buttons.min.js"></script>
+<script type="text/javascript" src="assets/DataTables/Buttons-1.4.2/js/buttons.html5.min.js"></script>
+<script type="text/javascript" src="assets/DataTables/Buttons-1.4.2/js/buttons.print.min.js"></script>
+<script>
+$(document).ready(function() {
+    $.fn.dataTable.moment( 'DD MMM YY' );	
+	$('#stats-table').DataTable( {
+    paging: false,
+        "info":     false,
+		"order": [ 0, 'desc' ],
+	fixedHeader: {
+        header: true
+    },
+	 dom: 'Bfrtip',
+        buttons: [
+            'copy', 'csv', 'excel', 'print'
+        ]
+    } );
+	
+} );
+</script>
+
+
+   <script>
+	$(window).load(function() {
+		// Animate loader off screen
+		$(".se-pre-con").fadeOut("slow");;
+	});
+</script>
+<style>
+/* This only works with JavaScript, 
+if it's not present, don't show loader */
+.no-js #loader { display: none;  }
+.js #loader { display: block; position: absolute; left: 100px; top: 0; }
+.se-pre-con {
+	position: fixed;
+	left: 0px;
+	top: 0px;
+	width: 100%;
+	height: 100%;
+	z-index: 9999;
+	background: url(assets/img/preloader.gif) center no-repeat #fff;
+}
+</style>
+
+<style>
+.dataset {width: 90% }
+table.dataTable thead th, table.dataTable thead td {    padding: 10px;
+    border-bottom: 1px solid #111;
+    text-align: left;
+    font-size: 90%;
+    border: solid 1px #e5e5e5;
+}table.dataTable tbody th, table.dataTable tbody td {
+    padding: 8px 10px;
+    border: solid 1px #e5e5e5;
+}.sorting, table.dataTable thead .sorting_asc, table.dataTable thead .sorting_desc, table.dataTable thead .sorting_asc_disabled, table.dataTable thead .sorting_desc_disabled, .sorting, table.dataTable thead .sorting_asc, table.dataTable thead .sorting_desc, table.dataTable thead .sorting_asc_disabled, table.dataTable thead .sorting_desc_disabled {
+    background-position: bottom right !important;}
+</style>
+    
+<script>(window.BOOMR_mq=window.BOOMR_mq||[]).push(["addVar",{"rua.upush":"false","rua.cpush":"false","rua.upre":"false","rua.cpre":"false","rua.uprl":"false","rua.cprl":"false","rua.cprf":"false","rua.trans":"","rua.cook":"false","rua.ims":"false","rua.ufprl":"false","rua.cfprl":"false","rua.isuxp":"false","rua.texp":"norulematch","rua.ceh":"false","rua.ueh":"false","rua.ieh.st":"0"}]);</script>
+                                <script>!function(a){var e="https://s.go-mpulse.net/boomerang/",t="addEventListener";if("False"=="True")a.BOOMR_config=a.BOOMR_config||{},a.BOOMR_config.PageParams=a.BOOMR_config.PageParams||{},a.BOOMR_config.PageParams.pci=!0,e="https://s2.go-mpulse.net/boomerang/";if(window.BOOMR_API_key="9R3WH-S6EDC-8JGQW-55286-CGTTF",function(){function n(e){a.BOOMR_onload=e&&e.timeStamp||(new Date).getTime()}if(!a.BOOMR||!a.BOOMR.version&&!a.BOOMR.snippetExecuted){a.BOOMR=a.BOOMR||{},a.BOOMR.snippetExecuted=!0;var i,_,o,r=document.createElement("iframe");if(a[t])a[t]("load",n,!1);else if(a.attachEvent)a.attachEvent("onload",n);r.src="javascript:void(0)",r.title="",r.role="presentation",(r.frameElement||r).style.cssText="width:0;height:0;border:0;display:none;",o=document.getElementsByTagName("script")[0],o.parentNode.insertBefore(r,o);try{_=r.contentWindow.document}catch(O){i=document.domain,r.src="javascript:var d=document.open();d.domain='"+i+"';void(0);",_=r.contentWindow.document}_.open()._l=function(){var a=this.createElement("script");if(i)this.domain=i;a.id="boomr-if-as",a.src=e+"9R3WH-S6EDC-8JGQW-55286-CGTTF",BOOMR_lstart=(new Date).getTime(),this.body.appendChild(a)},_.write("<bo"+'dy onload="document._l();">'),_.close()}}(),"".length>0)if(a&&"performance"in a&&a.performance&&"function"==typeof a.performance.setResourceTimingBufferSize)a.performance.setResourceTimingBufferSize();!function(){if(BOOMR=a.BOOMR||{},BOOMR.plugins=BOOMR.plugins||{},!BOOMR.plugins.AK){var e=""=="true"?1:0,t="",n="o7vlzhyxb5wws2poxita-f-ff6cdae1b-clientnsv4-s.akamaihd.net",i="false"=="true"?2:1,_={"ak.v":"41","ak.cp":"1078495","ak.ai":parseInt("286733",10),"ak.ol":"0","ak.cr":15,"ak.ipv":4,"ak.proto":"h2","ak.rid":"4c18b7a6","ak.r":47858,"ak.a2":e,"ak.m":"a","ak.n":"essl","ak.cport":45064,"ak.gh":"23.54.117.196","ak.quicv":"","ak.tlsv":"tls1.3","ak.0rtt":"","ak.0rtt.ed":"","ak.csrc":"-","ak.acc":"","ak.t":"1777252902","ak.ak":"hOBiQwZUYzCg5VSAfCLimQ==CgGvwrB2rHTuCvmssvu11T4S5pPsqbg2Bxiek0E3yI8y7ssxV7Hh37noMyWUYZiL/7/UEnN7ib7biWH2P2g3mSrDg9MI8E/54jdHkOD9oRZOEp9g2aDhhUfrXJejQg5FArZyMIC3BVtLyguITvtgsw1ax2MQkLHEFU4+zVmWXo20KvGWYEkJpHw6j1orj0a93Z+FnlXrsR22psFWBFgd1lglFI+x8ORqtFr9nT9tkkySp6mFto6bBHr5ZSn2yWtYHhWJhFV6Ek6wIyEBa0ANudit3yo2NVqbij5J7tkiMITqB214achgzAgP/v+1SxBJiPI7YcBmt48PGX3/M1Gr1ZUdZugLR9d23BgYFT6x9CLryAoyVzUivHpTDuGt9dvOSnYtDgDKAeYxVysCd2wc3ERq9y4Z9sYwfGiuBBGYf2k=","ak.pv":"348","ak.dpoabenc":"","ak.tf":i};if(""!==t)_["ak.ruds"]=t;var o={i:!1,av:function(e){var t="http.initiator";if(e&&(!e[t]||"spa_hard"===e[t]))_["ak.feo"]=void 0!==a.aFeoApplied?1:0,BOOMR.addVar(_)},rv:function(){var a=["ak.cport","ak.cr","ak.csrc","ak.gh","ak.ipv","ak.m","ak.n","ak.ol","ak.proto","ak.quicv","ak.tlsv","ak.0rtt","ak.0rtt.ed","ak.r","ak.acc","ak.t","ak.tf"];BOOMR.removeVar(a)}};BOOMR.plugins.AK={akVars:_,akDNSPreFetchDomain:n,init:function(){if(!o.i){var a=BOOMR.subscribe;a("before_beacon",o.av,null,null),a("onbeacon",o.rv,null,null),o.i=!0}return this},is_complete:function(){return!0}}}}()}(window);</script></head>
+    <body>
+    <div class="se-pre-con"></div>
+
+    <div class="wrap" itemscope itemtype="http://schema.org/WebPage">
+		<div class="nav-bypass">
+			<a href="#content-start" class="nav-bypass__link">Skip to main content</a>
+		</div>
+<header class="global-header" itemscope itemtype="http://schema.org/WPHeader">
+  <div class="header-brand" itemscope itemtype="http://schema.org/Organisation"> <a href="default.asp" class="header-logo" itemscope itemtype="http://schema.org/Brand"> <img src="assets/img/logo.svg" alt="Bank of England | Database" width="330" > Bank of England | Database </a> </div>
+  <a href="#menu" class="btn-menu"><i class="icon-menu"></i> <i class="icon-cancel"></i></a> <a href="#search" class="btn-search"><i class="icon-cancel"></i></a>
+  <div class="header-nav" id="#menu">
+    <nav class="nav-main" itemscope itemtype="http://schema.org/SiteNavigationElement">
+      <ul class="nav-main-menu">
+        <li class="nav-main-item nav-browse-menu-item"> <a href="CategoryIndex.asp?Travel=NIxAZx&CategId=allcats&CategName=Combined A to Z" class="nav-main-link nav-browse-menu-link"><span style="text-transform:none">Browse data<i class="icon-up-dir"></i><i class="icon-down-dir"></i></span></a>
+          <ul class="nav-browse-menu">
+            <li class="nav-browse-item"><a href="BankStats.asp?Travel=NIx" class="nav-browse-link">Topics</a></li>
+            <li class="nav-browse-item"><a href="/statistics/Tables" title="Table references (main website)" target="_blank" class="nav-browse-link">Tables</a></li>
+            <li class="nav-browse-item"><a href="CategoryIndex.asp?Travel=NIxAZx&CategId=9&CategName=COUNTRY" class="nav-browse-link">Countries</a></li>
+            <li class="nav-browse-item"><a href="CategoryIndex.asp?Travel=NIxAZx&CategId=6&CategName=INSTRUMENTS" class="nav-browse-link">Financial categories</a></li>
+             <li class="nav-browse-item"><a href="CategoryIndex.asp?Travel=NIxAZx&CategId=sectorcats&CategName=SECTOR" class="nav-browse-link">Economic/industrial sectors</a></li>
+             <li class="nav-browse-item"><a href="CategoryIndex.asp?Travel=NIxAZx&CategId=allcats&CategName=Combined A to Z" class="nav-browse-link">A-Z</a></li>
+            
+           
+          </ul>
+        </li>
+        <li class="nav-main-item nav-has-children"> <a href="index.asp?Travel=NIxIRx&levels=3&XNotes=Y&A3951XNode3951.x=10&A3951XNode3951.y=12&Nodes=&SectionRequired=I&HideNums=-1&ExtraInfo=true#BM" class="nav-main-link"><span>Exchange rates<i class="icon-up-dir"></i><i class="icon-down-dir"></i></span></a>
+          <ul class="nav-sub-menu">
+            <li class="nav-sub-item"><a href="Rates.asp?Travel=NIxAZx&into=GBP" class="nav-sub-link"><abbr title="British pound sterling">GBP</abbr> daily  rates</a></li>
+            <li class="nav-sub-item"><a href="Rates.asp?Travel=NIxAZx&into=EUR" class="nav-sub-link"><abbr title="Euro">EUR</abbr> daily rates</a></li>
+            
+            <li class="nav-sub-item"><a href="Rates.asp?Travel=NIxAZx&into=USD" class="nav-sub-link"><abbr title="US Dollars">USD</abbr> daily rates</a></li>
+            <li class="nav-sub-item"><a href="index.asp?first=yes&SectionRequired=I&HideNums=-1&ExtraInfo=true&Travel=NIx" class="nav-sub-link">View all</a></li>
+          </ul>
+        </li>
+        <li class="nav-main-item"><a href="Help.asp?Travel=NIxASx&Back=AdvSearch.asp" class="nav-main-link"><span>Help</span></a></li>
+        <li class="nav-main-item item-mainsite-link"><a href="https://www.bankofengland.co.uk" class="nav-main-link"><span>Bank of England website</span></a></li>
+      </ul>
+    </nav>
+    <div class="search-widget" id="search">
+      <form method="get" action="FromShowColumns.asp">
+        <fieldset class="search-widget-fields" >
+		<legend class="visually-hidden">Search the database</legend>
+          <label for="gsc-i-id1" class="visually-hidden">Search</label>
+          <input type="hidden" name="Travel" value="" />
+          <input name="searchText" type="search" id="gsc-i-id1" placeholder="Search our data..." title="search" autoComplete="off" size=10 class="search-widget-field" />
+          <button type="submit" class="search-widget-btn">Search</button>
+
+        </fieldset>
+      </form>
+    </div>
+  </div>
+</header>
+<span id="content-start"></span>
+
+      <section class="page-banner"> 
+
+        <div class="container">
+          <div class="col9 m-3_4">
+            <h1 itemprop="name">Official Bank Rate history</h1>
+            <div class="page-description" itemprop="description">
+              <p class="hero">See how the Bank of England's <em>Bank Rate</em> changed over time</p>
+            </div>
+          </div>
+          <div class="col3 m-1_4">
+            <div class="related-links-wrap">
+              <h3>Related links <i class="links-toggle"></i></h3>
+              <ul class="related-links">
+                <li><a href="https://www.bankofengland.co.uk/monetary-policy/the-interest-rate-bank-rate" target="_blank">Learn about interest rates and Bank Rate</a></li>
+                <li><a href="https://www.bankofengland.co.uk/statistics/details/further-details-about-wholesale-baserate-data" target="_blank">Information about wholesale baserate data</a></li>
+                
+                
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+      
+      <div class="page-content">
+        <section class="page-section">
+          <div class="container">
+            <div class="col12">
+          
+              
+			  <div class="featured-stat">
+    <p class="stat-intro">Current official Bank Rate</p>
+    <p class="stat-figure">3.75%</p>
+ 
+</div> 	
+
+
+<h3>Official Bank Rate</h3><iframe src="ShowChart.asp?html.x=yes&Datefrom=-120&Dateto=&SeriesCodes=IUDBEDR&UsingCodes=Y&VPD=Y&VFD=N&label1=Bank Rate&label2=&label3=&label4=&label5=&frequency=DD&axis=Bank Rate %" style="border:0px #ffffff none;margin-bottom:20px" name="chart" scrolling="no" frameborder="0" marginheight="0px" marginwidth="0px" height="500px" width="100%px" allowfullscreenv title="Chart of official Bank Rate"></iframe>
+
+<h3>Export the data</h3>
+							<table  align="center" class="display localtable" id="stats-table" style="display:table"  >
+                            <thead>
+								<tr>
+									<th align="left" width="115">Date Changed</th>
+									<th align="right" width="50">Rate</th>
+								</tr>
+                                </thead>
+                                <tbody>
+								
+									<tr>
+										<td align="left">18 Dec 25</td>
+										<td align="right">  3.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">07 Aug 25</td>
+										<td align="right">  4.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 May 25</td>
+										<td align="right">  4.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">06 Feb 25</td>
+										<td align="right">  4.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">07 Nov 24</td>
+										<td align="right">  4.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">01 Aug 24</td>
+										<td align="right">  5.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">03 Aug 23</td>
+										<td align="right">  5.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">22 Jun 23</td>
+										<td align="right">  5.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">11 May 23</td>
+										<td align="right">  4.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">23 Mar 23</td>
+										<td align="right">  4.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">02 Feb 23</td>
+										<td align="right">  4.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">15 Dec 22</td>
+										<td align="right">  3.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">03 Nov 22</td>
+										<td align="right">  3.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">22 Sep 22</td>
+										<td align="right">  2.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">04 Aug 22</td>
+										<td align="right">  1.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">16 Jun 22</td>
+										<td align="right">  1.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">05 May 22</td>
+										<td align="right">  1.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">17 Mar 22</td>
+										<td align="right">  0.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">03 Feb 22</td>
+										<td align="right">  0.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">16 Dec 21</td>
+										<td align="right">  0.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">19 Mar 20</td>
+										<td align="right">  0.10</td>
+									</tr>
+									
+									<tr>
+										<td align="left">11 Mar 20</td>
+										<td align="right">  0.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">02 Aug 18</td>
+										<td align="right">  0.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">02 Nov 17</td>
+										<td align="right">  0.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">04 Aug 16</td>
+										<td align="right">  0.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">05 Mar 09</td>
+										<td align="right">  0.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">05 Feb 09</td>
+										<td align="right">  1.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Jan 09</td>
+										<td align="right">  1.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">04 Dec 08</td>
+										<td align="right">  2.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">06 Nov 08</td>
+										<td align="right">  3.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Oct 08</td>
+										<td align="right">  4.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 Apr 08</td>
+										<td align="right">  5.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">07 Feb 08</td>
+										<td align="right">  5.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">06 Dec 07</td>
+										<td align="right">  5.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">05 Jul 07</td>
+										<td align="right">  5.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 May 07</td>
+										<td align="right">  5.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">11 Jan 07</td>
+										<td align="right">  5.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">09 Nov 06</td>
+										<td align="right">  5.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">03 Aug 06</td>
+										<td align="right">  4.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">04 Aug 05</td>
+										<td align="right">  4.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">05 Aug 04</td>
+										<td align="right">  4.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 Jun 04</td>
+										<td align="right">  4.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">06 May 04</td>
+										<td align="right">  4.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">05 Feb 04</td>
+										<td align="right">  4.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">06 Nov 03</td>
+										<td align="right">  3.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 Jul 03</td>
+										<td align="right">  3.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">06 Feb 03</td>
+										<td align="right">  3.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Nov 01</td>
+										<td align="right">  4.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">04 Oct 01</td>
+										<td align="right">  4.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">18 Sep 01</td>
+										<td align="right">  4.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">02 Aug 01</td>
+										<td align="right">  5.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 May 01</td>
+										<td align="right">  5.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">05 Apr 01</td>
+										<td align="right">  5.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Feb 01</td>
+										<td align="right">  5.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 Feb 00</td>
+										<td align="right">  6.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">13 Jan 00</td>
+										<td align="right">  5.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">04 Nov 99</td>
+										<td align="right">  5.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Sep 99</td>
+										<td align="right">  5.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 Jun 99</td>
+										<td align="right">  5.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Apr 99</td>
+										<td align="right">  5.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">04 Feb 99</td>
+										<td align="right">  5.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">07 Jan 99</td>
+										<td align="right">  6.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 Dec 98</td>
+										<td align="right">  6.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">05 Nov 98</td>
+										<td align="right">  6.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Oct 98</td>
+										<td align="right">  7.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">04 Jun 98</td>
+										<td align="right">  7.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">06 Nov 97</td>
+										<td align="right">  7.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">07 Aug 97</td>
+										<td align="right">  7.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 Jul 97</td>
+										<td align="right">  6.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">06 Jun 97</td>
+										<td align="right">  6.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">06 May 97</td>
+										<td align="right">  6.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">30 Oct 96</td>
+										<td align="right">  5.94</td>
+									</tr>
+									
+									<tr>
+										<td align="left">06 Jun 96</td>
+										<td align="right">  5.69</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Mar 96</td>
+										<td align="right">  5.94</td>
+									</tr>
+									
+									<tr>
+										<td align="left">18 Jan 96</td>
+										<td align="right">  6.13</td>
+									</tr>
+									
+									<tr>
+										<td align="left">13 Dec 95</td>
+										<td align="right">  6.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">02 Feb 95</td>
+										<td align="right">  6.63</td>
+									</tr>
+									
+									<tr>
+										<td align="left">07 Dec 94</td>
+										<td align="right">  6.13</td>
+									</tr>
+									
+									<tr>
+										<td align="left">12 Sep 94</td>
+										<td align="right">  5.63</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Feb 94</td>
+										<td align="right">  5.13</td>
+									</tr>
+									
+									<tr>
+										<td align="left">23 Nov 93</td>
+										<td align="right">  5.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">26 Jan 93</td>
+										<td align="right">  5.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">13 Nov 92</td>
+										<td align="right">  6.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">16 Oct 92</td>
+										<td align="right">  7.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">22 Sep 92</td>
+										<td align="right">  8.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">05 May 92</td>
+										<td align="right">  9.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">04 Sep 91</td>
+										<td align="right"> 10.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">12 Jul 91</td>
+										<td align="right"> 10.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">24 May 91</td>
+										<td align="right"> 11.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">12 Apr 91</td>
+										<td align="right"> 11.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">22 Mar 91</td>
+										<td align="right"> 12.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">27 Feb 91</td>
+										<td align="right"> 12.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">13 Feb 91</td>
+										<td align="right"> 13.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Oct 90</td>
+										<td align="right"> 13.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">06 Oct 89</td>
+										<td align="right"> 14.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Sep 89</td>
+										<td align="right"> 13.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">04 Sep 89</td>
+										<td align="right"> 13.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">31 Aug 89</td>
+										<td align="right"> 13.84</td>
+									</tr>
+									
+									<tr>
+										<td align="left">25 May 89</td>
+										<td align="right"> 13.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">25 Nov 88</td>
+										<td align="right"> 12.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">25 Aug 88</td>
+										<td align="right"> 11.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Aug 88</td>
+										<td align="right"> 10.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">21 Jul 88</td>
+										<td align="right"> 10.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">07 Jul 88</td>
+										<td align="right">  9.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">24 Jun 88</td>
+										<td align="right">  8.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 Jun 88</td>
+										<td align="right">  8.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">03 Jun 88</td>
+										<td align="right">  7.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">17 May 88</td>
+										<td align="right">  7.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Apr 88</td>
+										<td align="right">  7.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">17 Mar 88</td>
+										<td align="right">  8.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">01 Feb 88</td>
+										<td align="right">  8.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">03 Dec 87</td>
+										<td align="right">  8.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">04 Nov 87</td>
+										<td align="right">  8.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">23 Oct 87</td>
+										<td align="right">  9.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">06 Aug 87</td>
+										<td align="right">  9.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 May 87</td>
+										<td align="right">  8.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">28 Apr 87</td>
+										<td align="right">  9.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">18 Mar 87</td>
+										<td align="right">  9.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">09 Mar 87</td>
+										<td align="right"> 10.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">15 Oct 86</td>
+										<td align="right"> 10.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">23 May 86</td>
+										<td align="right">  9.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">18 Apr 86</td>
+										<td align="right"> 10.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">11 Apr 86</td>
+										<td align="right"> 10.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">19 Mar 86</td>
+										<td align="right"> 11.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">15 Jan 86</td>
+										<td align="right"> 12.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">26 Jul 85</td>
+										<td align="right"> 11.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">11 Jul 85</td>
+										<td align="right"> 11.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">19 Apr 85</td>
+										<td align="right"> 12.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">28 Mar 85</td>
+										<td align="right"> 12.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">20 Mar 85</td>
+										<td align="right"> 13.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">28 Jan 85</td>
+										<td align="right"> 13.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">14 Jan 85</td>
+										<td align="right"> 11.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">23 Nov 84</td>
+										<td align="right">  9.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">19 Nov 84</td>
+										<td align="right">  9.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">05 Nov 84</td>
+										<td align="right"> 10.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">17 Aug 84</td>
+										<td align="right"> 10.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">16 Aug 84</td>
+										<td align="right"> 10.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">09 Aug 84</td>
+										<td align="right"> 11.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Aug 84</td>
+										<td align="right"> 11.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">11 Jul 84</td>
+										<td align="right"> 12.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">06 Jul 84</td>
+										<td align="right"> 10.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">29 Jun 84</td>
+										<td align="right">  8.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 May 84</td>
+										<td align="right">  9.06</td>
+									</tr>
+									
+									<tr>
+										<td align="left">14 Mar 84</td>
+										<td align="right">  8.56</td>
+									</tr>
+									
+									<tr>
+										<td align="left">07 Mar 84</td>
+										<td align="right">  8.81</td>
+									</tr>
+									
+									<tr>
+										<td align="left">03 Oct 83</td>
+										<td align="right">  9.06</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 Aug 83</td>
+										<td align="right">  9.56</td>
+									</tr>
+									
+									<tr>
+										<td align="left">09 Aug 83</td>
+										<td align="right">  9.44</td>
+									</tr>
+									
+									<tr>
+										<td align="left">14 Jun 83</td>
+										<td align="right">  9.56</td>
+									</tr>
+									
+									<tr>
+										<td align="left">13 Jun 83</td>
+										<td align="right">  9.81</td>
+									</tr>
+									
+									<tr>
+										<td align="left">14 Apr 83</td>
+										<td align="right"> 10.06</td>
+									</tr>
+									
+									<tr>
+										<td align="left">13 Apr 83</td>
+										<td align="right"> 10.31</td>
+									</tr>
+									
+									<tr>
+										<td align="left">15 Mar 83</td>
+										<td align="right"> 10.56</td>
+									</tr>
+									
+									<tr>
+										<td align="left">12 Jan 83</td>
+										<td align="right"> 11.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">26 Nov 82</td>
+										<td align="right"> 10.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">02 Nov 82</td>
+										<td align="right">  9.13</td>
+									</tr>
+									
+									<tr>
+										<td align="left">01 Nov 82</td>
+										<td align="right">  9.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">12 Oct 82</td>
+										<td align="right">  9.63</td>
+									</tr>
+									
+									<tr>
+										<td align="left">30 Sep 82</td>
+										<td align="right"> 10.13</td>
+									</tr>
+									
+									<tr>
+										<td align="left">29 Sep 82</td>
+										<td align="right"> 10.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">28 Sep 82</td>
+										<td align="right"> 10.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">27 Sep 82</td>
+										<td align="right"> 10.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">27 Aug 82</td>
+										<td align="right"> 10.63</td>
+									</tr>
+									
+									<tr>
+										<td align="left">26 Aug 82</td>
+										<td align="right"> 10.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">25 Aug 82</td>
+										<td align="right"> 11.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">24 Aug 82</td>
+										<td align="right"> 11.13</td>
+									</tr>
+									
+									<tr>
+										<td align="left">17 Aug 82</td>
+										<td align="right"> 11.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">16 Aug 82</td>
+										<td align="right"> 11.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">04 Aug 82</td>
+										<td align="right"> 11.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">02 Aug 82</td>
+										<td align="right"> 11.56</td>
+									</tr>
+									
+									<tr>
+										<td align="left">30 Jul 82</td>
+										<td align="right"> 11.63</td>
+									</tr>
+									
+									<tr>
+										<td align="left">29 Jul 82</td>
+										<td align="right"> 11.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">28 Jul 82</td>
+										<td align="right"> 11.81</td>
+									</tr>
+									
+									<tr>
+										<td align="left">26 Jul 82</td>
+										<td align="right"> 11.94</td>
+									</tr>
+									
+									<tr>
+										<td align="left">21 Jul 82</td>
+										<td align="right"> 12.06</td>
+									</tr>
+									
+									<tr>
+										<td align="left">13 Jul 82</td>
+										<td align="right"> 12.13</td>
+									</tr>
+									
+									<tr>
+										<td align="left">12 Jul 82</td>
+										<td align="right"> 12.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">09 Jul 82</td>
+										<td align="right"> 12.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Jun 82</td>
+										<td align="right"> 12.63</td>
+									</tr>
+									
+									<tr>
+										<td align="left">20 Apr 82</td>
+										<td align="right"> 13.13</td>
+									</tr>
+									
+									<tr>
+										<td align="left">19 Apr 82</td>
+										<td align="right"> 13.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">16 Apr 82</td>
+										<td align="right"> 13.13</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 Mar 82</td>
+										<td align="right"> 13.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">25 Feb 82</td>
+										<td align="right"> 13.63</td>
+									</tr>
+									
+									<tr>
+										<td align="left">22 Feb 82</td>
+										<td align="right"> 13.81</td>
+									</tr>
+									
+									<tr>
+										<td align="left">22 Jan 82</td>
+										<td align="right"> 13.88</td>
+									</tr>
+									
+									<tr>
+										<td align="left">21 Jan 82</td>
+										<td align="right"> 14.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">20 Jan 82</td>
+										<td align="right"> 14.13</td>
+									</tr>
+									
+									<tr>
+										<td align="left">19 Jan 82</td>
+										<td align="right"> 14.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">18 Jan 82</td>
+										<td align="right"> 14.31</td>
+									</tr>
+									
+									<tr>
+										<td align="left">04 Dec 81</td>
+										<td align="right"> 14.38</td>
+									</tr>
+									
+									<tr>
+										<td align="left">25 Nov 81</td>
+										<td align="right"> 14.56</td>
+									</tr>
+									
+									<tr>
+										<td align="left">09 Nov 81</td>
+										<td align="right"> 14.63</td>
+									</tr>
+									
+									<tr>
+										<td align="left">06 Nov 81</td>
+										<td align="right"> 15.06</td>
+									</tr>
+									
+									<tr>
+										<td align="left">28 Oct 81</td>
+										<td align="right"> 15.13</td>
+									</tr>
+									
+									<tr>
+										<td align="left">12 Oct 81</td>
+										<td align="right"> 15.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">15 Sep 81</td>
+										<td align="right"> 14.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">25 Aug 81</td>
+										<td align="right"> 12.69</td>
+									</tr>
+									
+									<tr>
+										<td align="left">11 Mar 81</td>
+										<td align="right"> 12.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">25 Nov 80</td>
+										<td align="right"> 14.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">03 Jul 80</td>
+										<td align="right"> 16.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">15 Nov 79</td>
+										<td align="right"> 17.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">13 Jun 79</td>
+										<td align="right"> 14.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">05 Apr 79</td>
+										<td align="right"> 12.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">01 Mar 79</td>
+										<td align="right"> 13.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Feb 79</td>
+										<td align="right"> 14.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">09 Nov 78</td>
+										<td align="right"> 12.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Jun 78</td>
+										<td align="right"> 10.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">15 May 78</td>
+										<td align="right">  9.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 May 78</td>
+										<td align="right">  8.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">12 Apr 78</td>
+										<td align="right">  7.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">09 Jan 78</td>
+										<td align="right">  6.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">28 Nov 77</td>
+										<td align="right">  7.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">17 Oct 77</td>
+										<td align="right">  5.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 Oct 77</td>
+										<td align="right">  5.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">19 Sep 77</td>
+										<td align="right">  6.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">12 Sep 77</td>
+										<td align="right">  6.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">15 Aug 77</td>
+										<td align="right">  7.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Aug 77</td>
+										<td align="right">  7.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">16 May 77</td>
+										<td align="right">  8.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">02 May 77</td>
+										<td align="right">  8.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">25 Apr 77</td>
+										<td align="right">  8.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">18 Apr 77</td>
+										<td align="right">  9.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">12 Apr 77</td>
+										<td align="right">  9.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">31 Mar 77</td>
+										<td align="right">  9.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">21 Mar 77</td>
+										<td align="right"> 10.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 Mar 77</td>
+										<td align="right"> 11.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">03 Feb 77</td>
+										<td align="right"> 12.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">31 Jan 77</td>
+										<td align="right"> 12.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">24 Jan 77</td>
+										<td align="right"> 13.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 Jan 77</td>
+										<td align="right"> 14.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">29 Dec 76</td>
+										<td align="right"> 14.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">20 Dec 76</td>
+										<td align="right"> 14.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">22 Nov 76</td>
+										<td align="right"> 14.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">07 Oct 76</td>
+										<td align="right"> 15.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">13 Sep 76</td>
+										<td align="right"> 13.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">24 May 76</td>
+										<td align="right"> 11.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">26 Apr 76</td>
+										<td align="right"> 10.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">08 Mar 76</td>
+										<td align="right">  9.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">01 Mar 76</td>
+										<td align="right">  9.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">09 Feb 76</td>
+										<td align="right">  9.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">02 Feb 76</td>
+										<td align="right"> 10.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">26 Jan 76</td>
+										<td align="right"> 10.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">19 Jan 76</td>
+										<td align="right"> 10.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">05 Jan 76</td>
+										<td align="right"> 11.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">29 Dec 75</td>
+										<td align="right"> 11.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">01 Dec 75</td>
+										<td align="right"> 11.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">17 Nov 75</td>
+										<td align="right"> 11.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">06 Oct 75</td>
+										<td align="right"> 12.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">28 Jul 75</td>
+										<td align="right"> 11.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">05 May 75</td>
+										<td align="right"> 10.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">21 Apr 75</td>
+										<td align="right">  9.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">24 Mar 75</td>
+										<td align="right"> 10.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 Mar 75</td>
+										<td align="right"> 10.25</td>
+									</tr>
+									
+									<tr>
+										<td align="left">17 Feb 75</td>
+										<td align="right"> 10.50</td>
+									</tr>
+									
+									<tr>
+										<td align="left">10 Feb 75</td>
+										<td align="right"> 10.75</td>
+									</tr>
+									
+									<tr>
+										<td align="left">27 Jan 75</td>
+										<td align="right"> 11.00</td>
+									</tr>
+									
+									<tr>
+										<td align="left">20 Jan 75</td>
+										<td align="right"> 11.25</td>
+									</tr>
+									
+                                </tbody>
+				</table>
+
+              <p>&nbsp;</p>
+            </div>
+            <div class="clear"></div>
+          </div>
+        </section>
+        <section class="page-section">
+          <div class="container">
+            <div class="col12">
+              <p class="txtr"><a class="scroll-to-top" href="#">Back to top</a></p>
+            </div>
+          </div>
+        </section>
+      </div>
+      
+<footer class="global-footer" itemscope itemtype="http://schema.org/WPFooter">
+  <div class="container">
+    <div class="col3 s-full">
+      <div class="footer-brand">
+        <p><a href="https://www.bankofengland.co.uk/" target="_blank" class="footer-logo"><img src="assets/img/BOE_Logo_white.svg" alt="Bank of England"  height="50"> Bank of England</a></p>
+      </div>
+      <div class="footer-social-bank">
+        <h3>Follow us</h3>
+        <ul class=social-links>
+          <li class="social-item"><a class="social-link" href="https://twitter.com/bankofengland" target="_blank"><i class="icon-twitter-bird"></i> <span class="si-text">Follow us on Twitter</span></a></li>
+          <li class="social-item"><a class="social-link" href="https://www.linkedin.com/company/bank-of-england/" target="_blank"><i class="icon-linkedin"></i> <span class="si-text">Connect with us on LinkedIn</span></a></li>
+          <li class="social-item"><a class="social-link" href="https://www.youtube.com/user/bankofenglanduk" target="_blank"><i class="icon-youtube-play"></i> <span class="si-text">Watch us on Youtube</span></a></li>
+          <li class="social-item"><a class="social-link" href="https://www.flickr.com/photos/bankofengland/albums" target="_blank"><i class="icon-flickr"></i> <span class="si-text">Find us on Flickr</span></a></li>
+          <li class="social-item"><a class="social-link" href="https://www.facebook.com/bankofengland.co.uk" target="_blank"><i class="icon-facebook"></i> <span class="si-text">Add us on Facebook</span></a></li>
+        </ul>
+      </div>
+      <div class="footer-social-museum">
+        <h3>Museum</h3>
+        <ul class="social-links">
+          <li class="social-item"><a class="social-link" href="https://twitter.com/boemuseum" target="_blank"><i class="icon-twitter-bird">Follow us on Twitter</i></a></li>
+          <li class="social-item"><a class="social-link" href="https://www.facebook.com/boemuseum" target="_blank"><i class="icon-facebook">Add us on Facebook</i></a></li>
+          <li class="social-item"><a class="social-link" href="https://www.instagram.com/boemuseum/" target="_blank"><i class="icon-instagram">Follow us on Instagram</i></a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="col3 s-half">
+      <div class="footer-topics">
+        <h3>Useful links</h3>
+        <ul class="footer-links">
+          <li class="footer-item"><a class="footer-link" href="advsearch.asp?Travel=NIx">Advanced search</a></li>
+          <li class="footer-item"><a href="index.asp?SectionRequired=I&first=yes&HideNums=-1&ExtraInfo=true&Travel=NIxIRx&levels=3" class="footer-link" >Interest and exchange rates data</a></li>
+          <li class="footer-item"><a class="footer-link" href="help.asp?Back=Y&Highlight=Subscribe#Subscribe">Subscribe to XML download changes</a></li>
+          <li class="footer-item"><a class="footer-link" href="Bank-Rate.asp">Official Bank Rate history</a></li>
+          <li class="footer-item"><a class="footer-link" href="https://www.bankofengland.co.uk/-/media/BoE/Files/statistics/discontinued-series" target="_blank">Discontinued series</a></li>
+          <li class="footer-item"><a class="footer-link" href="https://www.bankofengland.co.uk/statistics/details" target="_blank">Notes about our data</a></li>
+          <li class="footer-item"><a class="footer-link" href="https://www.bankofengland.co.uk/statistics/tables" target="_blank">Bankstats tables</a></li>
+          <li class="footer-item"><a class="footer-link" href="https://www.bankofengland.co.uk/statistics" target="_blank">Bank of England Statistics</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="m-clear"></div>
+    <div class="col3 s-full">
+      <div class="footer-contact">
+        <h3>Visiting the bank</h3>
+        <ul class="footer-contact-info">
+          <li class="footer-address">Threadneedle Street, London, EC2R 8AH</li>
+          <li class="footer-tel">Switchboard: <a class="footer-tel-link" href="tel:+442034614444">+44(0)20 3461 4444</a></li>
+          <li class="footer-tel">Enquiries: <a class="footer-tel-link" href="tel:+442034614878">+44(0)20 3461 4878</a></li>
+        </ul>
+        <h3>Visiting the museum</h3>
+        <ul class="footer-contact-info">
+          <li class="footer-address">Bartholomew Lane, London, EC2R 8AH</li>
+        </ul>
+      </div>
+    </div>
+    <div class="clear"></div>
+  </div>
+  <div class="footer-copyright">
+    <div class="container">
+      <div class="col12">
+        <p class="text-copyright">&copy; 2026 Bank of England </p>
+        <ul class="list-inline">
+          <li class="list-inline__item"><a href="https://www.bankofengland.co.uk/accessibility" target="_blank">Accessibility statement</a></li>
+          <li class="list-inline__item"><a href="https://www.bankofengland.co.uk/legal/privacy-and-cookie-policy" target="_blank">Cookies</a></li>
+          <li class="list-inline__item"><a href="https://www.bankofengland.co.uk/legal" target="_blank">Legal</a></li>
+          <li class="list-inline__item"><a href="https://www.bankofengland.co.uk/legal/privacy" target="_blank">Privacy</a></li>
+        </ul>
+      </div>
+      <div class="clear"></div>
+    </div>
+  </div>
+</footer>
+
+<div class="cookie-notice">
+  <div class="cookie-notice__panel">
+    <div class="cookie-content content-block">
+      <h2 class="cookie-title exclude-navigation">Our use of cookies</h2>
+
+      <p>We use necessary cookies to make our site work (for example, to manage your session). We&rsquo;d also like to use some non-essential cookies (including third-party cookies) to help us improve the site. By clicking &lsquo;Accept recommended settings&rsquo; on this banner, you accept our use of optional cookies.</p>
+
+      <style>
+        .cookie__button {
+          max-width: 225px;
+        }
+      </style>
+
+      <table class="cookie-notice__table">
+        <tr>
+          <th>Necessary cookies</th>
+          <th>Analytics cookies</th>
+          <td class="table-header">&nbsp;</td>
+        </tr>
+        <tr>
+          <td>Yes</td>
+          <td>Yes</td>
+          <td>
+            <button class="cookie__button btn btn-default" data-cookie="analytics">Accept recommended cookies</button>
+          </td>
+        </tr>
+        <tr>
+          <td>Yes</td>
+          <td>No</td>
+          <td><button class="cookie__button btn btn-default btn-neutral" data-cookie="necessary">Proceed with necessary cookies only</button></td>
+        </tr>
+      </table>
+
+      <h3>Necessary cookies</h3>
+      <p>Necessary cookies enable core functionality on our website such as security, network management, and accessibility. You may disable these by changing your browser settings, but this may affect how the website functions. </p>
+      <h3>Analytics cookies</h3>
+      <p>We use analytics cookies so we can keep track of the number of visitors to various parts of the site and understand how our website is used. For more information on how these cookies work please see our <a href="https://www.bankofengland.co.uk/legal/privacy-and-cookie-policy" target="_blank">Cookie policy</a>.</p>
+    </div>
+  </div>
+</div> 
+  
+<script src="assets/js/min/slick.min.js"></script> 
+<script src="assets/js/min/scripts.js"></script> 
+<script type="application/ld+json">
+{
+    "@context" : "http://schema.org",
+    "@type" : "Organization",
+    "name" : "Bank of England",
+    "url" : "https://www.bankofengland.co.uk",
+    "logo" : "https://www.bankofengland.co.uk/img/bankofengland-logo.png",
+    "sameAs" : [
+    ],
+    "contactPoint" : [
+    {
+        "@type" : "ContactPoint",
+        "telephone" : "+44(0)0000000",
+        "contactType" : "customer service"
+    }
+    ]
+}
+</script>
+  
+
+    </div>
+</body>
+</html>
