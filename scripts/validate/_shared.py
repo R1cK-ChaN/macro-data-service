@@ -9,7 +9,20 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
+
+
+def today_iso() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def days_ago_iso(n: int) -> str:
+    return (datetime.now(timezone.utc).date() - timedelta(days=n)).isoformat()
+
+
+def days_ahead_iso(n: int) -> str:
+    return (datetime.now(timezone.utc).date() + timedelta(days=n)).isoformat()
 
 
 @dataclass
