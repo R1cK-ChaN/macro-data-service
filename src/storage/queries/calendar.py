@@ -176,6 +176,9 @@ _CALENDAR_COUNTRY_ALIASES: dict[str, str] = {
     "CA": "CA",
     "CAN": "CA",
     "CANADA": "CA",
+    "AU": "AU",
+    "AUS": "AU",
+    "AUSTRALIA": "AU",
 }
 
 _CALENDAR_COUNTRY_DISPLAY: dict[str, str] = {
@@ -189,6 +192,7 @@ _CALENDAR_COUNTRY_DISPLAY: dict[str, str] = {
     "ES": "Spain",
     "IT": "Italy",
     "CA": "Canada",
+    "AU": "Australia",
 }
 
 

@@ -416,6 +416,36 @@ AGENCIES: tuple[AgencyDecl, ...] = (
         providers=("boc",),
         indicators=frozenset(),
     ),
+    AgencyDecl(
+        agency_id="ABS",
+        label="Australian Bureau of Statistics",
+        # Provider attribution only — the P1 ABS slice ships
+        # schedule-only events (``actual=NULL``) so wiring
+        # ``("AU", CPI / UNEMPLOYMENT_RATE / GDP)`` into the parity
+        # whitelist would trip the daily comparator's
+        # parse_failed-on-missing-actual path on every release.
+        # The next slice (P2) adds the ABS SDMX value lookup at
+        # ``api.data.abs.gov.au``, which fills ``actual`` and lets
+        # us extend the whitelist for the percent-typed series
+        # (Unemployment Rate; CPI / GDP need YoY / QoQ derivation
+        # like the StatCan / BLS pattern).
+        providers=("abs",),
+        indicators=frozenset(),
+    ),
+    AgencyDecl(
+        agency_id="RBA",
+        label="Reserve Bank of Australia",
+        # RBA_RATE ships as the percent value (4.10) directly
+        # comparable to TE's "RBA Interest Rate Decision" actual.
+        # Unlike the BoC pattern, the RBA cash-rate page publishes
+        # hold decisions in the same row format as moves, so the
+        # parity whitelist is achievable in P1 without a separate
+        # fixed-announcement-dates feed.
+        providers=("rba",),
+        indicators=frozenset({
+            ("AU", "RBA_RATE"),
+        }),
+    ),
     # NBS deliberately stays out of the parity registry in this
     # slice. The schedule connector anchors NBS rows on the *release*
     # month (April 13 release → reference_date=2026-04-01) while

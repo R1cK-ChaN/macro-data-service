@@ -390,6 +390,24 @@ _ALIASES: dict[str, str] = {
     "target for the overnight rate": "BOC_RATE",
     "overnight rate target": "BOC_RATE",
     "boc_rate": "BOC_RATE",
+    # ── Australia (ABS / RBA, issue #53 P1) ─────────────────────
+    "australia consumer price index": "CPI",
+    "australia cpi": "CPI",
+    "australia inflation rate": "CPI",
+    "australian cpi": "CPI",
+    "australia gdp": "GDP",
+    "australia gdp growth rate": "GDP",
+    "australian gdp": "GDP",
+    "australia unemployment rate": "UNEMPLOYMENT_RATE",
+    "australian unemployment rate": "UNEMPLOYMENT_RATE",
+    "rba interest rate decision": "RBA_RATE",
+    "reserve bank of australia interest rate decision": "RBA_RATE",
+    "rba rate decision": "RBA_RATE",
+    "rba cash rate target": "RBA_RATE",
+    "australia interest rate decision": "RBA_RATE",
+    "australia cash rate target": "RBA_RATE",
+    "cash rate target": "RBA_RATE",
+    "rba_rate": "RBA_RATE",
 }
 
 

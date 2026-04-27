@@ -1635,6 +1635,9 @@ def apply_schema(connection: sqlite3.Connection) -> None:
             # Issue #52 — Canada coverage: Statistics Canada + Bank of Canada.
             ("statcan",          "government_agency", "economic",  100, _now_iso, _now_iso),
             ("boc",              "central_bank",      "economic",  100, _now_iso, _now_iso),
+            # Issue #53 — Australia coverage: ABS + Reserve Bank of Australia.
+            ("abs",              "government_agency", "economic",  100, _now_iso, _now_iso),
+            ("rba",              "central_bank",      "economic",  100, _now_iso, _now_iso),
         ],
     )
 
