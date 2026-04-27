@@ -373,6 +373,23 @@ _ALIASES: dict[str, str] = {
     "uk official bank rate": "BOE_RATE",
     "official bank rate": "BOE_RATE",
     "boe_rate": "BOE_RATE",
+    # ── Canada (Statistics Canada / BoC, issue #52 P1) ──────────
+    "canada consumer price index": "CPI",
+    "canada cpi": "CPI",
+    "canada inflation rate": "CPI",
+    "canadian cpi": "CPI",
+    "canada gdp": "GDP",
+    "canada gdp growth rate": "GDP",
+    "canadian gdp": "GDP",
+    "canada unemployment rate": "UNEMPLOYMENT_RATE",
+    "canadian unemployment rate": "UNEMPLOYMENT_RATE",
+    "boc interest rate decision": "BOC_RATE",
+    "bank of canada interest rate decision": "BOC_RATE",
+    "boc rate decision": "BOC_RATE",
+    "canada interest rate decision": "BOC_RATE",
+    "target for the overnight rate": "BOC_RATE",
+    "overnight rate target": "BOC_RATE",
+    "boc_rate": "BOC_RATE",
 }
 
 

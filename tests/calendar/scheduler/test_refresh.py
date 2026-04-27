@@ -39,7 +39,7 @@ def test_default_connectors_cover_every_official_source() -> None:
     """The default plan is the full official-source suite."""
     assert ALL_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
-        "nar", "ecb", "eia", "dol", "ons", "boe",
+        "nar", "ecb", "eia", "dol", "ons", "boe", "statcan", "boc",
         "eurostat", "destatis", "zew", "ifo", "gfk", "hcob", "ec-bcs", "insee", "ine", "istat",
         "fed-fomc", "fed-releases", "nbs", "stat-bureau-jp", "boj",
         "boj-tankan", "mof-jp", "cao", "cao-gdp", "meti",
@@ -476,10 +476,11 @@ def test_value_side_default_plan_covers_connectors() -> None:
     lives under ``fed-values``. Issue #49 adds ``nbs-values`` for
     five China indicators; issue #50 adds ``eia`` + ``dol`` (both
     combine schedule + value); issue #51 adds ``ons`` + ``boe``
-    (UK coverage; same schedule-and-value-together shape)."""
+    (UK coverage; same schedule-and-value-together shape); issue
+    #52 adds ``statcan`` + ``boc`` (Canada coverage)."""
     assert ALL_VALUE_SIDE_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
-        "nar", "ecb", "eia", "dol", "ons", "boe",
+        "nar", "ecb", "eia", "dol", "ons", "boe", "statcan", "boc",
         "eurostat", "destatis", "zew", "ifo", "gfk", "hcob",
         "ec-bcs", "insee", "ine", "istat",
         "fed-values", "nbs-values",

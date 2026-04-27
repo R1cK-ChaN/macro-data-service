@@ -62,6 +62,8 @@ OFFICIAL_PROVIDERS: tuple[str, ...] = (
     # Without these ids, parity rows from the new connectors are
     # classified as TE-only and surface as false gaps.
     "ons", "boe",
+    # Issue #52 — Canada coverage (StatCan WDS + BoC Valet rate decisions).
+    "statcan", "boc",
 )
 
 
