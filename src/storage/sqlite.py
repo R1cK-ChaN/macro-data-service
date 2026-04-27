@@ -27,18 +27,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from storage.schema import apply_schema
-
-
-def default_engine_db_path(root: Path | None = None) -> Path:
-    base = root or Path.cwd()
-    return base / ".macro-data" / "engine.db"
-
-
-# Re-export records extracted in issue #58 Tier 2.1A. Existing
-# ``from storage.sqlite import XRecord`` consumers keep working — the names
-# resolve here exactly as they did before the split.
-from storage.models import (  # noqa: E402
+from storage.models import (
     AnalyticalObservationRecord,
     CalendarEventVintageRecord,
     CalendarIndicatorAliasRecord,
@@ -80,21 +69,23 @@ from storage.models import (  # noqa: E402
     TradingArtifactRecord,
     TrendTopicRecord,
 )
-
-# Re-export the calendar-vintage helper for backwards compatibility —
-# ingestion code outside the EngineStore imports it from this module.
-from storage.queries.calendar import (  # noqa: E402
+from storage.queries.analytical import _AnalyticalQueriesMixin
+from storage.queries.calendar import (
+    _CalendarQueriesMixin,
     append_calendar_event_vintage_if_changed_with_conn,
 )
+from storage.queries.documents import _DocumentsQueriesMixin
+from storage.queries.indicator import _IndicatorQueriesMixin
+from storage.queries.market import _MarketQueriesMixin
+from storage.queries.messaging import _MessagingQueriesMixin
+from storage.queries.news import _NewsQueriesMixin
+from storage.queries.trading import _TradingQueriesMixin
+from storage.schema import apply_schema
 
-from storage.queries.analytical import _AnalyticalQueriesMixin  # noqa: E402
-from storage.queries.calendar import _CalendarQueriesMixin  # noqa: E402
-from storage.queries.documents import _DocumentsQueriesMixin  # noqa: E402
-from storage.queries.indicator import _IndicatorQueriesMixin  # noqa: E402
-from storage.queries.market import _MarketQueriesMixin  # noqa: E402
-from storage.queries.messaging import _MessagingQueriesMixin  # noqa: E402
-from storage.queries.news import _NewsQueriesMixin  # noqa: E402
-from storage.queries.trading import _TradingQueriesMixin  # noqa: E402
+
+def default_engine_db_path(root: Path | None = None) -> Path:
+    base = root or Path.cwd()
+    return base / ".macro-data" / "engine.db"
 
 
 class SQLiteEngineStore(
