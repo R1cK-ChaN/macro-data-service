@@ -100,6 +100,8 @@ from .mospi_api import fetch_mospi_calendar
 from .rbi_api import fetch_rbi_calendar
 from .kostat_api import fetch_kostat_calendar
 from .bok_api import fetch_bok_calendar
+from .ibge_api import fetch_ibge_calendar
+from .bcb_api import fetch_bcb_calendar
 from .zew_api import fetch_zew_calendar, schedule_zew_calendar
 from .ifo_api import fetch_ifo_calendar, schedule_ifo_calendar
 from .gfk_api import fetch_gfk_calendar, schedule_gfk_calendar
@@ -269,6 +271,27 @@ def _bok(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_bok_calendar(conn, dry_run=dry_run)
 
 
+def _ibge(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # IBGE monthly release-calendar HTML scrape — schedule-only slice
+    # (issue #84). Each event row carries a ``data-divulgacao`` ISO
+    # timestamp + product-anchored title link, parsed against an
+    # indicator allowlist. The fetcher walks a rolling forward window
+    # (current month + next three) so a daily sweep keeps the
+    # calendar's lookahead fresh. ``actual=NULL`` until the P2 per-
+    # release detail-page scrape lands.
+    return fetch_ibge_calendar(conn, dry_run=dry_run)
+
+
+def _bcb(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # BCB Copom history JSON re-fetch picks up any new Copom decision
+    # since the last sweep. Unlike the schedule-only KOSTAT / RBI /
+    # MoSPI / BOK pattern, the JSON service exposes target Selic
+    # inline (RBA-style coverage), so the P1 slice ships value-bearing
+    # events for every Copom announcement — change OR hold OR
+    # extraordinary OR monocratic-presidential.
+    return fetch_bcb_calendar(conn, dry_run=dry_run)
+
+
 def _eurostat(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_eurostat_calendar(conn, dry_run=dry_run)
 
@@ -407,6 +430,8 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("rbi", _rbi),
     ("kostat", _kostat),
     ("bok", _bok),
+    ("ibge", _ibge),
+    ("bcb", _bcb),
     ("eurostat", _eurostat),
     ("destatis", _destatis),
     ("zew", _zew),
@@ -466,6 +491,8 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "rbi",
     "kostat",
     "bok",
+    "ibge",
+    "bcb",
     "eurostat",
     "destatis",
     "zew",
@@ -1335,6 +1362,19 @@ def sweep_value_side(
         # new Base Rate is the P2 follow-up.
         return fetch_bok_calendar(conn, dry_run=dry_run)
 
+    def _ibge_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # IBGE monthly calendar re-fetch picks up newly-published
+        # indicator releases. P1 publishes schedule-only rows; the
+        # per-release detail-page scrape that fills ``actual`` is the
+        # P2 follow-up.
+        return fetch_ibge_calendar(conn, dry_run=dry_run)
+
+    def _bcb_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # BCB Copom history re-fetch picks up any new Copom decision
+        # since the last sweep. Each fetch returns target Selic + new
+        # rate inline, so the same op fills schedule and value.
+        return fetch_bcb_calendar(conn, dry_run=dry_run)
+
     def _fed_speeches_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # Fed speeches archive re-fetch picks up newly-posted Board
         # speeches throughout the day. Schedule-only — no value to
@@ -1485,6 +1525,8 @@ def sweep_value_side(
         "rbi":        _rbi_values,
         "kostat":     _kostat_values,
         "bok":        _bok_values,
+        "ibge":       _ibge_values,
+        "bcb":        _bcb_values,
         "eurostat":   _eurostat_values,
         "destatis":   _destatis_values,
         "zew":        _zew_values,

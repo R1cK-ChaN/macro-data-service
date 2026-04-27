@@ -72,21 +72,22 @@ def _insert_pending_event(
 def test_burst_filters_cover_every_burst_eligible_connector() -> None:
     """Every value-side connector except the documented exclusions has
     a burst predicate. ECB / EIA / DOL / ONS / BoE / StatCan / BoC /
-    ABS / RBA / MoSPI / RBI / KOSTAT / BOK are intentionally absent —
-    their value fetchers write rows only after publication (the API /
-    press-release / Bank Rate page / WDS / Valet / ABS calendar HTML /
-    RBA cash-rate table / MoSPI release-calendar JSON / RBI
+    ABS / RBA / MoSPI / RBI / KOSTAT / BOK / IBGE / BCB are intentionally
+    absent — their value fetchers write rows only after publication (the
+    API / press-release / Bank Rate page / WDS / Valet / ABS calendar
+    HTML / RBA cash-rate table / MoSPI release-calendar JSON / RBI
     annualpolicy / KOSTAT release-schedule HTML / BOK Meeting Dates
-    page carries period + value together, or — for the schedule-only
-    India / Korea / speech slices — no pre-release schedule row exists
-    yet), so a pre-release schedule row never exists for the burst's
+    page / IBGE monthly calendar HTML / BCB Copom history JSON carries
+    period + value together, or — for the schedule-only Brazil / India
+    / Korea / speech slices — no pre-release schedule row exists yet),
+    so a pre-release schedule row never exists for the burst's
     "until ``actual`` lands" completion check. They fall through to
     the hourly baseline."""
     from ingestion.calendar.scheduler import _VALUE_SIDE_DUE_ROW_FILTERS
 
     expected = set(ALL_VALUE_SIDE_CONNECTORS) - {
         "ecb", "eia", "dol", "ons", "boe", "statcan", "boc", "abs", "rba",
-        "mospi", "rbi", "kostat", "bok",
+        "mospi", "rbi", "kostat", "bok", "ibge", "bcb",
         # Schedule-only speech connectors (issue #56) — no value
         # column to fill, so the "until actual lands" burst predicate
         # never resolves.

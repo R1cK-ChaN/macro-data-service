@@ -133,12 +133,14 @@ def test_provider_constants_align_with_parser_ids() -> None:
     from ingestion.calendar.rbi_api.parser import PROVIDER as RBI
     from ingestion.calendar.kostat_api.parser import PROVIDER as KOSTAT
     from ingestion.calendar.bok_api.parser import PROVIDER as BOK
+    from ingestion.calendar.ibge_api.parser import PROVIDER as IBGE
+    from ingestion.calendar.bcb_api.parser import PROVIDER as BCB
 
     assert TE_PROVIDER == TE_FROM_PARSER
     assert set(OFFICIAL_PROVIDERS) == {
         BLS, BEA, CENSUS, ISM, UMICH, CONFERENCE_BOARD, NAR, ECB, EUROSTAT,
         DESTATIS, ZEW, IFO, GFK, HCOB, EC_BCS, INSEE, INE, ISTAT, FED, NBS, MOF_JP, CAO, METI,
-        STAT_BUREAU, ONS, BOE, STATCAN, BOC, ABS, RBA, MOSPI, RBI, KOSTAT, BOK,
+        STAT_BUREAU, ONS, BOE, STATCAN, BOC, ABS, RBA, MOSPI, RBI, KOSTAT, BOK, IBGE, BCB,
     }
 
 
