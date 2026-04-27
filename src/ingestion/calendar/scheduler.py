@@ -89,6 +89,8 @@ from .destatis_api import fetch_destatis_calendar, schedule_destatis_calendar
 from .dol_api import fetch_dol_calendar
 from .ons_api import fetch_ons_calendar
 from .boe_api import fetch_boe_calendar
+from .statcan_api import fetch_statcan_calendar
+from .boc_api import fetch_boc_calendar
 from .zew_api import fetch_zew_calendar, schedule_zew_calendar
 from .ifo_api import fetch_ifo_calendar, schedule_ifo_calendar
 from .gfk_api import fetch_gfk_calendar, schedule_gfk_calendar
@@ -191,6 +193,20 @@ def _boe(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_boe_calendar(conn, dry_run=dry_run)
 
 
+def _statcan(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # StatCan WDS exposes per-vector latest-N JSON that carries
+    # the latest observation plus its publication ``releaseTime``
+    # — schedule and value land together, like ONS / DOL / EIA.
+    return fetch_statcan_calendar(conn, dry_run=dry_run)
+
+
+def _boc(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # BoC Valet observations sweep picks up any new overnight
+    # rate change since the last run. Mirrors the BoE shape —
+    # change-only, hold decisions stay outside this connector.
+    return fetch_boc_calendar(conn, dry_run=dry_run)
+
+
 def _eurostat(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_eurostat_calendar(conn, dry_run=dry_run)
 
@@ -291,6 +307,8 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("dol", _dol),
     ("ons", _ons),
     ("boe", _boe),
+    ("statcan", _statcan),
+    ("boc", _boc),
     ("eurostat", _eurostat),
     ("destatis", _destatis),
     ("zew", _zew),
@@ -338,6 +356,8 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "dol",
     "ons",
     "boe",
+    "statcan",
+    "boc",
     "eurostat",
     "destatis",
     "zew",
@@ -860,13 +880,13 @@ _VALUE_SIDE_DUE_ROW_FILTERS: dict[ConnectorName, str] = {
     # through to the hourly baseline here is an explicit slice cap
     # — Issue #37 P2 candidate to add a separate trigger /
     # completion-row tracker for ECB.
-    # EIA + DOL + ONS + BoE intentionally absent — each connector
-    # writes rows only after the value is published (the API /
-    # press-release / Bank Rate page carries period + value
-    # together), so a pre-release schedule row never exists for
-    # the burst's "until ``actual`` lands" check to fire on. Falls
-    # through to the hourly baseline (same explicit slice cap as
-    # ECB above). Adding a release-time-based trigger that
+    # EIA + DOL + ONS + BoE + StatCan + BoC intentionally absent —
+    # each connector writes rows only after the value is published
+    # (the API / press-release / Bank Rate page carries period +
+    # value together), so a pre-release schedule row never exists
+    # for the burst's "until ``actual`` lands" check to fire on.
+    # Falls through to the hourly baseline (same explicit slice
+    # cap as ECB above). Adding a release-time-based trigger that
     # pre-seeds rows is the issue #37 P2 follow-up.
     "eurostat":              "provider = 'eurostat'",
     "destatis":              "provider = 'destatis'",
@@ -1151,6 +1171,16 @@ def sweep_value_side(
         # decision row published since the last sweep.
         return fetch_boe_calendar(conn, dry_run=dry_run)
 
+    def _statcan_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # StatCan WDS — each fetch returns latest period + value
+        # per indicator, so the same op fills schedule and value.
+        return fetch_statcan_calendar(conn, dry_run=dry_run)
+
+    def _boc_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # Valet observations re-fetch picks up any new overnight-
+        # rate change since the last sweep.
+        return fetch_boc_calendar(conn, dry_run=dry_run)
+
     def _eurostat_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # Eurostat JSON-stat has no auth.
         from ingestion.timeseries.sdmx.providers.eurostat import EurostatClient
@@ -1270,6 +1300,8 @@ def sweep_value_side(
         "dol":        _dol_values,
         "ons":        _ons_values,
         "boe":        _boe_values,
+        "statcan":    _statcan_values,
+        "boc":        _boc_values,
         "eurostat":   _eurostat_values,
         "destatis":   _destatis_values,
         "zew":        _zew_values,

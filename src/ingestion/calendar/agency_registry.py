@@ -385,6 +385,37 @@ AGENCIES: tuple[AgencyDecl, ...] = (
             ("UK", "BOE_RATE"),
         }),
     ),
+    AgencyDecl(
+        agency_id="STATCAN",
+        label="Statistics Canada",
+        # CPI ships as an index level (2002=100), GDP ships as
+        # millions-CAD SAAR; neither is directly comparable to TE's
+        # "Canada Inflation Rate" (YoY %) or "Canada GDP Growth Rate"
+        # (QoQ %) without a derivation step. Only Unemployment Rate
+        # is value-comparable today, mirroring the BLS pattern. A
+        # follow-up slice can derive the YoY/QoQ rates and extend the
+        # whitelist.
+        providers=("statcan",),
+        indicators=frozenset({
+            ("CA", "UNEMPLOYMENT_RATE"),
+        }),
+    ),
+    AgencyDecl(
+        agency_id="BOC",
+        label="Bank of Canada",
+        # Provider attribution only — the parity whitelist stays empty
+        # until the hold-decision source lands. The Valet ``V39079``
+        # signal only surfaces *change* days; TE publishes a
+        # "BoC Interest Rate Decision" row for every scheduled
+        # announcement (~8 per year) including holds. Wiring
+        # ``("CA", "BOC_RATE")`` into the whitelist before the BoC
+        # fixed-announcement-dates page is ingested would flag every
+        # hold day as a missing-release anomaly. Same deferral
+        # pattern as the BoE Bank-Rate page (changes-only, hold
+        # days stay outside this connector).
+        providers=("boc",),
+        indicators=frozenset(),
+    ),
     # NBS deliberately stays out of the parity registry in this
     # slice. The schedule connector anchors NBS rows on the *release*
     # month (April 13 release → reference_date=2026-04-01) while

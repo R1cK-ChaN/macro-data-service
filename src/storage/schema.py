@@ -1632,6 +1632,9 @@ def apply_schema(connection: sqlite3.Connection) -> None:
             # Issue #51 — UK coverage: ONS releases + Bank of England.
             ("ons",              "government_agency", "economic",  100, _now_iso, _now_iso),
             ("boe",              "central_bank",      "economic",  100, _now_iso, _now_iso),
+            # Issue #52 — Canada coverage: Statistics Canada + Bank of Canada.
+            ("statcan",          "government_agency", "economic",  100, _now_iso, _now_iso),
+            ("boc",              "central_bank",      "economic",  100, _now_iso, _now_iso),
         ],
     )
 
