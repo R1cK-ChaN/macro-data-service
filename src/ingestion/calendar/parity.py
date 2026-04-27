@@ -68,6 +68,8 @@ OFFICIAL_PROVIDERS: tuple[str, ...] = (
     "abs", "rba",
     # Issue #54 — India coverage (MoSPI release calendar + RBI MPC schedule).
     "mospi", "rbi",
+    # Issue #55 — Korea coverage (KOSTAT release schedule + BOK MPB meeting dates).
+    "kostat", "bok",
 )
 
 

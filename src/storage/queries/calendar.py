@@ -182,6 +182,11 @@ _CALENDAR_COUNTRY_ALIASES: dict[str, str] = {
     "IN": "IN",
     "IND": "IN",
     "INDIA": "IN",
+    "KR": "KR",
+    "KOR": "KR",
+    "KOREA": "KR",
+    "SOUTH KOREA": "KR",
+    "REPUBLIC OF KOREA": "KR",
 }
 
 _CALENDAR_COUNTRY_DISPLAY: dict[str, str] = {
@@ -197,6 +202,7 @@ _CALENDAR_COUNTRY_DISPLAY: dict[str, str] = {
     "CA": "Canada",
     "AU": "Australia",
     "IN": "India",
+    "KR": "South Korea",
 }
 
 

@@ -40,7 +40,7 @@ def test_default_connectors_cover_every_official_source() -> None:
     assert ALL_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
         "nar", "ecb", "eia", "dol", "ons", "boe", "statcan", "boc",
-        "abs", "rba", "mospi", "rbi",
+        "abs", "rba", "mospi", "rbi", "kostat", "bok",
         "eurostat", "destatis", "zew", "ifo", "gfk", "hcob", "ec-bcs", "insee", "ine", "istat",
         "fed-fomc", "fed-releases", "nbs", "stat-bureau-jp", "boj",
         "boj-tankan", "mof-jp", "cao", "cao-gdp", "meti",
@@ -482,11 +482,13 @@ def test_value_side_default_plan_covers_connectors() -> None:
     ``abs`` + ``rba`` (Australia coverage; ABS schedule-only,
     RBA schedule-and-value-together); issue #54 adds ``mospi`` +
     ``rbi`` (India coverage; both schedule-only in P1, value-side
-    PDF / press-release scrape deferred to P2)."""
+    PDF / press-release scrape deferred to P2); issue #55 adds
+    ``kostat`` + ``bok`` (Korea coverage; both schedule-only in P1,
+    value-side press-release scrape deferred to P2)."""
     assert ALL_VALUE_SIDE_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
         "nar", "ecb", "eia", "dol", "ons", "boe", "statcan", "boc",
-        "abs", "rba", "mospi", "rbi",
+        "abs", "rba", "mospi", "rbi", "kostat", "bok",
         "eurostat", "destatis", "zew", "ifo", "gfk", "hcob",
         "ec-bcs", "insee", "ine", "istat",
         "fed-values", "nbs-values",

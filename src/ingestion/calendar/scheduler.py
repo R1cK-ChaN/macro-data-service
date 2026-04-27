@@ -95,6 +95,8 @@ from .abs_api import fetch_abs_calendar
 from .rba_api import fetch_rba_calendar
 from .mospi_api import fetch_mospi_calendar
 from .rbi_api import fetch_rbi_calendar
+from .kostat_api import fetch_kostat_calendar
+from .bok_api import fetch_bok_calendar
 from .zew_api import fetch_zew_calendar, schedule_zew_calendar
 from .ifo_api import fetch_ifo_calendar, schedule_ifo_calendar
 from .gfk_api import fetch_gfk_calendar, schedule_gfk_calendar
@@ -247,6 +249,22 @@ def _rbi(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_rbi_calendar(conn, dry_run=dry_run)
 
 
+def _kostat(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # KOSTAT release-schedule HTML scrape — schedule-only slice. Each
+    # row carries title + ``Mon. DD (Day.)`` publication date plus the
+    # reference period parsed from the title. ``actual=NULL`` until
+    # the P2 per-release news-list scrape lands.
+    return fetch_kostat_calendar(conn, dry_run=dry_run)
+
+
+def _bok(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # BOK Meeting Dates HTML scrape — schedule-only slice. Each
+    # scheduled MPB meeting projects as one calendar event at 09:50
+    # KST. ``actual=NULL`` until the P2 per-meeting Monetary Policy
+    # Decision press-release scrape lands.
+    return fetch_bok_calendar(conn, dry_run=dry_run)
+
+
 def _eurostat(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_eurostat_calendar(conn, dry_run=dry_run)
 
@@ -353,6 +371,8 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("rba", _rba),
     ("mospi", _mospi),
     ("rbi", _rbi),
+    ("kostat", _kostat),
+    ("bok", _bok),
     ("eurostat", _eurostat),
     ("destatis", _destatis),
     ("zew", _zew),
@@ -406,6 +426,8 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "rba",
     "mospi",
     "rbi",
+    "kostat",
+    "bok",
     "eurostat",
     "destatis",
     "zew",
@@ -1254,6 +1276,19 @@ def sweep_value_side(
         # is the P2 follow-up.
         return fetch_rbi_calendar(conn, dry_run=dry_run)
 
+    def _kostat_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # KOSTAT release-schedule HTML re-fetch picks up newly-
+        # published indicator releases. P1 publishes schedule-only
+        # rows; the per-release news-list scrape is the P2 follow-up.
+        return fetch_kostat_calendar(conn, dry_run=dry_run)
+
+    def _bok_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # BOK Meeting Dates re-fetch picks up any updates to the MPB
+        # schedule. P1 publishes schedule-only rows; the per-meeting
+        # Monetary Policy Decision press-release scrape that fills the
+        # new Base Rate is the P2 follow-up.
+        return fetch_bok_calendar(conn, dry_run=dry_run)
+
     def _eurostat_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # Eurostat JSON-stat has no auth.
         from ingestion.timeseries.sdmx.providers.eurostat import EurostatClient
@@ -1379,6 +1414,8 @@ def sweep_value_side(
         "rba":        _rba_values,
         "mospi":      _mospi_values,
         "rbi":        _rbi_values,
+        "kostat":     _kostat_values,
+        "bok":        _bok_values,
         "eurostat":   _eurostat_values,
         "destatis":   _destatis_values,
         "zew":        _zew_values,

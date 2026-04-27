@@ -427,6 +427,26 @@ _ALIASES: dict[str, str] = {
     "india repo rate": "RBI_RATE",
     "policy repo rate": "RBI_RATE",
     "rbi_rate": "RBI_RATE",
+    # ── Korea (KOSTAT / BOK, issue #55 P1) ──────────────────────
+    "south korea consumer price index": "CPI",
+    "south korea cpi": "CPI",
+    "south korea inflation rate": "CPI",
+    "korea consumer price index": "CPI",
+    "korea inflation rate": "CPI",
+    "south korea industrial production": "INDUSTRIAL_PRODUCTION",
+    "south korea monthly industrial statistics": "INDUSTRIAL_PRODUCTION",
+    "korea industrial production": "INDUSTRIAL_PRODUCTION",
+    "south korea unemployment rate": "UNEMPLOYMENT_RATE",
+    "korea unemployment rate": "UNEMPLOYMENT_RATE",
+    "south korea economically active population survey": "UNEMPLOYMENT_RATE",
+    "bok interest rate decision": "BOK_RATE",
+    "bank of korea interest rate decision": "BOK_RATE",
+    "bok rate decision": "BOK_RATE",
+    "south korea interest rate decision": "BOK_RATE",
+    "korea interest rate decision": "BOK_RATE",
+    "bok base rate": "BOK_RATE",
+    "korea base rate": "BOK_RATE",
+    "bok_rate": "BOK_RATE",
 }
 
 
