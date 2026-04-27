@@ -620,8 +620,85 @@ graph for record-only use cases.
 When adding a new record, drop it into the matching per-domain file
 and append the name to both the file's `__all__` (if present) and the
 re-export block in `storage/models/__init__.py`. Keep records frozen
-(`@dataclass(frozen=True)`) and leave all DDL / write helpers in
-`sqlite.py`.
+(`@dataclass(frozen=True)`) and leave all DDL in `storage/schema.py`,
+read/write helpers in `storage/queries/{domain}.py`.
+
+## Schema DDL (`storage/schema.py`)
+
+Issue #71 Tier 2.1B-1 extracted every `CREATE TABLE` / `CREATE INDEX` /
+additive `ALTER` from `SQLiteEngineStore.init_schema` into a free
+function `apply_schema(connection)` in `storage/schema.py`. The
+`SQLiteEngineStore.init_schema` wrapper opens a commit-bracketed
+connection and delegates to it. `_ensure_table_columns` moved alongside
+as a module-private helper.
+
+When adding a new table or index, edit `storage/schema.py`. When adding
+an additive column to an existing table, use `_ensure_table_columns`
+inside `apply_schema` so existing engine.db files migrate forward
+without losing data.
+
+## Per-Domain Queries (`storage/queries/`)
+
+Issue #71 Tier 2.1B-2 extracted the ~165 `SQLiteEngineStore` methods
+into 8 per-domain mixin modules under `src/storage/queries/`. Each
+domain owns its tables' read/write paths plus any module-level seed
+data and helpers that pair with them:
+
+```
+storage/queries/
+  __init__.py     — package marker; mixins are imported by storage.sqlite directly.
+  analytical.py   — regime_snapshots, generated_notes, analytical_observations,
+                    subagent_runs, research_artifacts.
+  calendar.py     — calendar_events + calendar_event_vintages +
+                    calendar_indicator + calendar_indicator_alias +
+                    release_schedule + release_status. Owns the module-level
+                    free helpers (_calendar_country_code,
+                    _add_event_time_lower_bound, _calendar_surprise, …) and
+                    the timestamp-safety helpers (_safe_epoch_ms,
+                    _safe_utc_iso, _infer_timestamp_precision,
+                    _matches_scope_tags) that other domain mixins import.
+                    Also owns _CALENDAR_INDICATOR_DEFS, _CALENDAR_ALIAS_DEFS,
+                    _RELEASE_SCHEDULE_DEFS seed lists.
+  documents.py    — doc_source + doc_release_family + document +
+                    document_blob + document_extra + documents_fts +
+                    item_subjects + cross-cutting subject queries
+                    (list_items_combined, list_subject_indicators,
+                    list_subject_market_bars).
+  indicator.py    — indicators + indicator_vintages + central_bank_comms +
+                    obs_source / obs_family / obs_family_document +
+                    concept_map + obs_enrichment + subjects (taxonomy table
+                    reads) + source_capability / catalog_entity /
+                    catalog_sync_*. Owns the per-source family-map seed
+                    dicts (_FRED_FAMILY_MAP, _EIA_FAMILY_MAP, _OBS_SOURCE_DEFS,
+                    _OBS_DOC_LINKS, _VINTAGE_FAMILY_IDS).
+  market.py       — market_prices, market_instruments, market_symbol_history,
+                    market_price_bars, plus portfolio_holdings /
+                    portfolio_vol_snapshots / portfolio_alerts.
+  messaging.py    — client_profiles, conversation_threads, delivery_queue,
+                    group_profiles / group_members / group_messages plus
+                    the search-scoring helpers (_search_terms,
+                    _score_text_match, _recency_decay).
+  news.py         — news_articles + trend_topics + article_fingerprint +
+                    news_context scoring (with the impact-decay constants).
+  trading.py      — trade_signals, decision_log, position_state,
+                    performance_records, trading_artifacts.
+```
+
+Each domain module exposes a private `_XQueriesMixin` class.
+`SQLiteEngineStore` composes them via multiple inheritance, mirroring
+the `macro_data.service` mixin layout shipped in issue #58 Tier 1.1.
+Cross-mixin method calls resolve at runtime via Python's MRO — e.g.,
+`seed_structural_ontology` (indicator) calling `self.seed_doc_sources_and_families`
+(documents) and `self.seed_calendar_indicators` (calendar) Just Works.
+
+`storage.sqlite` re-exports `append_calendar_event_vintage_if_changed_with_conn`
+from `queries.calendar` for backwards compatibility — ingestion code
+outside the EngineStore imports the helper from `storage.sqlite`.
+
+When adding a new method, drop it into the matching per-domain mixin
+file. When adding a new domain, follow the existing layout
+(`_XQueriesMixin` private class, free helpers / seed data above the
+class, mixin added to the inheritance list in `storage/sqlite.py`).
 
 ## Running Tests
 
