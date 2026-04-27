@@ -65,6 +65,7 @@ _BURST_INTERVAL_SECONDS = 60.0
 from .bea_api import fetch_bea_calendar, schedule_bea_calendar
 from .bls_api import fetch_bls_calendar, schedule_bls_calendar
 from .boj_api import fetch_boj_calendar, fetch_boj_statement_values
+from .boj_speeches_api import fetch_boj_speeches_calendar
 from .boj_tankan_api import (
     fetch_boj_tankan_calendar,
     fetch_boj_tankan_outlines,
@@ -83,12 +84,14 @@ from .conference_board_api import (
     schedule_conference_board_calendar,
 )
 from .ecb_api import fetch_ecb_calendar, schedule_ecb_calendar
+from .ecb_speeches_api import fetch_ecb_speeches_calendar
 from .eia_api import fetch_eia_calendar
 from .eurostat_api import fetch_eurostat_calendar, schedule_eurostat_calendar
 from .destatis_api import fetch_destatis_calendar, schedule_destatis_calendar
 from .dol_api import fetch_dol_calendar
 from .ons_api import fetch_ons_calendar
 from .boe_api import fetch_boe_calendar
+from .boe_speeches_api import fetch_boe_speeches_calendar
 from .statcan_api import fetch_statcan_calendar
 from .boc_api import fetch_boc_calendar
 from .abs_api import fetch_abs_calendar
@@ -110,6 +113,7 @@ from .fed_api import (
     fetch_fed_releasedates,
     fetch_fed_statement_values,
 )
+from .fed_speeches_api import fetch_fed_speeches_calendar
 from .ism_api import fetch_ism_calendar, schedule_ism_calendar
 from .nar_api import fetch_nar_calendar, schedule_nar_calendar
 from .nbs_api import fetch_nbs_calendar, fetch_nbs_values
@@ -348,6 +352,36 @@ def _stat_bureau(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_stat_bureau_calendar(conn, dry_run=dry_run)
 
 
+def _fed_speeches(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # Fed per-year speeches archive HTML scrape — schedule-only
+    # slice (issue #56). Each Board / Vice Chair / Chair speech
+    # projects as one calendar event with ``actual=NULL`` and
+    # ``event_time_precision='date'``.
+    return fetch_fed_speeches_calendar(conn, dry_run=dry_run)
+
+
+def _ecb_speeches(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # ECB official speeches CSV download — schedule-only slice
+    # (issue #56). Single GET against the pipe-separated dataset
+    # the ECB refreshes monthly.
+    return fetch_ecb_speeches_calendar(conn, dry_run=dry_run)
+
+
+def _boe_speeches(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # BoE speeches sitemap HTML scrape — schedule-only slice
+    # (issue #56). Single GET; current-format ``/speech/<YYYY>/
+    # <month>/<slug>`` rows project at month precision.
+    return fetch_boe_speeches_calendar(conn, dry_run=dry_run)
+
+
+def _boj_speeches(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # BoJ per-year speeches archive HTML scrape — schedule-only
+    # slice (issue #56). Filtered to rate-setting roles (Governor /
+    # Deputy Governor / Member of the Policy Board); Executive
+    # Directors and below are skipped.
+    return fetch_boj_speeches_calendar(conn, dry_run=dry_run)
+
+
 # Sequencing matters for operator inspection — BLS first (highest
 # trader impact, cheapest surface), Fed / ECB in the middle, NBS last
 # (most upstream-fragile so a failure there is easiest to triage at
@@ -393,6 +427,10 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("cao", _cao),
     ("cao-gdp", _cao_gdp),
     ("meti", _meti),
+    ("fed-speeches", _fed_speeches),
+    ("ecb-speeches", _ecb_speeches),
+    ("boe-speeches", _boe_speeches),
+    ("boj-speeches", _boj_speeches),
 )
 
 ALL_CONNECTORS: tuple[ConnectorName, ...] = tuple(
@@ -447,6 +485,14 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "cao-values",
     "cao-gdp-values",
     "meti-values",
+    # Speech connectors are schedule-only — listed here so the
+    # value-side sweep keeps the slug-anchored ids fresh as new
+    # speeches land throughout the day (the upstream archives
+    # update intra-day for currently-running events).
+    "fed-speeches",
+    "ecb-speeches",
+    "boe-speeches",
+    "boj-speeches",
 )
 
 
@@ -1289,6 +1335,29 @@ def sweep_value_side(
         # new Base Rate is the P2 follow-up.
         return fetch_bok_calendar(conn, dry_run=dry_run)
 
+    def _fed_speeches_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # Fed speeches archive re-fetch picks up newly-posted Board
+        # speeches throughout the day. Schedule-only — no value to
+        # fill (issue #56).
+        return fetch_fed_speeches_calendar(conn, dry_run=dry_run)
+
+    def _ecb_speeches_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # ECB speeches CSV re-fetch picks up newly-published
+        # Executive Board speeches. Schedule-only — no value to fill
+        # (issue #56).
+        return fetch_ecb_speeches_calendar(conn, dry_run=dry_run)
+
+    def _boe_speeches_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # BoE speeches sitemap re-fetch picks up newly-listed
+        # speeches. Schedule-only — no value to fill (issue #56).
+        return fetch_boe_speeches_calendar(conn, dry_run=dry_run)
+
+    def _boj_speeches_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # BoJ per-year speeches archive re-fetch picks up newly-
+        # published Policy Board speeches. Schedule-only — no value
+        # to fill (issue #56).
+        return fetch_boj_speeches_calendar(conn, dry_run=dry_run)
+
     def _eurostat_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # Eurostat JSON-stat has no auth.
         from ingestion.timeseries.sdmx.providers.eurostat import EurostatClient
@@ -1435,6 +1504,10 @@ def sweep_value_side(
         "cao-values": _cao_values,
         "cao-gdp-values": _cao_gdp_values,
         "meti-values": _meti_values,
+        "fed-speeches": _fed_speeches_values,
+        "ecb-speeches": _ecb_speeches_values,
+        "boe-speeches": _boe_speeches_values,
+        "boj-speeches": _boj_speeches_values,
     }
 
     requested = (

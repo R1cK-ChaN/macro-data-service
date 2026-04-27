@@ -44,6 +44,7 @@ def test_default_connectors_cover_every_official_source() -> None:
         "eurostat", "destatis", "zew", "ifo", "gfk", "hcob", "ec-bcs", "insee", "ine", "istat",
         "fed-fomc", "fed-releases", "nbs", "stat-bureau-jp", "boj",
         "boj-tankan", "mof-jp", "cao", "cao-gdp", "meti",
+        "fed-speeches", "ecb-speeches", "boe-speeches", "boj-speeches",
     )
 
 
@@ -484,7 +485,10 @@ def test_value_side_default_plan_covers_connectors() -> None:
     ``rbi`` (India coverage; both schedule-only in P1, value-side
     PDF / press-release scrape deferred to P2); issue #55 adds
     ``kostat`` + ``bok`` (Korea coverage; both schedule-only in P1,
-    value-side press-release scrape deferred to P2)."""
+    value-side press-release scrape deferred to P2). Issue #56 adds
+    the four schedule-only ``*-speeches`` connectors (Fed / ECB / BoE
+    / BoJ) — the value-side sweep re-runs them so newly-posted
+    speeches land mid-day even though they have no value to fill."""
     assert ALL_VALUE_SIDE_CONNECTORS == (
         "bls", "bea", "census", "ism", "umich", "conference-board",
         "nar", "ecb", "eia", "dol", "ons", "boe", "statcan", "boc",
@@ -494,6 +498,7 @@ def test_value_side_default_plan_covers_connectors() -> None:
         "fed-values", "nbs-values",
         "stat-bureau-jp-values", "boj-values", "boj-tankan-values",
         "mof-jp-values", "cao-values", "cao-gdp-values", "meti-values",
+        "fed-speeches", "ecb-speeches", "boe-speeches", "boj-speeches",
     )
 
 
