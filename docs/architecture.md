@@ -55,7 +55,7 @@ the resolution layer.
 |---|---|---|
 | **Sources** | ~25 upstream APIs / RSS feeds / HTML endpoints | Raw data |
 | **Ingestion** | `src/ingestion/` | Fetch, normalize, validate, write |
-| **Storage** | `src/storage/sqlite.py` (8.8k lines, ~60 tables) | Canonical persistence |
+| **Storage** | `src/storage/{sqlite.py, schema.py, queries/}`, ~60 tables | Canonical persistence |
 | **Resolution** | `src/macro_data/service/` + storage helpers | Cross-source ranking, PIT queries, unified views |
 | **Service** | `src/macro_data/cli.py`, `server.py` | CLI + HTTP boundary |
 | **RAG sidecar** | `src/rag/` | Local semantic index + retrieval (Milvus optional) |
@@ -264,8 +264,19 @@ defeats the whole aggregation-layer premise.
 src/
   contracts.py              Core DTOs (Event, CalendarItem, MarketSnapshot, RegimeState, ...)
   storage/
-    sqlite.py               All CREATE TABLE statements + all read/write helpers
-    STORAGE.md              Table-by-table narrative (kept in sync with sqlite.py)
+    sqlite.py               SQLiteEngineStore — composes 8 query mixins + connection-management base
+    schema.py               apply_schema(connection) — every CREATE TABLE / INDEX / additive ALTER
+    models/                 40 frozen record dataclasses, per-domain (issue #58 Tier 2.1A)
+    queries/                Per-domain SQL helpers, mixed into SQLiteEngineStore (issue #71 Tier 2.1B)
+      analytical.py         regime_snapshots, generated_notes, analytical_observations, …
+      calendar.py           calendar_events, vintages, indicator/alias, release_schedule/status + free helpers
+      documents.py          doc_source/release_family, document/blob/extra, FTS, item_subjects, list_items_*
+      indicator.py          indicators, vintages, obs_*, concept_map, source_capability + catalog_*, seed dicts
+      market.py             market_prices/instruments/symbol_history/price_bars + portfolio_*
+      messaging.py          client_profiles, conversations, delivery_queue, group_*
+      news.py               news_articles, trend_topics, article_fingerprint, news_context scoring
+      trading.py            trade_signals, decision_log, position_state, performance, trading_artifacts
+    STORAGE.md              Table-by-table narrative (kept in sync with schema.py)
     subjects.py             Subject vocabulary loader + tagger
     subjects.yaml           Canonical subject list (edit here, sync via subjects.py)
   ingestion/
