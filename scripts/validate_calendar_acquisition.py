@@ -230,6 +230,102 @@ def confirm_budget(probes: list[Probe]) -> bool:
     return resp in {"y", "yes"}
 
 
+def _run_provider(
+    args: argparse.Namespace,
+    probes: list,
+    *,
+    provider: str,
+    run_one,
+    dry_lines,
+    confirm: str = "list",
+    confirm_line=None,
+    label: str | None = None,
+    upstream_count=lambda probes: str(len(probes)),
+    requests_spent=None,
+) -> int:
+    """Drive the dry-run-vs-execute flow for one provider.
+
+    All 12 single-provider flows share this shape; per-source
+    variability lives in the kwargs:
+
+    - ``provider`` — provider key string (used as the report-section
+      tag and as the source for the report filename, with ``-``
+      mapped to ``_``).
+    - ``run_one`` — ``probe -> ProbeResult`` (closes over a client
+      where the source needs one; e.g. BLS / BEA / Census / ECB).
+    - ``dry_lines`` — ``probe -> list[str]`` for the indented per-probe
+      lines printed during ``--dry-run``.
+    - ``confirm`` — ``"list"`` (per-probe enumeration) or ``"budget"``
+      (the generic :func:`confirm_budget` prompt used by TE / EODHD /
+      METI / Stat Bureau).
+    - ``confirm_line`` — ``probe -> str`` summary line shown in the
+      ``confirm == "list"`` prompt; required when ``confirm == "list"``.
+    - ``label`` — display name in the confirm prompt header (e.g.
+      ``"U Michigan"`` for ``provider="umich"``); defaults to
+      ``provider.upper()``.
+    - ``upstream_count`` — ``probes -> str`` for the count shown in
+      both the dry-run footer and the confirm prompt (default
+      ``str(len(probes))``; ISM / UMich / ConfBoard / NAR hardcode
+      ``"3"``; NBS appends ``" (+ 1 index-page fetch)"``).
+    - ``requests_spent`` — ``results -> int`` for the budget figure
+      embedded in the markdown report; default counts ``status == "ok"``
+      results.
+    """
+    count_str = upstream_count(probes)
+    if not args.execute:
+        print(f"DRY RUN ({provider}) — pass --execute to actually hit upstream.")
+        print()
+        for i, p in enumerate(probes, 1):
+            print(f"{i}. {p.name}")
+            for line in dry_lines(p):
+                print(f"   {line}")
+        print()
+        print(f"Total planned requests: {count_str}")
+        return 0
+
+    if confirm == "budget":
+        if not args.yes and not confirm_budget(probes):
+            print("Aborted.")
+            return 1
+    else:
+        if not args.yes:
+            assert confirm_line is not None, (
+                "confirm_line is required when confirm='list'"
+            )
+            display = label if label is not None else provider.upper()
+            print(f"Planned {display} probes ({len(probes)}):")
+            for i, p in enumerate(probes, 1):
+                print(f"  {i}. {confirm_line(p)}")
+            print(f"Estimated upstream requests: {count_str}")
+            resp = input("Proceed with live run? [y/N] ").strip().lower()
+            if resp not in {"y", "yes"}:
+                print("Aborted.")
+                return 1
+
+    results: list[ProbeResult] = []
+    for probe in probes:
+        result = run_one(probe)
+        results.append(result)
+        _print_probe_summary(result)
+
+    spent = (
+        requests_spent(results)
+        if requests_spent is not None
+        else sum(1 for r in results if r.status == "ok")
+    )
+    report = render_report(results, requests_spent=spent, provider=provider)
+    report_dir = Path(args.report_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / (
+        f"calendar_acquisition_{provider.replace('-', '_')}_"
+        f"{datetime.now(timezone.utc).date().isoformat()}.md"
+    )
+    report_path.write_text(report, encoding="utf-8")
+    print()
+    print(f"Report written: {report_path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
@@ -348,261 +444,92 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run_bls(args: argparse.Namespace, probes: list[BLSProbe]) -> int:
-    """Dispatch the BLS probe flow — dry-run plan vs --execute live run.
-
-    BLS doesn't need the TE / EODHD budget-confirm prompt because the
-    probe set is small (2 requests for P1) and BLS_API_KEY is a free-
-    tier key with a 500-req-daily budget. Still honours ``--yes`` to
-    match the other providers' muscle memory.
-    """
-    if not args.execute:
-        print(f"DRY RUN (bls) — pass --execute to actually hit upstream.")
-        print()
-        for i, p in enumerate(probes, 1):
-            print(f"{i}. {p.name}")
-            print(f"   series: {p.series_id} ({p.indicator})")
-            print(f"   window: {p.start_year}-{p.end_year}")
-            print(f"   purpose: {p.description}")
-        print()
-        print(f"Total planned requests: {len(probes)}")
-        return 0
-
-    if not args.yes:
-        print(f"Planned BLS probes ({len(probes)}):")
-        for i, p in enumerate(probes, 1):
-            print(f"  {i}. {p.name} — {p.series_id} {p.start_year}-{p.end_year}")
-        print(f"Estimated upstream requests: {len(probes)}")
-        resp = input("Proceed with live run? [y/N] ").strip().lower()
-        if resp not in {"y", "yes"}:
-            print("Aborted.")
-            return 1
-
-    results: list[ProbeResult] = []
+    """Dispatch the BLS probe flow — dry-run plan vs --execute live run."""
     client = BLSClient()
-    for probe in probes:
-        result = run_bls_probe(client, probe)
-        results.append(result)
-        _print_probe_summary(result)
-
-    report = render_report(
-        results,
-        requests_spent=sum(1 for r in results if r.status == "ok"),
-        provider="bls",
+    return _run_provider(
+        args, probes, provider="bls",
+        run_one=lambda p: run_bls_probe(client, p),
+        dry_lines=lambda p: [
+            f"series: {p.series_id} ({p.indicator})",
+            f"window: {p.start_year}-{p.end_year}",
+            f"purpose: {p.description}",
+        ],
+        confirm_line=lambda p: f"{p.name} — {p.series_id} {p.start_year}-{p.end_year}",
     )
-    report_dir = Path(args.report_dir)
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / (
-        f"calendar_acquisition_bls_"
-        f"{datetime.now(timezone.utc).date().isoformat()}.md"
-    )
-    report_path.write_text(report, encoding="utf-8")
-    print()
-    print(f"Report written: {report_path}")
-    return 0
 
 
 def _run_bea(args: argparse.Namespace, probes: list[BEAProbe]) -> int:
-    """Dispatch the BEA probe flow — same shape as :func:`_run_bls`.
-
-    BEA's 1000-req-daily free tier makes the 2-probe P2b run cheap; the
-    confirm prompt mirrors BLS muscle memory and honours ``--yes``.
-    """
-    if not args.execute:
-        print("DRY RUN (bea) — pass --execute to actually hit upstream.")
-        print()
-        for i, p in enumerate(probes, 1):
-            print(f"{i}. {p.name}")
-            print(
-                f"   coordinate: {p.dataset} {p.table} line={p.line_number} "
-                f"({p.indicator})"
-            )
-            print(f"   window: {p.start_year}-{p.end_year} freq={p.frequency}")
-            print(f"   purpose: {p.description}")
-        print()
-        print(f"Total planned requests: {len(probes)}")
-        return 0
-
-    if not args.yes:
-        print(f"Planned BEA probes ({len(probes)}):")
-        for i, p in enumerate(probes, 1):
-            print(
-                f"  {i}. {p.name} — {p.dataset} {p.table} line={p.line_number} "
-                f"{p.start_year}-{p.end_year}"
-            )
-        print(f"Estimated upstream requests: {len(probes)}")
-        resp = input("Proceed with live run? [y/N] ").strip().lower()
-        if resp not in {"y", "yes"}:
-            print("Aborted.")
-            return 1
-
-    results: list[ProbeResult] = []
+    """Dispatch the BEA probe flow."""
     client = BEAClient()
-    for probe in probes:
-        result = run_bea_probe(client, probe)
-        results.append(result)
-        _print_probe_summary(result)
-
-    report = render_report(
-        results,
-        requests_spent=sum(1 for r in results if r.status == "ok"),
-        provider="bea",
+    return _run_provider(
+        args, probes, provider="bea",
+        run_one=lambda p: run_bea_probe(client, p),
+        dry_lines=lambda p: [
+            f"coordinate: {p.dataset} {p.table} line={p.line_number} ({p.indicator})",
+            f"window: {p.start_year}-{p.end_year} freq={p.frequency}",
+            f"purpose: {p.description}",
+        ],
+        confirm_line=lambda p: (
+            f"{p.name} — {p.dataset} {p.table} line={p.line_number} "
+            f"{p.start_year}-{p.end_year}"
+        ),
     )
-    report_dir = Path(args.report_dir)
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / (
-        f"calendar_acquisition_bea_"
-        f"{datetime.now(timezone.utc).date().isoformat()}.md"
-    )
-    report_path.write_text(report, encoding="utf-8")
-    print()
-    print(f"Report written: {report_path}")
-    return 0
 
 
 def _run_census(args: argparse.Namespace, probes: list[CensusProbe]) -> int:
     """Dispatch the Census EITS probe flow."""
-    if not args.execute:
-        print("DRY RUN (census) — pass --execute to actually hit upstream.")
-        print()
-        for i, p in enumerate(probes, 1):
-            print(f"{i}. {p.name}")
-            print(
-                f"   coordinate: {p.dataset} data_type={p.data_type_code} "
-                f"seasonally_adj={p.seasonally_adj} category={p.category_code}"
-            )
-            print(f"   year: {p.year}")
-            print(f"   purpose: {p.description}")
-        print()
-        print(f"Total planned requests: {len(probes)}")
-        return 0
-
-    if not args.yes:
-        print(f"Planned Census probes ({len(probes)}):")
-        for i, p in enumerate(probes, 1):
-            print(
-                f"  {i}. {p.name} — {p.dataset} {p.data_type_code} "
-                f"{p.category_code} {p.year}"
-            )
-        print(f"Estimated upstream requests: {len(probes)}")
-        resp = input("Proceed with live run? [y/N] ").strip().lower()
-        if resp not in {"y", "yes"}:
-            print("Aborted.")
-            return 1
-
-    results: list[ProbeResult] = []
     client = CensusEITSClient()
-    for probe in probes:
-        result = run_census_probe(client, probe)
-        results.append(result)
-        _print_probe_summary(result)
+    return _run_provider(
+        args, probes, provider="census", label="Census",
+        run_one=lambda p: run_census_probe(client, p),
+        dry_lines=lambda p: [
+            f"coordinate: {p.dataset} data_type={p.data_type_code} "
+            f"seasonally_adj={p.seasonally_adj} category={p.category_code}",
+            f"year: {p.year}",
+            f"purpose: {p.description}",
+        ],
+        confirm_line=lambda p: (
+            f"{p.name} — {p.dataset} {p.data_type_code} "
+            f"{p.category_code} {p.year}"
+        ),
+        requests_spent=lambda _: client.requests_made,
+    )
 
-    report = render_report(
-        results,
-        requests_spent=client.requests_made,
-        provider="census",
-    )
-    report_dir = Path(args.report_dir)
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / (
-        f"calendar_acquisition_census_"
-        f"{datetime.now(timezone.utc).date().isoformat()}.md"
-    )
-    report_path.write_text(report, encoding="utf-8")
-    print()
-    print(f"Report written: {report_path}")
-    return 0
+
+# All four "schedule + current values" HTML scraper providers (ISM,
+# UMich, ConfBoard, NAR) hit a fixed three upstream surfaces (one
+# schedule + two indicators); both the dry-run footer and the report
+# Budget line use that constant rather than ``len(probes)``.
+def _three_requests(_probes) -> str:
+    return "3"
+
+
+def _three_spent(_results) -> int:
+    return 3
 
 
 def _run_ism(args: argparse.Namespace, probes: list[ISMProbe]) -> int:
     """Dispatch the ISM public-HTML probe flow."""
-    if not args.execute:
-        print("DRY RUN (ism) — pass --execute to actually hit upstream.")
-        print()
-        for i, p in enumerate(probes, 1):
-            print(f"{i}. {p.name}")
-            print(f"   url: {p.url}")
-            print(f"   purpose: {p.description}")
-        print()
-        print(f"Total planned requests: {len(probes)}")
-        return 0
-
-    if not args.yes:
-        print(f"Planned ISM probes ({len(probes)}):")
-        for i, p in enumerate(probes, 1):
-            print(f"  {i}. {p.name} — {p.url}")
-        print("Estimated upstream requests: 3")
-        resp = input("Proceed with live run? [y/N] ").strip().lower()
-        if resp not in {"y", "yes"}:
-            print("Aborted.")
-            return 1
-
-    results: list[ProbeResult] = []
-    for probe in probes:
-        result = run_ism_probe(probe)
-        results.append(result)
-        _print_probe_summary(result)
-
-    report = render_report(
-        results,
-        requests_spent=3,
-        provider="ism",
+    return _run_provider(
+        args, probes, provider="ism",
+        run_one=run_ism_probe,
+        dry_lines=lambda p: [f"url: {p.url}", f"purpose: {p.description}"],
+        confirm_line=lambda p: f"{p.name} — {p.url}",
+        upstream_count=_three_requests,
+        requests_spent=_three_spent,
     )
-    report_dir = Path(args.report_dir)
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / (
-        f"calendar_acquisition_ism_"
-        f"{datetime.now(timezone.utc).date().isoformat()}.md"
-    )
-    report_path.write_text(report, encoding="utf-8")
-    print()
-    print(f"Report written: {report_path}")
-    return 0
 
 
 def _run_umich(args: argparse.Namespace, probes: list[UMichProbe]) -> int:
     """Dispatch the U Michigan public HTML/PDF probe flow."""
-    if not args.execute:
-        print("DRY RUN (umich) — pass --execute to actually hit upstream.")
-        print()
-        for i, p in enumerate(probes, 1):
-            print(f"{i}. {p.name}")
-            print(f"   url: {p.url}")
-            print(f"   purpose: {p.description}")
-        print()
-        print("Total planned requests: 3")
-        return 0
-
-    if not args.yes:
-        print(f"Planned U Michigan probes ({len(probes)}):")
-        for i, p in enumerate(probes, 1):
-            print(f"  {i}. {p.name} — {p.url}")
-        print("Estimated upstream requests: 3")
-        resp = input("Proceed with live run? [y/N] ").strip().lower()
-        if resp not in {"y", "yes"}:
-            print("Aborted.")
-            return 1
-
-    results: list[ProbeResult] = []
-    for probe in probes:
-        result = run_umich_probe(probe)
-        results.append(result)
-        _print_probe_summary(result)
-
-    report = render_report(
-        results,
-        requests_spent=3,
-        provider="umich",
+    return _run_provider(
+        args, probes, provider="umich", label="U Michigan",
+        run_one=run_umich_probe,
+        dry_lines=lambda p: [f"url: {p.url}", f"purpose: {p.description}"],
+        confirm_line=lambda p: f"{p.name} — {p.url}",
+        upstream_count=_three_requests,
+        requests_spent=_three_spent,
     )
-    report_dir = Path(args.report_dir)
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / (
-        f"calendar_acquisition_umich_"
-        f"{datetime.now(timezone.utc).date().isoformat()}.md"
-    )
-    report_path.write_text(report, encoding="utf-8")
-    print()
-    print(f"Report written: {report_path}")
-    return 0
 
 
 def _run_conference_board(
@@ -610,346 +537,111 @@ def _run_conference_board(
     probes: list[ConferenceBoardProbe],
 ) -> int:
     """Dispatch the Conference Board public JSON/HTML probe flow."""
-    if not args.execute:
-        print("DRY RUN (conference-board) — pass --execute to actually hit upstream.")
-        print()
-        for i, p in enumerate(probes, 1):
-            print(f"{i}. {p.name}")
-            print(f"   url: {p.url}")
-            print(f"   purpose: {p.description}")
-        print()
-        print("Total planned requests: 3")
-        return 0
-
-    if not args.yes:
-        print(f"Planned Conference Board probes ({len(probes)}):")
-        for i, p in enumerate(probes, 1):
-            print(f"  {i}. {p.name} — {p.url}")
-        print("Estimated upstream requests: 3")
-        resp = input("Proceed with live run? [y/N] ").strip().lower()
-        if resp not in {"y", "yes"}:
-            print("Aborted.")
-            return 1
-
-    results: list[ProbeResult] = []
-    for probe in probes:
-        result = run_conference_board_probe(probe)
-        results.append(result)
-        _print_probe_summary(result)
-
-    report = render_report(
-        results,
-        requests_spent=3,
-        provider="conference-board",
+    return _run_provider(
+        args, probes, provider="conference-board", label="Conference Board",
+        run_one=run_conference_board_probe,
+        dry_lines=lambda p: [f"url: {p.url}", f"purpose: {p.description}"],
+        confirm_line=lambda p: f"{p.name} — {p.url}",
+        upstream_count=_three_requests,
+        requests_spent=_three_spent,
     )
-    report_dir = Path(args.report_dir)
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / (
-        f"calendar_acquisition_conference_board_"
-        f"{datetime.now(timezone.utc).date().isoformat()}.md"
-    )
-    report_path.write_text(report, encoding="utf-8")
-    print()
-    print(f"Report written: {report_path}")
-    return 0
 
 
 def _run_nar(args: argparse.Namespace, probes: list[NARProbe]) -> int:
     """Dispatch the NAR public HTML probe flow."""
-    if not args.execute:
-        print("DRY RUN (nar) — pass --execute to actually hit upstream.")
-        print()
-        for i, p in enumerate(probes, 1):
-            print(f"{i}. {p.name}")
-            print(f"   url: {p.url}")
-            print(f"   purpose: {p.description}")
-        print()
-        print("Total planned requests: 3")
-        return 0
-
-    if not args.yes:
-        print(f"Planned NAR probes ({len(probes)}):")
-        for i, p in enumerate(probes, 1):
-            print(f"  {i}. {p.name} — {p.url}")
-        print("Estimated upstream requests: 3")
-        resp = input("Proceed with live run? [y/N] ").strip().lower()
-        if resp not in {"y", "yes"}:
-            print("Aborted.")
-            return 1
-
-    results: list[ProbeResult] = []
-    for probe in probes:
-        result = run_nar_probe(probe)
-        results.append(result)
-        _print_probe_summary(result)
-
-    report = render_report(
-        results,
-        requests_spent=3,
-        provider="nar",
+    return _run_provider(
+        args, probes, provider="nar",
+        run_one=run_nar_probe,
+        dry_lines=lambda p: [f"url: {p.url}", f"purpose: {p.description}"],
+        confirm_line=lambda p: f"{p.name} — {p.url}",
+        upstream_count=_three_requests,
+        requests_spent=_three_spent,
     )
-    report_dir = Path(args.report_dir)
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / (
-        f"calendar_acquisition_nar_"
-        f"{datetime.now(timezone.utc).date().isoformat()}.md"
-    )
-    report_path.write_text(report, encoding="utf-8")
-    print()
-    print(f"Report written: {report_path}")
-    return 0
 
 
 def _run_ecb(args: argparse.Namespace, probes: list[ECBProbe]) -> int:
-    """Dispatch the ECB probe flow — same shape as :func:`_run_bls`.
-
-    ECB Data Portal requires no auth, so the ``api_key`` bail-out
-    branch is not applicable. Three probes (MRO / DFR / MLFR) make
-    for a cheap live run; honours ``--yes`` for muscle memory.
-    """
-    if not args.execute:
-        print("DRY RUN (ecb) — pass --execute to actually hit upstream.")
-        print()
-        for i, p in enumerate(probes, 1):
-            print(f"{i}. {p.name}")
-            print(f"   series: {p.series_id} ({p.indicator})")
-            print(f"   window: {p.start_period} → {p.end_period}")
-            print(f"   purpose: {p.description}")
-        print()
-        print(f"Total planned requests: {len(probes)}")
-        return 0
-
-    if not args.yes:
-        print(f"Planned ECB probes ({len(probes)}):")
-        for i, p in enumerate(probes, 1):
-            print(f"  {i}. {p.name} — {p.series_id} {p.start_period}..{p.end_period}")
-        print(f"Estimated upstream requests: {len(probes)}")
-        resp = input("Proceed with live run? [y/N] ").strip().lower()
-        if resp not in {"y", "yes"}:
-            print("Aborted.")
-            return 1
-
-    results: list[ProbeResult] = []
+    """Dispatch the ECB probe flow."""
     client = ECBClient()
-    for probe in probes:
-        result = run_ecb_probe(client, probe)
-        results.append(result)
-        _print_probe_summary(result)
-
-    report = render_report(
-        results,
-        requests_spent=sum(1 for r in results if r.status == "ok"),
-        provider="ecb",
+    return _run_provider(
+        args, probes, provider="ecb",
+        run_one=lambda p: run_ecb_probe(client, p),
+        dry_lines=lambda p: [
+            f"series: {p.series_id} ({p.indicator})",
+            f"window: {p.start_period} → {p.end_period}",
+            f"purpose: {p.description}",
+        ],
+        confirm_line=lambda p: (
+            f"{p.name} — {p.series_id} {p.start_period}..{p.end_period}"
+        ),
     )
-    report_dir = Path(args.report_dir)
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / (
-        f"calendar_acquisition_ecb_"
-        f"{datetime.now(timezone.utc).date().isoformat()}.md"
-    )
-    report_path.write_text(report, encoding="utf-8")
-    print()
-    print(f"Report written: {report_path}")
-    return 0
 
 
 def _run_fed(args: argparse.Namespace, probes: list[FedProbe]) -> int:
-    """Dispatch the Fed probe flow — same shape as :func:`_run_ecb`.
-
-    Fed pages are public + require no auth, so the ``api_key`` bail-
-    out branch is not applicable. Two probes (FOMC calendar + release
-    dates) — a cheap, lightweight live run.
-    """
-    if not args.execute:
-        print("DRY RUN (fed) — pass --execute to actually hit upstream.")
-        print()
-        for i, p in enumerate(probes, 1):
-            print(f"{i}. {p.name}")
-            print(f"   source: {p.source}")
-            print(f"   url: {p.url}")
-            print(f"   purpose: {p.description}")
-        print()
-        print(f"Total planned requests: {len(probes)}")
-        return 0
-
-    if not args.yes:
-        print(f"Planned Fed probes ({len(probes)}):")
-        for i, p in enumerate(probes, 1):
-            print(f"  {i}. {p.name} — {p.url}")
-        print(f"Estimated upstream requests: {len(probes)}")
-        resp = input("Proceed with live run? [y/N] ").strip().lower()
-        if resp not in {"y", "yes"}:
-            print("Aborted.")
-            return 1
-
-    results: list[ProbeResult] = []
-    for probe in probes:
-        result = run_fed_probe(probe)
-        results.append(result)
-        _print_probe_summary(result)
-
-    report = render_report(
-        results,
-        requests_spent=sum(1 for r in results if r.status == "ok"),
-        provider="fed",
+    """Dispatch the Fed probe flow."""
+    return _run_provider(
+        args, probes, provider="fed",
+        run_one=run_fed_probe,
+        dry_lines=lambda p: [
+            f"source: {p.source}",
+            f"url: {p.url}",
+            f"purpose: {p.description}",
+        ],
+        confirm_line=lambda p: f"{p.name} — {p.url}",
     )
-    report_dir = Path(args.report_dir)
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / (
-        f"calendar_acquisition_fed_"
-        f"{datetime.now(timezone.utc).date().isoformat()}.md"
-    )
-    report_path.write_text(report, encoding="utf-8")
-    print()
-    print(f"Report written: {report_path}")
-    return 0
 
 
 def _run_nbs(args: argparse.Namespace, probes: list[NBSProbe]) -> int:
-    """Dispatch the NBS probe flow — same shape as :func:`_run_fed`.
-
-    NBS is the highest-risk upstream (HTTP-only, HTML-fragile, non-CN
-    timeouts). One probe covers every registered indicator in a single
-    article fetch; the runner's ``except Exception`` branch absorbs
-    transient network failures cleanly rather than crashing the run.
-    """
-    if not args.execute:
-        print("DRY RUN (nbs) — pass --execute to actually hit upstream.")
-        print()
-        for i, p in enumerate(probes, 1):
-            print(f"{i}. {p.name}")
-            print(f"   year: {p.year}")
-            print(f"   purpose: {p.description}")
-        print()
-        print(f"Total planned requests: {len(probes)} (+ 1 index-page fetch)")
-        return 0
-
-    if not args.yes:
-        print(f"Planned NBS probes ({len(probes)}):")
-        for i, p in enumerate(probes, 1):
-            print(f"  {i}. {p.name} — yearly calendar for {p.year}")
-        print(f"Estimated upstream requests: {len(probes)} (+ 1 index-page fetch)")
-        resp = input("Proceed with live run? [y/N] ").strip().lower()
-        if resp not in {"y", "yes"}:
-            print("Aborted.")
-            return 1
-
-    results: list[ProbeResult] = []
-    for probe in probes:
-        result = run_nbs_probe(probe)
-        results.append(result)
-        _print_probe_summary(result)
-
+    """Dispatch the NBS probe flow."""
     # Each NBS probe expends two upstream requests on the happy path —
     # the index-page discovery plus the yearly article fetch. The
     # dry-run summary advertises this ("+ 1 index-page fetch"); the
-    # Budget section should match. When discovery fails the article
-    # fetch never runs, so the probe's ``request_path`` (set only
-    # after ``discover_nbs_calendar_url`` returns) acts as the
-    # proxy for whether 1 or 2 requests were spent.
-    def _nbs_requests_spent(r: ProbeResult) -> int:
+    # Budget section matches. When discovery fails the article fetch
+    # never runs, so the probe's ``request_path`` (set only after
+    # ``discover_nbs_calendar_url`` returns) acts as the proxy for
+    # whether 1 or 2 requests were spent.
+    def _spent(r: ProbeResult) -> int:
         if r.status == "skipped":
             return 0
         return 2 if r.request_path else 1
 
-    report = render_report(
-        results,
-        requests_spent=sum(_nbs_requests_spent(r) for r in results),
-        provider="nbs",
+    return _run_provider(
+        args, probes, provider="nbs",
+        run_one=run_nbs_probe,
+        dry_lines=lambda p: [f"year: {p.year}", f"purpose: {p.description}"],
+        confirm_line=lambda p: f"{p.name} — yearly calendar for {p.year}",
+        upstream_count=lambda probes: f"{len(probes)} (+ 1 index-page fetch)",
+        requests_spent=lambda results: sum(_spent(r) for r in results),
     )
-    report_dir = Path(args.report_dir)
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / (
-        f"calendar_acquisition_nbs_"
-        f"{datetime.now(timezone.utc).date().isoformat()}.md"
-    )
-    report_path.write_text(report, encoding="utf-8")
-    print()
-    print(f"Report written: {report_path}")
-    return 0
 
 
 def _run_meti(args: argparse.Namespace, probes: list[Probe]) -> int:
     """Dispatch the METI probe flow."""
-    if not args.execute:
-        print("DRY RUN (meti) — pass --execute to actually hit upstream.")
-        print()
-        for i, p in enumerate(probes, 1):
-            print(f"{i}. {p.name}")
-            print(f"   path: {p.path}")
-            print(f"   purpose: {p.description}")
-            print(f"   expected shape: {p.expected_shape}")
-        print()
-        print(f"Total planned requests: {len(probes)}")
-        return 0
-
-    if not args.yes and not confirm_budget(probes):
-        print("Aborted.")
-        return 1
-
-    results: list[ProbeResult] = []
-    for probe in probes:
-        result = run_meti_probe(probe)
-        results.append(result)
-        _print_probe_summary(result)
-
-    report = render_report(
-        results,
-        requests_spent=sum(1 for r in results if r.status == "ok"),
-        provider="meti",
+    return _run_provider(
+        args, probes, provider="meti",
+        run_one=run_meti_probe,
+        dry_lines=lambda p: [
+            f"path: {p.path}",
+            f"purpose: {p.description}",
+            f"expected shape: {p.expected_shape}",
+        ],
+        confirm="budget",
     )
-    report_dir = Path(args.report_dir)
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / (
-        f"calendar_acquisition_meti_"
-        f"{datetime.now(timezone.utc).date().isoformat()}.md"
-    )
-    report_path.write_text(report, encoding="utf-8")
-    print()
-    print(f"Report written: {report_path}")
-    return 0
 
 
 def _run_stat_bureau(args: argparse.Namespace, probes: list[Probe]) -> int:
     """Dispatch the Statistics Bureau probe flow."""
-    if not args.execute:
-        print("DRY RUN (stat-bureau-jp) — pass --execute to actually hit upstream.")
-        print()
-        for i, p in enumerate(probes, 1):
-            print(f"{i}. {p.name}")
-            query = render_params(p.params)
-            print(f"   path: {p.path}{'?' + query if query else ''}")
-            print(f"   purpose: {p.description}")
-            print(f"   expected shape: {p.expected_shape}")
-        print()
-        print(f"Total planned requests: {len(probes)}")
-        return 0
-
-    if not args.yes and not confirm_budget(probes):
-        print("Aborted.")
-        return 1
-
-    results: list[ProbeResult] = []
-    for probe in probes:
-        result = run_stat_bureau_probe(probe)
-        results.append(result)
-        _print_probe_summary(result)
-
-    report = render_report(
-        results,
-        requests_spent=sum(1 for r in results if r.status == "ok"),
-        provider="stat-bureau-jp",
+    return _run_provider(
+        args, probes, provider="stat-bureau-jp",
+        run_one=run_stat_bureau_probe,
+        dry_lines=lambda p: (
+            (lambda q: [
+                f"path: {p.path}{'?' + q if q else ''}",
+                f"purpose: {p.description}",
+                f"expected shape: {p.expected_shape}",
+            ])(render_params(p.params))
+        ),
+        confirm="budget",
     )
-    report_dir = Path(args.report_dir)
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / (
-        f"calendar_acquisition_stat_bureau_jp_"
-        f"{datetime.now(timezone.utc).date().isoformat()}.md"
-    )
-    report_path.write_text(report, encoding="utf-8")
-    print()
-    print(f"Report written: {report_path}")
-    return 0
 
 
 if __name__ == "__main__":
