@@ -446,6 +446,32 @@ AGENCIES: tuple[AgencyDecl, ...] = (
             ("AU", "RBA_RATE"),
         }),
     ),
+    AgencyDecl(
+        agency_id="MOSPI",
+        label="India Ministry of Statistics and Programme Implementation",
+        # Provider attribution only — the P1 MoSPI slice ships
+        # schedule-only events (``actual=NULL``) for CPI / IIP / GDP.
+        # Wiring (IN, CPI / GDP / INDUSTRIAL_PRODUCTION) into the parity
+        # whitelist would trip the parse_failed-on-missing-actual path
+        # on every release. Same deferral as the ABS slice — the next
+        # iteration parses the per-release PDF that the JSON API
+        # surfaces in ``description`` to fill ``actual``.
+        providers=("mospi",),
+        indicators=frozenset(),
+    ),
+    AgencyDecl(
+        agency_id="RBI",
+        label="Reserve Bank of India",
+        # Provider attribution only — the P1 RBI slice projects each
+        # MPC meeting as a schedule-only event (``actual=NULL``). The
+        # value (new repo rate) lives inside the per-meeting Resolution
+        # press release; the value-side scrape is deferred to P2 to
+        # match the ABS/BoC schedule-only deferral pattern. Once the
+        # Resolution scrape lands, ``("IN", "RBI_RATE")`` joins the
+        # whitelist.
+        providers=("rbi",),
+        indicators=frozenset(),
+    ),
     # NBS deliberately stays out of the parity registry in this
     # slice. The schedule connector anchors NBS rows on the *release*
     # month (April 13 release → reference_date=2026-04-01) while

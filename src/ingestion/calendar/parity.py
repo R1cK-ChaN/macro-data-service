@@ -66,6 +66,8 @@ OFFICIAL_PROVIDERS: tuple[str, ...] = (
     "statcan", "boc",
     # Issue #53 — Australia coverage (ABS release calendar + RBA cash-rate decisions).
     "abs", "rba",
+    # Issue #54 — India coverage (MoSPI release calendar + RBI MPC schedule).
+    "mospi", "rbi",
 )
 
 

@@ -408,6 +408,25 @@ _ALIASES: dict[str, str] = {
     "australia cash rate target": "RBA_RATE",
     "cash rate target": "RBA_RATE",
     "rba_rate": "RBA_RATE",
+    # ── India (MoSPI / RBI, issue #54 P1) ───────────────────────
+    "india consumer price index": "CPI",
+    "india cpi": "CPI",
+    "india inflation rate": "CPI",
+    "all india consumer price index": "CPI",
+    "india gdp": "GDP",
+    "india gdp growth rate": "GDP",
+    "india gross domestic product": "GDP",
+    "india index of industrial production": "INDUSTRIAL_PRODUCTION",
+    "india industrial production": "INDUSTRIAL_PRODUCTION",
+    "all india index of industrial production": "INDUSTRIAL_PRODUCTION",
+    "india iip": "INDUSTRIAL_PRODUCTION",
+    "rbi interest rate decision": "RBI_RATE",
+    "reserve bank of india interest rate decision": "RBI_RATE",
+    "rbi rate decision": "RBI_RATE",
+    "india interest rate decision": "RBI_RATE",
+    "india repo rate": "RBI_RATE",
+    "policy repo rate": "RBI_RATE",
+    "rbi_rate": "RBI_RATE",
 }
 
 

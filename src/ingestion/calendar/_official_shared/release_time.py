@@ -60,6 +60,7 @@ TIMEZONE_ALIASES: dict[str, str] = {
     "HKT":  "Asia/Hong_Kong",
     "AEST": "Australia/Sydney",
     "AEDT": "Australia/Sydney",
+    "IST":  "Asia/Kolkata",       # MoSPI / RBI context — issue #54
 }
 
 _TZ_ABBREV_RE = re.compile(
