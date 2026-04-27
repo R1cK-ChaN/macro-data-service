@@ -472,6 +472,32 @@ AGENCIES: tuple[AgencyDecl, ...] = (
         providers=("rbi",),
         indicators=frozenset(),
     ),
+    AgencyDecl(
+        agency_id="KOSTAT",
+        label="Statistics Korea",
+        # Provider attribution only — the P1 KOSTAT slice ships
+        # schedule-only events (``actual=NULL``) for CPI / Industrial
+        # Production / Unemployment Rate. Wiring (KR, CPI / GDP /
+        # INDUSTRIAL_PRODUCTION / UNEMPLOYMENT_RATE) into the parity
+        # whitelist would trip the parse_failed-on-missing-actual path
+        # on every release. Same deferral as the ABS/MoSPI slice — P2
+        # adds the per-release press-release scrape to fill ``actual``.
+        providers=("kostat",),
+        indicators=frozenset(),
+    ),
+    AgencyDecl(
+        agency_id="BOK",
+        label="Bank of Korea",
+        # Provider attribution only — the P1 BOK slice projects each
+        # MPB meeting as a schedule-only event (``actual=NULL``). The
+        # value (new Base Rate) lives inside the per-meeting Monetary
+        # Policy Decision press release; the value-side scrape is
+        # deferred to P2 (mirrors the RBI / RBA schedule-only deferral
+        # pattern). Once the Decision scrape lands,
+        # ``("KR", "BOK_RATE")`` joins the whitelist.
+        providers=("bok",),
+        indicators=frozenset(),
+    ),
     # NBS deliberately stays out of the parity registry in this
     # slice. The schedule connector anchors NBS rows on the *release*
     # month (April 13 release → reference_date=2026-04-01) while

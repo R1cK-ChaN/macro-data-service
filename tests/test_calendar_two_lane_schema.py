@@ -160,6 +160,7 @@ def test_cal_provider_seeded(store: SQLiteEngineStore) -> None:
         ("boc",              "central_bank",      "economic",  100),
         ("boe",              "central_bank",      "economic",  100),
         ("boj",              "central_bank",      "economic",  100),
+        ("bok",              "central_bank",      "economic",  100),
         ("cao",              "government_agency", "economic",  100),
         ("census",           "government_agency", "economic",  100),
         ("conference-board",  "market_data",       "economic",  100),
@@ -178,6 +179,7 @@ def test_cal_provider_seeded(store: SQLiteEngineStore) -> None:
         ("insee",            "government_agency", "economic",  100),
         ("ism",              "market_data",       "economic",  100),
         ("istat",            "government_agency", "economic",  100),
+        ("kostat",           "government_agency", "economic",  100),
         ("meti",             "government_agency", "economic",  100),
         ("mof-jp",           "government_agency", "economic",  100),
         ("mospi",            "government_agency", "economic",  100),
@@ -201,7 +203,7 @@ def test_cal_provider_seed_idempotent(tmp_path: Path) -> None:
     second = SQLiteEngineStore(db_path=db)
     with second._connection(commit=False) as c:
         n = c.execute("SELECT COUNT(*) FROM cal_provider").fetchone()[0]
-    assert n == 37
+    assert n == 39
 
 
 def test_importance_flows_through_view_as_enum_string(store: SQLiteEngineStore) -> None:
