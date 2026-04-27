@@ -93,6 +93,8 @@ from .statcan_api import fetch_statcan_calendar
 from .boc_api import fetch_boc_calendar
 from .abs_api import fetch_abs_calendar
 from .rba_api import fetch_rba_calendar
+from .mospi_api import fetch_mospi_calendar
+from .rbi_api import fetch_rbi_calendar
 from .zew_api import fetch_zew_calendar, schedule_zew_calendar
 from .ifo_api import fetch_ifo_calendar, schedule_ifo_calendar
 from .gfk_api import fetch_gfk_calendar, schedule_gfk_calendar
@@ -228,6 +230,23 @@ def _rba(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_rba_calendar(conn, dry_run=dry_run)
 
 
+def _mospi(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # MoSPI release-calendar JSON API — schedule-only slice. The API
+    # response carries one row per scheduled / past release with
+    # ``year``/``month``/``day`` and a ``title`` substring-matched
+    # against the indicator registry. ``actual=NULL`` until the P2
+    # PDF value-extraction lands.
+    return fetch_mospi_calendar(conn, dry_run=dry_run)
+
+
+def _rbi(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # RBI annualpolicy.aspx HTML scrape — schedule-only slice. Each
+    # scheduled MPC meeting closing day projects as one calendar
+    # event at 10:00 IST. ``actual=NULL`` until the P2 per-meeting
+    # Resolution press-release scrape lands.
+    return fetch_rbi_calendar(conn, dry_run=dry_run)
+
+
 def _eurostat(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_eurostat_calendar(conn, dry_run=dry_run)
 
@@ -332,6 +351,8 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("boc", _boc),
     ("abs", _abs),
     ("rba", _rba),
+    ("mospi", _mospi),
+    ("rbi", _rbi),
     ("eurostat", _eurostat),
     ("destatis", _destatis),
     ("zew", _zew),
@@ -383,6 +404,8 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "boc",
     "abs",
     "rba",
+    "mospi",
+    "rbi",
     "eurostat",
     "destatis",
     "zew",
@@ -1218,6 +1241,19 @@ def sweep_value_side(
         # decision (change OR hold) since the last sweep.
         return fetch_rba_calendar(conn, dry_run=dry_run)
 
+    def _mospi_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # MoSPI release-calendar JSON re-fetch picks up newly-
+        # published indicator releases. P1 publishes schedule-only
+        # rows; the per-release PDF value lookup is the P2 follow-up.
+        return fetch_mospi_calendar(conn, dry_run=dry_run)
+
+    def _rbi_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # RBI annualpolicy.aspx re-fetch picks up any updates to the
+        # MPC meeting schedule. P1 publishes schedule-only rows; the
+        # per-meeting Resolution scrape that fills the new repo rate
+        # is the P2 follow-up.
+        return fetch_rbi_calendar(conn, dry_run=dry_run)
+
     def _eurostat_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # Eurostat JSON-stat has no auth.
         from ingestion.timeseries.sdmx.providers.eurostat import EurostatClient
@@ -1341,6 +1377,8 @@ def sweep_value_side(
         "boc":        _boc_values,
         "abs":        _abs_values,
         "rba":        _rba_values,
+        "mospi":      _mospi_values,
+        "rbi":        _rbi_values,
         "eurostat":   _eurostat_values,
         "destatis":   _destatis_values,
         "zew":        _zew_values,
