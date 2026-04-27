@@ -26,15 +26,9 @@ field diffs, enum observations, and parser dry-parse results.
 from __future__ import annotations
 
 import argparse
-import json
-import os
-import re
 import sys
-from collections import Counter
-from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
