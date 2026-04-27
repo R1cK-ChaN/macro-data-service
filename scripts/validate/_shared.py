@@ -25,6 +25,12 @@ def days_ahead_iso(n: int) -> str:
     return (datetime.now(timezone.utc).date() + timedelta(days=n)).isoformat()
 
 
+def render_params(params: dict[str, Any]) -> str:
+    if not params:
+        return ""
+    return "&".join(f"{k}={v}" for k, v in params.items())
+
+
 @dataclass
 class Probe:
     """One planned upstream request.
