@@ -39,6 +39,9 @@ from urllib.parse import quote
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.validate._shared import Probe, ProbeResult, RowDiff  # noqa: E402
 
 # Scaffold under test — we import and exercise exactly what production uses.
 from ingestion.calendar.te_api import TEAPIClient, parse_calendar_row  # noqa: E402
@@ -277,31 +280,6 @@ EODHD_SUBTYPE_PARSERS: dict[str, Any] = {
 # ──────────────────────────────────────────────────────────────────────────
 
 
-@dataclass
-class Probe:
-    """One planned upstream request.
-
-    ``expected_fields`` differs per probe (TE pointer shape has fewer
-    fields than full; each EODHD subtype has its own read set).
-    ``params`` + ``rows_key`` + ``subtype`` are EODHD-only; TE probes
-    embed everything in ``path`` and ignore these.
-    """
-
-    name: str
-    path: str
-    description: str
-    expected_shape: str  # human-readable
-    expected_fields: frozenset[str] = TE_PARSER_READS
-    # EODHD-only knobs.
-    params: dict[str, Any] = field(default_factory=dict)
-    rows_key: str = ""
-    subtype: str = ""
-    # True for EODHD endpoints whose payload is itself the row list
-    # (``/api/div/{TICKER}``); False for envelope-style calendar endpoints
-    # that wrap rows under a subtype-specific key.
-    top_level_array: bool = False
-
-
 def _today_iso() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
@@ -318,12 +296,14 @@ def plan_te_probes() -> list[Probe]:
             path=f"/calendar/country/All/{_days_ago_iso(7)}/{_today_iso()}",
             description="baseline 22-field shape over a dense recent window",
             expected_shape="list[22-field dict]",
+            expected_fields=TE_PARSER_READS,
         ),
         Probe(
             name="country_all_2024_01",
             path="/calendar/country/All/2024-01-01/2024-01-07",
             description="older era — shape drift vs recent window",
             expected_shape="list[22-field dict]",
+            expected_fields=TE_PARSER_READS,
         ),
         Probe(
             # Country name with a space exercises URL encoding.
@@ -331,6 +311,7 @@ def plan_te_probes() -> list[Probe]:
             path=f"/calendar/country/{quote('United States')}/{_days_ago_iso(7)}/{_today_iso()}",
             description="country-scoped + URL encoding on spaces",
             expected_shape="list[22-field dict]",
+            expected_fields=TE_PARSER_READS,
         ),
         Probe(
             name="updates_pointer",
@@ -347,6 +328,7 @@ def plan_te_probes() -> list[Probe]:
             path="/calendar/calendarid/{ids}",  # template; filled at runtime
             description="rehydration shape vs /country/All full-row shape",
             expected_shape="list[22-field dict]",
+            expected_fields=TE_PARSER_READS,
         ),
     ]
 
@@ -354,39 +336,6 @@ def plan_te_probes() -> list[Probe]:
 # ──────────────────────────────────────────────────────────────────────────
 # Diff helpers
 # ──────────────────────────────────────────────────────────────────────────
-
-
-@dataclass
-class RowDiff:
-    """Field-level audit of one observed row vs parser expectations."""
-
-    observed_fields: list[str] = field(default_factory=list)
-    read_by_parser: list[str] = field(default_factory=list)
-    ignored_by_parser: list[str] = field(default_factory=list)
-    unknown_observed: list[str] = field(default_factory=list)
-    missing_expected: list[str] = field(default_factory=list)
-    type_warnings: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ProbeResult:
-    probe: Probe
-    status: str  # "skipped" | "ok" | "http_error" | "auth_missing"
-    request_path: str = ""
-    http_elapsed_ms: float = 0.0
-    row_count: int = 0
-    truncated: bool = False
-    sample_row: dict[str, Any] | None = None
-    # First N CalendarIds captured from this probe's rows — feeds the
-    # calendarid_rehydrate probe so we hit real ids that were just
-    # returned by /country/All.
-    dynamic_ids_sample: list[str] = field(default_factory=list)
-    field_diff: RowDiff | None = None
-    parse_attempts: int = 0
-    parse_successes: int = 0
-    parse_error_samples: list[str] = field(default_factory=list)
-    enum_counters: dict[str, Counter] = field(default_factory=dict)
-    notes: list[str] = field(default_factory=list)
 
 
 def diff_te_row(row: dict[str, Any], expected_fields: frozenset[str]) -> RowDiff:
