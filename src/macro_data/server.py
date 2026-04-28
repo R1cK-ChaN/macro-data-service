@@ -42,6 +42,9 @@ class MacroDataRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/v1/calendar":
             self._handle_calendar_list(parsed.query)
             return
+        if parsed.path == "/v1/calendar/revisions":
+            self._handle_calendar_revisions(parsed.query)
+            return
         self._write_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
     def _handle_calendar_list(self, query: str) -> None:
@@ -78,6 +81,58 @@ class MacroDataRequestHandler(BaseHTTPRequestHandler):
             result = service.invoke("list_calendar_items", arguments)
         except Exception as exc:
             logger.exception("GET /v1/calendar failed")
+            self._write_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"error": str(exc)},
+            )
+            return
+        if isinstance(result, dict) and "error" in result:
+            self._write_json(HTTPStatus.BAD_REQUEST, result)
+            return
+        self._write_json(HTTPStatus.OK, result)
+
+    def _handle_calendar_revisions(self, query: str) -> None:
+        """GET /v1/calendar/revisions — surface ``cal_corp_raw`` revisions.
+
+        Query params:
+
+        - ``from_ts`` / ``to_ts`` — ISO-8601 UTC bounds on
+          ``snapshot_epoch_ms``; filter the GROUP BY so the version
+          count reflects revisions seen *inside* the window.
+        - ``ticker`` / ``subtype`` — equality filters on the
+          ``cal_corp_event`` projection.
+        - ``min_versions`` — default 2; set to 1 to enumerate every
+          event with at least one snapshot.
+        - ``event_id`` + ``include_versions=true`` — drill into a
+          single event and return its raw-snapshot chain instead of
+          the aggregate listing.
+        - ``page[offset]`` / ``page[limit]`` — JSON:API pagination
+          (default 0 / 100, max 500).
+
+        Issue #66 — paired with structured ``corp-event revised`` log
+        lines from ``store_corp_raw`` for cheap observability.
+        """
+        params = parse_qs(query, keep_blank_values=False)
+        def _first(key: str) -> str:
+            values = params.get(key) or []
+            return values[0] if values else ""
+        include_versions_raw = _first("include_versions").lower()
+        arguments: dict[str, Any] = {
+            "from_ts":          _first("from_ts"),
+            "to_ts":            _first("to_ts"),
+            "ticker":           _first("ticker"),
+            "subtype":          _first("subtype"),
+            "min_versions":     _first("min_versions"),
+            "event_id":         _first("event_id"),
+            "include_versions": include_versions_raw in {"1", "true", "yes"},
+            "page_offset":      _first("page[offset]"),
+            "page_limit":       _first("page[limit]"),
+        }
+        service = self.server.service  # type: ignore[attr-defined]
+        try:
+            result = service.invoke("list_corp_revisions", arguments)
+        except Exception as exc:
+            logger.exception("GET /v1/calendar/revisions failed")
             self._write_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
                 {"error": str(exc)},
