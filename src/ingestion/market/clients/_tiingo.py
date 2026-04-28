@@ -235,17 +235,18 @@ class TiingoMarketDataProvider:
             logger.warning("Tiingo fetch failed for %s", entry.ticker, exc_info=True)
             return RefreshStats(source="tiingo", count=0)
 
-        if not bars:
-            return RefreshStats(source="tiingo", count=0)
-
-        # Issue #69 slice 2: capture raw payload before projecting bars.
-        # Same idempotent INSERT OR IGNORE contract as the EODHD lane —
-        # unchanged daily refresh dedupes on content_hash, a new bar
-        # flips the hash and lands as a fresh row.
+        # Issue #69 slice 2: capture raw payload BEFORE the empty-bars
+        # short-circuit. If the parser starts returning zero bars after a
+        # provider field rename, the audit lane is exactly what's needed
+        # to re-project once the parser is fixed — discarding the body
+        # there would mean burning Tiingo quota to re-fetch.
         if raw_payload:
             self._capture_bars_raw(
                 store, entry.ticker, raw_payload, request_params,
             )
+
+        if not bars:
+            return RefreshStats(source="tiingo", count=0)
 
         adjustment_applied = check_adjustment_applied(bars)
         break_dates = detect_history_breaks(bars, threshold=self.break_threshold) if adjustment_applied else []

@@ -173,6 +173,43 @@ class TestReProjectionFromBarsRaw:
 
 
 class TestEodhdRefreshWritesRaw:
+    def test_raw_captured_when_parser_returns_no_bars(self, tmp_path: Path) -> None:
+        """Codex round-2 P2: if the parser returns zero typed bars (e.g.
+        after a field rename) the raw payload must STILL land — that's
+        precisely the case the audit lane exists to recover from."""
+        from ingestion.market._eodhd_universe import EODHDUniverseEntry
+        from ingestion.market.clients._eodhd import EODHDMarketDataProvider
+
+        store = SQLiteEngineStore(tmp_path / "engine.db")
+        # Non-empty raw payload but empty parsed bars — simulates a
+        # parser regression on otherwise-good upstream data.
+        raw_only_payload = [{"date": "2024-01-02", "fooBar": 100.0}]
+        mock_client = MagicMock()
+        mock_client.get_daily_bars_with_raw.return_value = (
+            [], raw_only_payload, {"fmt": "json"},
+        )
+        entry = EODHDUniverseEntry(
+            instrument_id="US_TEST",
+            eodhd_ticker="TEST.US",
+            primary_ticker="TEST",
+            exchange_code="NYSE",
+            name="Test Instrument",
+            asset_class="equity",
+            market="United States equity market",
+            currency="USD",
+            isin="",
+            composite_figi="",
+            share_class_figi="",
+            description_for_agent="",
+        )
+        provider = EODHDMarketDataProvider(
+            client=mock_client, universe=(entry,), request_sleep=0,
+        )
+        provider.refresh_market_history(store, "TEST.US")
+        latest = store.latest_market_price_bars_raw("eodhd", "TEST.US")
+        assert latest is not None
+        assert latest.content_hash == bars_content_hash(raw_only_payload)
+
     def test_refresh_writes_one_raw_row_first_call(self, tmp_path: Path) -> None:
         from ingestion.market._eodhd_universe import EODHDUniverseEntry
         from ingestion.market.clients._eodhd import EODHDMarketDataProvider
@@ -227,6 +264,39 @@ class TestEodhdRefreshWritesRaw:
 
 
 class TestTiingoRefreshWritesRaw:
+    def test_raw_captured_when_parser_returns_no_bars(self, tmp_path: Path) -> None:
+        """Same Codex round-2 P2 contract as the EODHD test."""
+        from ingestion.market._tiingo_universe import TiingoUniverseEntry
+        from ingestion.market.clients._tiingo import TiingoMarketDataProvider
+
+        store = SQLiteEngineStore(tmp_path / "engine.db")
+        raw_only_payload = [{"date": "2024-01-02T00:00:00.000Z", "newField": 100.0}]
+        mock_client = MagicMock()
+        mock_client.get_daily_bars_with_raw.return_value = (
+            [], raw_only_payload, {"format": "json"},
+        )
+        entry = TiingoUniverseEntry(
+            instrument_id="US_SPY",
+            ticker="SPY",
+            name="SPDR S&P 500 ETF",
+            asset_class="equity_etf",
+            market="United States equity market",
+            exchange_code="NYSEARCA",
+            isin="US78462F1030",
+            composite_figi="",
+            share_class_figi="",
+            description_for_agent="",
+        )
+        with patch(
+            "ingestion.market.clients._tiingo.TIINGO_UNIVERSE_BY_TICKER",
+            {"SPY": entry},
+        ):
+            provider = TiingoMarketDataProvider(client=mock_client)
+            provider.refresh_market_history(store, "SPY")
+        latest = store.latest_market_price_bars_raw("tiingo", "SPY")
+        assert latest is not None
+        assert latest.content_hash == bars_content_hash(raw_only_payload)
+
     def test_refresh_writes_one_raw_row_first_call(self, tmp_path: Path) -> None:
         from ingestion.market._tiingo_universe import TiingoUniverseEntry
         from ingestion.market.clients._tiingo import TiingoMarketDataProvider

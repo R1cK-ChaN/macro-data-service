@@ -235,17 +235,18 @@ class EODHDMarketDataProvider:
             logger.warning("EODHD fetch failed for %s", entry.eodhd_ticker, exc_info=True)
             return RefreshStats(source="eodhd", count=0)
 
-        if not bars:
-            return RefreshStats(source="eodhd", count=0)
-
-        # Issue #69 slice 2: capture raw payload before projecting bars.
-        # Same content-hash + INSERT OR IGNORE pattern as the calendar
-        # _raw lanes — re-fetching unchanged data dedupes; a new bar (or
-        # a revised close) flips the hash and lands as a fresh row.
+        # Issue #69 slice 2: capture raw payload BEFORE the empty-bars
+        # short-circuit. If the parser starts returning zero bars after a
+        # provider field rename, the audit lane is exactly what's needed
+        # to re-project once the parser is fixed — discarding the body
+        # there would mean burning EODHD quota to re-fetch.
         if raw_payload:
             self._capture_bars_raw(
                 store, entry.eodhd_ticker, raw_payload, request_params,
             )
+
+        if not bars:
+            return RefreshStats(source="eodhd", count=0)
 
         adjustment_applied = check_adjustment_applied(bars)
         # FX / crypto / spot-metal lines have no corporate actions and
