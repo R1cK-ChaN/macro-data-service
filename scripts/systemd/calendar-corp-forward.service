@@ -1,0 +1,29 @@
+[Unit]
+Description=Macro-data corp calendar forward sweep (issue #63)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Daily, off-peak in EODHD's primary timezone (US/Eastern, after market
+# close). The wrapper resolves .macro-data/, .env, and scripts/ relative
+# to REPO_ROOT and acquires the shared calendar_recurring.lock.
+Environment=REPO_ROOT=%h/Desktop/analyst/macro-data-service
+ExecStart=%h/Desktop/analyst/macro-data-service/scripts/calendar_corp_forward_wrapper.sh
+
+# Soft watchdog — five subtypes × max 30 requests at EODHD's free-tier
+# cadence finish in well under 5 minutes. Anything past 15 minutes is a
+# stuck connector and should be killed; tomorrow's firing picks up the
+# missed work (the rolling [today−7, today+90] window absorbs a missed
+# day automatically).
+TimeoutStartSec=900
+
+# Don't restart on failure — per-subtype failures are isolated by the
+# service op. Daily cadence makes systemd retries redundant.
+Restart=no
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

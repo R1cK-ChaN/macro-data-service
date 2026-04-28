@@ -1,11 +1,62 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+import sqlite3
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from contracts import format_epoch_iso
 
 from .base import LocalMacroDataServiceBase
+
+
+def _collect_dividend_tickers(
+    connection: sqlite3.Connection,
+    *,
+    start: date,
+    end: date,
+    provider: str = "eodhd",
+) -> list[str]:
+    """Ordered ``TICKER.EXCHANGE`` codes for dividends in the window.
+
+    Matches the dividend-detail endpoint's ``/api/div/{TICKER}.{EXCHANGE}``
+    routing — discovery rows that wrote ``ticker``/``exchange`` are the
+    only rows the enrichment pass can act on.
+
+    Order is **unenriched-first** (``reference_date IS NULL`` — the
+    discovery feed leaves ``reference_date`` empty; the enrichment
+    writeback fills it), then by ``observed_at_epoch_ms`` so the oldest
+    enriched rows are next in line for restatement re-checks. Without
+    this rotation, a budgeted daily sweep would consume the same
+    alphabetic prefix every run, leaving later tickers permanently
+    unenriched.
+    """
+    rows = connection.execute(
+        """
+        SELECT ticker || CASE WHEN exchange != ''
+                              THEN '.' || exchange
+                              ELSE '' END AS code,
+               (reference_date IS NULL OR reference_date = '') AS unenriched,
+               MIN(observed_at_epoch_ms) AS first_seen
+        FROM cal_corp_event
+        WHERE provider = ?
+          AND event_subtype = 'dividend'
+          AND substr(event_time_utc, 1, 10) >= ?
+          AND substr(event_time_utc, 1, 10) <= ?
+          AND ticker != ''
+        GROUP BY code
+        ORDER BY unenriched DESC, first_seen ASC, code ASC
+        """,
+        (provider, start.isoformat(), end.isoformat()),
+    ).fetchall()
+    seen: set[str] = set()
+    out: list[str] = []
+    for row in rows:
+        code = row[0]
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        out.append(code)
+    return out
 
 
 class CalendarOpsMixin(LocalMacroDataServiceBase):
@@ -452,6 +503,203 @@ class CalendarOpsMixin(LocalMacroDataServiceBase):
             "events_upserted":   summary.events_upserted,
             "parse_errors":      summary.parse_errors,
             "stopped_reason":    summary.stopped_reason,
+        }
+
+    def _op_calendar_corp_forward_sweep(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Daily forward-window sweep of the corp calendar lane — issue #63.
+
+        Runs the four discovery subtypes (``earnings``, ``ipo``, ``split``,
+        ``dividend``) over a rolling ``[today − lookback_days,
+        today + lookforward_days]`` window, then enriches the dividend
+        rows discovered this run via ``/api/div/{ticker}``. Each subtype
+        is isolated: an EODHD 5xx, parse failure, or budget halt on one
+        subtype must not abort the rest. ``earnings_trend`` is symbol-
+        scoped and depends on a watchlist source-of-truth; deferred.
+
+        Arguments:
+          lookback_days       — default 7. Backward window catches
+                                restatements + late-arriving actuals.
+          lookforward_days    — default 90. Forward window catches
+                                schedule announcements.
+          max_requests        — default 30. Per-subtype hard cap.
+          window_days         — default 7. Window slice width.
+          dry_run             — default True. Returns the plan shape
+                                without issuing any HTTP request.
+          subtypes            — optional subset (default all four +
+                                ``dividend_details``). ``dividend_details``
+                                always runs after ``dividend`` even if
+                                listed earlier; reordering is silent.
+        """
+        from datetime import date as _date, datetime as _dt, timezone as _tz
+
+        from ingestion.calendar.eodhd_api import (
+            CorpCalendarFetcher,
+            EODHDAPIClient,
+            fetch_dividend_details,
+        )
+
+        dry_run = bool(arguments.get("dry_run", True))
+        try:
+            lookback_days = max(0, int(arguments.get("lookback_days") or 7))
+        except (TypeError, ValueError):
+            lookback_days = 7
+        try:
+            lookforward_days = max(0, int(arguments.get("lookforward_days") or 90))
+        except (TypeError, ValueError):
+            lookforward_days = 90
+        try:
+            max_requests = max(1, int(arguments.get("max_requests") or 30))
+        except (TypeError, ValueError):
+            max_requests = 30
+        try:
+            window_days = max(1, int(arguments.get("window_days") or 7))
+        except (TypeError, ValueError):
+            window_days = 7
+
+        all_subtypes = ("earnings", "ipo", "split", "dividend", "dividend_details")
+        raw_subtypes = arguments.get("subtypes")
+        if isinstance(raw_subtypes, list) and raw_subtypes:
+            requested = [str(s).strip() for s in raw_subtypes if str(s).strip()]
+        elif isinstance(raw_subtypes, str) and raw_subtypes.strip():
+            requested = [s.strip() for s in raw_subtypes.split(",") if s.strip()]
+        else:
+            requested = list(all_subtypes)
+        unknown = [s for s in requested if s not in all_subtypes]
+        if unknown:
+            return {"error": f"unknown subtype(s): {unknown!r}; expected subset of {list(all_subtypes)}"}
+        # Force discovery → enrichment ordering: dividend_details depends on
+        # tickers that the dividend discovery sweep just wrote into
+        # cal_corp_event. Caller-supplied ordering is otherwise honored.
+        if "dividend" in requested and "dividend_details" in requested:
+            requested = [s for s in requested if s != "dividend_details"] + ["dividend_details"]
+
+        today = _dt.now(_tz.utc).date()
+        start = today - timedelta(days=lookback_days)
+        end = today + timedelta(days=lookforward_days)
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        results: list[dict[str, Any]] = []
+        with EODHDAPIClient() as client:
+            for subtype in requested:
+                started = _dt.now(_tz.utc).isoformat()
+                connection = get_conn()
+                try:
+                    if subtype == "dividend_details":
+                        # Order is significant — unenriched-first rotation
+                        # so a budgeted run does not loop on the same
+                        # alphabetic prefix every day. Don't sort here.
+                        symbols = _collect_dividend_tickers(
+                            connection, start=start, end=end,
+                        )
+                        if not symbols:
+                            results.append({
+                                "subtype":         "dividend_details",
+                                "started_at":      started,
+                                "finished_at":     _dt.now(_tz.utc).isoformat(),
+                                "ok":              True,
+                                "dry_run":         dry_run,
+                                "from":            start.isoformat(),
+                                "to":              end.isoformat(),
+                                "symbols_planned": 0,
+                                "requests_spent":  0,
+                                "rows_raw_inserted": 0,
+                                "events_upserted": 0,
+                                "stopped_reason":  "no_dividend_tickers_in_window",
+                            })
+                            continue
+                        summary = fetch_dividend_details(
+                            connection=connection,
+                            client=client,
+                            symbols=symbols,
+                            start=start,
+                            end=end,
+                            max_requests=max_requests,
+                            dry_run=dry_run,
+                        )
+                        connection.commit()
+                        results.append({
+                            "subtype":           "dividend_details",
+                            "started_at":        started,
+                            "finished_at":       _dt.now(_tz.utc).isoformat(),
+                            "ok":                True,
+                            "dry_run":           summary.dry_run,
+                            "from":              start.isoformat(),
+                            "to":                end.isoformat(),
+                            "symbols_planned":   summary.windows_planned,
+                            "requests_spent":    summary.requests_spent,
+                            "rows_parsed":       summary.rows_parsed,
+                            "rows_raw_inserted": summary.rows_raw_inserted,
+                            "events_upserted":   summary.events_upserted,
+                            "parse_errors":      summary.parse_errors,
+                            "stopped_reason":    summary.stopped_reason,
+                        })
+                        continue
+
+                    fetcher = CorpCalendarFetcher(
+                        connection=connection,
+                        client=client,
+                        max_requests=max_requests,
+                        window_days=window_days,
+                    )
+                    summary = fetcher.fetch(
+                        subtype=subtype,
+                        start=start,
+                        end=end,
+                        dry_run=dry_run,
+                    )
+                    connection.commit()
+                    results.append({
+                        "subtype":           summary.subtype,
+                        "started_at":        started,
+                        "finished_at":       _dt.now(_tz.utc).isoformat(),
+                        "ok":                True,
+                        "dry_run":           summary.dry_run,
+                        "from":              start.isoformat(),
+                        "to":                end.isoformat(),
+                        "windows_planned":   summary.windows_planned,
+                        "requests_spent":    summary.requests_spent,
+                        "rows_parsed":       summary.rows_parsed,
+                        "rows_raw_inserted": summary.rows_raw_inserted,
+                        "events_upserted":   summary.events_upserted,
+                        "parse_errors":      summary.parse_errors,
+                        "stopped_reason":    summary.stopped_reason,
+                    })
+                except Exception as exc:
+                    try:
+                        connection.rollback()
+                    except Exception:
+                        pass
+                    results.append({
+                        "subtype":     subtype,
+                        "started_at":  started,
+                        "finished_at": _dt.now(_tz.utc).isoformat(),
+                        "ok":          False,
+                        "dry_run":     dry_run,
+                        "error":       repr(exc),
+                    })
+                finally:
+                    try:
+                        connection.close()
+                    except Exception:
+                        pass
+
+        return {
+            "operation":         "calendar_corp_forward_sweep",
+            "dry_run":           dry_run,
+            "from":              start.isoformat(),
+            "to":                end.isoformat(),
+            "lookback_days":     lookback_days,
+            "lookforward_days":  lookforward_days,
+            "max_requests":      max_requests,
+            "subtypes":          requested,
+            "ok_count":          sum(1 for r in results if r.get("ok")),
+            "failed_count":      sum(1 for r in results if not r.get("ok")),
+            "events_upserted":   sum(int(r.get("events_upserted") or 0) for r in results),
+            "requests_spent":    sum(int(r.get("requests_spent") or 0) for r in results),
+            "results":           results,
         }
 
     def _op_calendar_econ_sync_updates(self, arguments: dict[str, Any]) -> dict[str, Any]:

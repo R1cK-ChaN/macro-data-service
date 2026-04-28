@@ -60,6 +60,44 @@ from storage import (
 )
 
 
+def _collect_corp_dividend_tickers(
+    connection: Any, *, start: Any, end: Any, provider: str = "eodhd",
+) -> list[str]:
+    """Unenriched-first ordered ``TICKER.EXCHANGE`` codes for dividends.
+
+    Mirrors the helper in ``service/_calendar.py`` — orchestrator-side
+    so the dividend-details source can be invoked without going through
+    the service op. See the sibling helper for the ordering rationale.
+    """
+    rows = connection.execute(
+        """
+        SELECT ticker || CASE WHEN exchange != ''
+                              THEN '.' || exchange
+                              ELSE '' END AS code,
+               (reference_date IS NULL OR reference_date = '') AS unenriched,
+               MIN(observed_at_epoch_ms) AS first_seen
+        FROM cal_corp_event
+        WHERE provider = ?
+          AND event_subtype = 'dividend'
+          AND substr(event_time_utc, 1, 10) >= ?
+          AND substr(event_time_utc, 1, 10) <= ?
+          AND ticker != ''
+        GROUP BY code
+        ORDER BY unenriched DESC, first_seen ASC, code ASC
+        """,
+        (provider, start.isoformat(), end.isoformat()),
+    ).fetchall()
+    seen: set[str] = set()
+    out: list[str] = []
+    for row in rows:
+        code = row[0]
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        out.append(code)
+    return out
+
+
 def _infer_publish_precision(value: str | None) -> str:
     if not value:
         return "estimated"
@@ -174,6 +212,11 @@ SOURCE_FAMILIES: dict[str, str] = {
     # news / calendar / trend / signal
     "news": "news",
     "calendar": "calendar",
+    "corp_calendar_earnings": "calendar",
+    "corp_calendar_ipo": "calendar",
+    "corp_calendar_split": "calendar",
+    "corp_calendar_dividend": "calendar",
+    "corp_calendar_dividend_details": "calendar",
     "reddit_trends": "trend",
     "weibo_trends": "trend",
     "rate_probability": "signal",
@@ -352,6 +395,16 @@ class IngestionOrchestrator:
     def _register_default_sources(self) -> None:
         definitions = [
             self._build_calendar_source(),
+            # Corp calendar forward-window sources (issue #63). Not
+            # listed in _default_refresh_order — the daily timer
+            # (calendar-corp-forward.service) is the only invocation
+            # site so refresh_all does not silently consume EODHD
+            # quota on every operator-driven sweep.
+            self._build_corp_calendar_subtype_source("earnings"),
+            self._build_corp_calendar_subtype_source("ipo"),
+            self._build_corp_calendar_subtype_source("split"),
+            self._build_corp_calendar_subtype_source("dividend"),
+            self._build_corp_calendar_dividend_details_source(),
             self._build_fed_source(),
             self._build_market_source(),
             self._build_tiingo_market_source(),
@@ -607,6 +660,95 @@ class IngestionOrchestrator:
         for event in events:
             self.store.upsert_calendar_event(event)
         return len(events)
+
+    # ── Corp calendar (EODHD) forward sources — issue #63 ────────────
+    # Window: today − lookback_days … today + lookforward_days.
+    # 7-day backward look catches restatements + late-arriving actuals;
+    # 90-day forward look catches schedule announcements. Each source's
+    # ``execute`` is a single-subtype call: per-subtype isolation comes
+    # from caller-side error handling (sweep service op or systemd
+    # script) since ``IngestionOrchestrator._run_definition`` already
+    # converts an exception into an error-tagged report rather than
+    # propagating it.
+    _CORP_LOOKBACK_DAYS = 7
+    _CORP_LOOKFORWARD_DAYS = 90
+    _CORP_MAX_REQUESTS = 30
+    _CORP_WINDOW_DAYS = 7
+
+    def _build_corp_calendar_subtype_source(
+        self, subtype: str,
+    ) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name=f"corp_calendar_{subtype}",
+            interval_seconds=86_400,
+            execute=lambda: self._run_corp_calendar_subtype(subtype),
+        )
+
+    def _build_corp_calendar_dividend_details_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="corp_calendar_dividend_details",
+            interval_seconds=86_400,
+            execute=self._run_corp_calendar_dividend_details,
+        )
+
+    def _run_corp_calendar_subtype(self, subtype: str) -> int:
+        from datetime import date as _date
+        from ingestion.calendar.eodhd_api import CorpCalendarFetcher, EODHDAPIClient
+
+        today = datetime.now(timezone.utc).date()
+        start = today - timedelta(days=self._CORP_LOOKBACK_DAYS)
+        end = today + timedelta(days=self._CORP_LOOKFORWARD_DAYS)
+        connection = self.store.get_connection()
+        try:
+            with EODHDAPIClient() as client:
+                fetcher = CorpCalendarFetcher(
+                    connection=connection,
+                    client=client,
+                    max_requests=self._CORP_MAX_REQUESTS,
+                    window_days=self._CORP_WINDOW_DAYS,
+                )
+                summary = fetcher.fetch(
+                    subtype=subtype, start=start, end=end, dry_run=False,
+                )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return int(summary.events_upserted)
+
+    def _run_corp_calendar_dividend_details(self) -> int:
+        from ingestion.calendar.eodhd_api import EODHDAPIClient, fetch_dividend_details
+
+        today = datetime.now(timezone.utc).date()
+        start = today - timedelta(days=self._CORP_LOOKBACK_DAYS)
+        end = today + timedelta(days=self._CORP_LOOKFORWARD_DAYS)
+        connection = self.store.get_connection()
+        try:
+            # Unenriched-first rotation — see helper docstring.
+            symbols = _collect_corp_dividend_tickers(
+                connection, start=start, end=end,
+            )
+            if not symbols:
+                return 0
+            with EODHDAPIClient() as client:
+                summary = fetch_dividend_details(
+                    connection=connection,
+                    client=client,
+                    symbols=symbols,
+                    start=start,
+                    end=end,
+                    max_requests=self._CORP_MAX_REQUESTS,
+                    dry_run=False,
+                )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return int(summary.events_upserted)
 
     def _build_fed_source(self) -> IngestionSourceDefinition:
         return IngestionSourceDefinition(

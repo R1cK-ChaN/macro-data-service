@@ -1229,6 +1229,10 @@ class _IndicatorQueriesMixin:
                 "v_calendar_item", "1 = 1", (),
                 "strftime('%Y-%m-%dT%H:%M:%f+00:00', observed_at_epoch_ms / 1000.0, 'unixepoch')",
             ),
+            "corp_calendar": (
+                "cal_corp_event", "provider = ?", ("eodhd",),
+                "strftime('%Y-%m-%dT%H:%M:%f+00:00', observed_at_epoch_ms / 1000.0, 'unixepoch')",
+            ),
             "news": ("news_articles", "source_feed NOT LIKE 'gov_%'", tuple(), "scraped_at"),
             "gov_reports": ("document", "1 = 1", tuple(), "updated_at"),
             "reddit_trends": ("trend_topics", "provider = ?", ("reddit",), "scraped_at"),

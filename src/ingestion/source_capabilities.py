@@ -1082,6 +1082,97 @@ class SourceCapabilityManager:
             is_default_scheduled=False,
             discover=_calendar_entities,
         )
+
+        def _corp_calendar_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
+            entities = [
+                _entity("corp_calendar", "earnings", "subtype", "Earnings",
+                        description="EODHD earnings calendar discovery feed"),
+                _entity("corp_calendar", "ipo", "subtype", "IPO",
+                        description="EODHD IPO calendar discovery feed"),
+                _entity("corp_calendar", "split", "subtype", "Splits",
+                        description="EODHD splits calendar discovery feed"),
+                _entity("corp_calendar", "dividend", "subtype", "Dividends",
+                        description="EODHD dividends calendar discovery feed"),
+                _entity("corp_calendar", "dividend_details", "subtype", "Dividend Details",
+                        description="EODHD per-ticker /api/div enrichment"),
+            ]
+            return _limit_items(entities, query, limit)
+
+        def _corp_calendar_sync_latest(
+            entity_ids: list[str] | None, limit: int | None,
+        ) -> CapabilitySyncResult:
+            if orchestrator is None:
+                raise RuntimeError("orchestrator unavailable for corp calendar sync")
+            default_jobs = [
+                "corp_calendar_earnings", "corp_calendar_ipo",
+                "corp_calendar_split", "corp_calendar_dividend",
+                "corp_calendar_dividend_details",
+            ]
+            if entity_ids:
+                wanted = list(entity_ids)
+            else:
+                # ``limit`` honours the catalog-sync-latest contract: an
+                # operator passing ``--limit 1`` must not silently spend
+                # five EODHD subtype budgets on a single sync.
+                wanted = default_jobs[: max(limit, 1)] if limit else default_jobs
+            # Allow clients to pass either ``earnings`` (entity id) or
+            # ``corp_calendar_earnings`` (orchestrator job name).
+            jobs: list[str] = [
+                item if item.startswith("corp_calendar_") else f"corp_calendar_{item}"
+                for item in wanted
+            ]
+            # Force discovery → enrichment ordering: dividend_details
+            # reads tickers from cal_corp_event, so it must run after
+            # the dividend discovery sweep that wrote them. Caller-
+            # supplied ordering is otherwise honored. Mirrors the
+            # forward-sweep service op's contract.
+            if (
+                "corp_calendar_dividend" in jobs
+                and "corp_calendar_dividend_details" in jobs
+            ):
+                jobs = [
+                    j for j in jobs if j != "corp_calendar_dividend_details"
+                ] + ["corp_calendar_dividend_details"]
+            # Per-job isolation: one failing subtype must not abort the
+            # rest. Errors are collected and surfaced as a RuntimeError
+            # at the end so the capability manager records the failure
+            # in catalog_sync_runs (success-only return would silently
+            # mask a half-broken sweep).
+            observations = 0
+            errors: list[str] = []
+            for job in jobs:
+                try:
+                    report = orchestrator.run_source(job)
+                except Exception as exc:
+                    errors.append(f"{job}: {exc}")
+                    continue
+                if report.error:
+                    errors.append(f"{job}: {report.error}")
+                    continue
+                observations += report.stored
+            if errors:
+                raise RuntimeError(
+                    f"corp_calendar sync had {len(errors)} failed job(s): "
+                    + "; ".join(errors)
+                )
+            return CapabilitySyncResult(
+                entities_total=len(jobs),
+                entities_synced=len(jobs),
+                observations_synced=observations,
+                metadata={"jobs": jobs},
+            )
+
+        adapters["corp_calendar"] = SourceCapabilityAdapter(
+            source_id="corp_calendar",
+            display_name="Corporate Calendar",
+            source_type="fixed-scope-complete",
+            entity_type="subtype",
+            description="EODHD corporate-actions feed (earnings / ipo / split / dividend + details)",
+            notes="Forward sweep is timer-driven via calendar-corp-forward.timer (issue #63).",
+            is_default_scheduled=True,
+            discover=_corp_calendar_entities,
+            sync_latest=_corp_calendar_sync_latest,
+        )
         adapters["fed"] = SourceCapabilityAdapter(
             source_id="fed",
             display_name="Fed Communications",
