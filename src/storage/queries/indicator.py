@@ -31,6 +31,7 @@ from storage.models.indicator import (
     IndicatorVintageRecord,
     ObsFamilyDocumentRecord,
     ObsFamilyRecord,
+    ObsRawRecord,
     ObsSourceRecord,
     ResolvedObservation,
 )
@@ -293,6 +294,78 @@ class _IndicatorQueriesMixin:
                     utc_now().isoformat(),
                 ),
             )
+
+    def insert_obs_raw(self, records: list[ObsRawRecord]) -> int:
+        """Insert raw macro time-series snapshots; return number of new rows.
+
+        ``INSERT OR IGNORE`` on the ``(source, series_id, content_hash)``
+        PK matches the ``cal_econ_raw`` idempotency contract — same
+        canonicalized payload = same row, no duplicate write. A revised
+        observation flips the hash and lands as a new row, preserving the
+        revision chain.
+
+        Issue #69 slice 1 — see schema rationale comment on ``obs_raw``.
+        """
+        if not records:
+            return 0
+        rows = [
+            (
+                r.source,
+                r.series_id,
+                r.snapshot_epoch_ms,
+                r.content_hash,
+                r.payload_json,
+                r.fetched_at,
+                r.request_params_json,
+            )
+            for r in records
+        ]
+        with self._connection(commit=True) as connection:
+            before = connection.total_changes
+            connection.executemany(
+                """
+                INSERT OR IGNORE INTO obs_raw (
+                    source, series_id, snapshot_epoch_ms,
+                    content_hash, payload_json, fetched_at, request_params_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            return connection.total_changes - before
+
+    def latest_obs_raw_for_series(
+        self, source: str, series_id: str,
+    ) -> ObsRawRecord | None:
+        """Latest snapshot for ``(source, series_id)``.
+
+        Hits ``idx_obs_raw_latest`` (``source, series_id,
+        snapshot_epoch_ms DESC``) so the lookup is O(1) regardless of
+        revision-chain depth. Used by re-projection: replay the latest
+        raw payload through the parser without re-fetching upstream.
+        """
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                """
+                SELECT source, series_id, snapshot_epoch_ms, content_hash,
+                       payload_json, fetched_at, request_params_json
+                FROM obs_raw
+                WHERE source = ? AND series_id = ?
+                ORDER BY snapshot_epoch_ms DESC
+                LIMIT 1
+                """,
+                (source, series_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return ObsRawRecord(
+            source=row["source"],
+            series_id=row["series_id"],
+            snapshot_epoch_ms=int(row["snapshot_epoch_ms"]),
+            content_hash=row["content_hash"],
+            payload_json=row["payload_json"],
+            fetched_at=row["fetched_at"],
+            request_params_json=row["request_params_json"] or "{}",
+        )
 
     def list_indicator_releases(
         self,

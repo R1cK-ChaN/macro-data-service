@@ -383,6 +383,37 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         )
         """
     )
+    # ── Macro time-series audit lane (issue #69 slice 1) ─────────────────
+    # Mirrors cal_econ_raw — same content-hash + raw-payload + snapshot
+    # pattern, ticker-shaped at the source/series_id grain. One row per
+    # HTTP response (per source × series_id × snapshot): ``payload_json``
+    # holds the FRED / BLS / SDMX response verbatim, ``content_hash`` is
+    # sha256 over the canonicalized observations (sorted by date with
+    # query-time echo fields dropped) so re-fetching unchanged data
+    # dedupes via the INSERT OR IGNORE PK.
+    #
+    # ``indicator_vintages`` already stores typed values + vintage history
+    # but discards the upstream byte stream — this table closes that gap:
+    # parser bug or schema change → fix code, re-project from raw, zero
+    # FRED/BLS quota consumed. Audit floor is "first write after #69".
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS obs_raw (
+            source              TEXT NOT NULL,
+            series_id           TEXT NOT NULL,
+            snapshot_epoch_ms   INTEGER NOT NULL,
+            content_hash        TEXT NOT NULL,
+            payload_json        TEXT NOT NULL,
+            fetched_at          TEXT NOT NULL,
+            request_params_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (source, series_id, content_hash)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_obs_raw_latest "
+        "ON obs_raw(source, series_id, snapshot_epoch_ms DESC)"
+    )
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS calendar_event_vintages (

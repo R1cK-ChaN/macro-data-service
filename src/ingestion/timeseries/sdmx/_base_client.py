@@ -187,6 +187,34 @@ class SDMXClient:
         **kwargs: Any,
     ) -> list[SDMXObservation]:
         """Fetch observations from an SDMX dataflow."""
+        observations, _payload, _params = self.get_data_with_raw(
+            dataflow_id, key,
+            series_id=series_id,
+            start_period=start_period,
+            end_period=end_period,
+            limit=limit,
+            **kwargs,
+        )
+        return observations
+
+    def get_data_with_raw(
+        self,
+        dataflow_id: str,
+        key: str = ".",
+        *,
+        series_id: str = "",
+        start_period: str | None = None,
+        end_period: str | None = None,
+        limit: int = 100,
+        **kwargs: Any,
+    ) -> tuple[list[SDMXObservation], dict, dict[str, str]]:
+        """Fetch observations and return parsed obs + raw HTTP body + request params.
+
+        Used by the issue #69 ``obs_raw`` write path so SDMX-JSON
+        consumers (IMF / BIS / ECB / Eurostat / OECD / UNSD / ILO)
+        can land both the parsed series and the upstream bytes
+        through a single HTTP call.
+        """
         url = self._build_data_url(dataflow_id, key, **kwargs)
         params: dict[str, str] = {"format": "jsondata"}
         if start_period:
@@ -197,9 +225,19 @@ class SDMXClient:
             params["lastNObservations"] = str(limit)
 
         response = self._get(url, params)
-        return self._parse_data_response(
+        observations = self._parse_data_response(
             response, series_id=series_id, dataflow=dataflow_id, limit=limit,
         )
+        try:
+            payload = self._response_json(
+                response, context=f"{dataflow_id}/{series_id or '*'}",
+            )
+        except ValueError:
+            payload = {}
+        record_params = dict(params)
+        record_params["dataflow_id"] = dataflow_id
+        record_params["key"] = key
+        return observations, payload, record_params
 
     # ── Catalog discovery ─────────────────────────────────────────────
 

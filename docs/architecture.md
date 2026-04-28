@@ -73,6 +73,7 @@ Everything else (agents, UIs, notebooks) is a consumer.
 - **Schema:** `obs_source`, `obs_family`, `indicators`, `indicator_vintages`. `concept_map` bridges source-native IDs to 86 canonical concepts; `subject_aliases` lets text queries resolve back to concepts.
 - **Resolution:** `resolve_indicator(concept_id)` ranks sources by `concept_map.priority`, returns primary + alternates. Vintages preserved for PIT reconstruction.
 - **Status:** architecture complete; first-pass ingestion bootstrap underway. DB starts empty; Phase 1 (top US macro, 10 indicators) is the immediate next milestone, not more code.
+- **Audit lane** (issue #69 slice 1): `obs_raw` mirrors `cal_econ_raw` — one row per HTTP response per `(source, series_id)`, idempotent on `(source, series_id, content_hash)`. The FRED / BLS / SDMX scrapers expose `*_with_raw` companions to `get_series` / `get_data` that return `(parsed, raw_payload, request_params)` so the orchestrator side-writes the audit row before normalize. Per-source canonicalization (`ingestion/timeseries/canonicalize.py`) hashes only the sorted observations, dropping query-time envelope echoes (`observation_start` / `realtime_*` / `responseTime` / SDMX `header.prepared`) so a daily refresh with a sliding `start_date` dedupes through INSERT OR IGNORE. Three sources covered (FRED + BLS + IMF SDMX-JSON); BIS is excluded (CSV body has no JSON-shape canonicalization yet). Re-projection helpers `_parse_fred_observations` / parsing in BLS+SDMX mirror the calendar `cal_econ_raw` replay path — fix a parser, replay raw, zero quota cost.
 
 ### 2. Documents (government reports + central-bank comms)
 
@@ -352,7 +353,8 @@ Closed recently (context only — the code is the source of truth):
    with a route or it doesn't ship. (See "Service boundary" above for the full
    rule.)
 2. **Revisions are never lost.** `indicator_vintages`, `cal_econ_raw` /
-   `cal_corp_raw` append; PIT projections are derived views over them.
+   `cal_corp_raw`, `obs_raw`, `market_corp_actions_raw` append; PIT
+   projections are derived views over them.
 3. **The service layer exposes one contract.** Storage lanes can split (macro
    vs calendar vs corporate) but resolution presents a single shape —
    `resolve_indicator`, `get_market_history`, `list_items`, and (coming)

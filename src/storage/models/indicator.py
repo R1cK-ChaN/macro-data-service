@@ -47,6 +47,31 @@ class IndicatorVintageRecord:
 
 
 @dataclass(frozen=True)
+class ObsRawRecord:
+    """Audit-lane raw row for the macro time-series table (issue #69 slice 1).
+
+    Mirrors ``CalendarRawRecord`` in shape — one row per HTTP response per
+    ``(source, series_id)``. ``content_hash`` is sha256 over the
+    canonicalized observations (sorted by date, query-time echo fields
+    dropped) so re-fetching unchanged data dedupes via INSERT OR IGNORE.
+
+    Why the audit lane: every value in ``indicators`` /
+    ``indicator_vintages`` is reproducible from raw, so a parser bug or
+    upstream schema rename can be fixed and re-projected without spending
+    FRED/BLS/SDMX quota; restated observations land as new rows preserving
+    the revision chain.
+    """
+
+    source: str             # 'fred' | 'bls' | 'eia' | 'imf' | 'eurostat' | …
+    series_id: str          # source-native id, e.g. 'GDP' (FRED), 'CUUR0000SA0' (BLS)
+    snapshot_epoch_ms: int  # when WE fetched this snapshot, UTC ms
+    content_hash: str       # sha256 over canonicalized response
+    payload_json: str       # full HTTP response body, verbatim
+    fetched_at: str         # ISO-8601 UTC convenience column
+    request_params_json: str = "{}"  # from/to/units/etc — needed to interpret partial responses
+
+
+@dataclass(frozen=True)
 class ObsSourceRecord:
     source_id: str          # 'fred', 'eia', 'treasury_fiscal'
     source_code: str

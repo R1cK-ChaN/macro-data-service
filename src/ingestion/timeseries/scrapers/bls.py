@@ -162,6 +162,57 @@ class BLSClient:
         )
         return result.get(series_id, [])
 
+    def get_series_single_with_raw(
+        self,
+        series_id: str,
+        *,
+        start_year: int | None = None,
+        end_year: int | None = None,
+    ) -> tuple[list[BLSObservation], dict, dict[str, Any]]:
+        """Fetch one series and return parsed obs + raw HTTP body + request params.
+
+        Used by the issue #69 ``obs_raw`` write path. Mirrors
+        :meth:`get_series_single` but does not chunk: assumes the
+        ``end_year - start_year`` span fits in one BLS POST (≤ 20 years).
+        Larger spans fall back to ``get_series_single`` for the parsed
+        observations and skip the raw write — slice 1 ships single-
+        request capture; multi-chunk audit is deferred until a caller
+        actually needs > 20 years and the existing chunking helper can
+        be extended.
+        """
+        if not self.api_key:
+            return [], {}, {}
+        now_year = datetime.now(timezone.utc).year
+        if start_year is None:
+            start_year = now_year - 10
+        if end_year is None:
+            end_year = now_year
+        if end_year - start_year + 1 > _MAX_YEARS_PER_QUERY:
+            # Span exceeds single-POST limit; fall back to chunked fetch
+            # without raw capture.
+            return self.get_series_single(
+                series_id, start_year=start_year, end_year=end_year,
+            ), {}, {}
+
+        request_body: dict[str, Any] = {
+            "seriesid": [series_id],
+            "startyear": str(start_year),
+            "endyear": str(end_year),
+        }
+        payload = self._post_timeseries(
+            [series_id], start_year=start_year, end_year=end_year,
+        )
+        observations: list[BLSObservation] = []
+        for series_data in payload.get("Results", {}).get("series", []):
+            sid = series_data.get("seriesID", "")
+            if sid != series_id:
+                continue
+            for obs in series_data.get("data", []):
+                parsed = self._parse_observation(sid, obs)
+                if parsed is not None:
+                    observations.append(parsed)
+        return observations, payload, request_body
+
     def get_series_info(self, series_id: str) -> BLSSeriesInfo:
         """Fetch series metadata via catalog=True."""
         if not self.api_key:

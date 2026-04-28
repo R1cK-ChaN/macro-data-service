@@ -98,10 +98,17 @@ class TestFredFetcher:
         from ingestion.fetchers._fred import FredFetcher
 
         mock_client = MagicMock()
-        mock_client.get_series.return_value = [
-            _FakeObs(series_id="CPIAUCSL", date="2024-01-01", value=312.3),
-            _FakeObs(series_id="CPIAUCSL", date="2024-02-01", value=313.1),
-        ]
+        mock_client.get_series_with_raw.return_value = (
+            [
+                _FakeObs(series_id="CPIAUCSL", date="2024-01-01", value=312.3),
+                _FakeObs(series_id="CPIAUCSL", date="2024-02-01", value=313.1),
+            ],
+            {"observations": [
+                {"date": "2024-01-01", "value": "312.3"},
+                {"date": "2024-02-01", "value": "313.1"},
+            ]},
+            {"series_id": "CPIAUCSL"},
+        )
         fetcher = FredFetcher(
             client=mock_client,
             series_config={"CPIAUCSL": {"name": "CPI", "category": "inflation", "freq": "monthly"}},
@@ -115,12 +122,19 @@ class TestFredFetcher:
         assert len(rs.observations) == 2
         assert rs.observations[0].date == "2024-01-01"
         assert rs.observations[0].value == 312.3
+        # Issue #69: raw payload + content_hash threaded through
+        assert rs.raw_payload is not None
+        assert rs.content_hash is not None
 
     def test_fetch_series_returns_single(self):
         from ingestion.fetchers._fred import FredFetcher
 
         mock_client = MagicMock()
-        mock_client.get_series.return_value = [_FakeObs(series_id="UNRATE", value=3.7)]
+        mock_client.get_series_with_raw.return_value = (
+            [_FakeObs(series_id="UNRATE", value=3.7)],
+            {"observations": [{"date": "2024-01-01", "value": "3.7"}]},
+            {"series_id": "UNRATE"},
+        )
         fetcher = FredFetcher(
             client=mock_client,
             series_config={"UNRATE": {"name": "Unemployment", "category": "employment", "freq": "monthly"}},
@@ -141,9 +155,13 @@ class TestBLSFetcher:
         from ingestion.fetchers._bls import BLSFetcher
 
         mock_client = MagicMock()
-        mock_client.get_series_single.return_value = [
-            _FakeBLSObs(series_id="CUUR0000SA0", date="2024-01-01", value=310.5, period="M01"),
-        ]
+        mock_client.get_series_single_with_raw.return_value = (
+            [_FakeBLSObs(series_id="CUUR0000SA0", date="2024-01-01", value=310.5, period="M01")],
+            {"Results": {"series": [{"seriesID": "CUUR0000SA0", "data": [
+                {"year": "2024", "period": "M01", "value": "310.5"},
+            ]}]}},
+            {"seriesid": ["CUUR0000SA0"]},
+        )
         fetcher = BLSFetcher(
             client=mock_client,
             series_config={"cpi": {"series_id": "CUUR0000SA0", "name": "CPI", "category": "inflation", "survey": "CU", "freq": "monthly"}},
@@ -151,6 +169,7 @@ class TestBLSFetcher:
         results = fetcher.fetch(lookback_days=365)
         assert len(results) == 1
         assert results[0].observations[0].provider_metadata["period"] == "M01"
+        assert results[0].content_hash is not None
 
 
 class TestEIAFetcher:
@@ -202,9 +221,11 @@ class TestSDMXFetcher:
         from ingestion.fetchers._sdmx import SDMXFetcher
 
         mock_client = MagicMock()
-        mock_client.get_data.return_value = [
-            _FakeSDMXObs(series_id="IMF_CN_CPI", date="2024-01-01", value=102.5, dataflow="CPI"),
-        ]
+        mock_client.get_data_with_raw.return_value = (
+            [_FakeSDMXObs(series_id="IMF_CN_CPI", date="2024-01-01", value=102.5, dataflow="CPI")],
+            {"data": {"dataSets": [{"series": {"0:0:0": {"observations": {"0": [102.5]}}}}]}},
+            {"format": "jsondata", "dataflow_id": "CPI", "key": "CHN"},
+        )
         fetcher = SDMXFetcher(
             client=mock_client,
             source_name="imf",
@@ -214,6 +235,7 @@ class TestSDMXFetcher:
         assert len(results) == 1
         assert results[0].source == "imf"
         assert results[0].observations[0].provider_metadata["dataflow"] == "CPI"
+        assert results[0].content_hash is not None
 
 
 class TestOECDFetcher:

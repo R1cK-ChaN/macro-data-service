@@ -62,6 +62,7 @@ from storage.models import (
     NewsArticleRecord,
     ObsFamilyDocumentRecord,
     ObsFamilyRecord,
+    ObsRawRecord,
     ObsSourceRecord,
     PerformanceRecord,
     PositionStateRecord,

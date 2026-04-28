@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
 from ingestion.scrapers.bls import BLSClient
 from ingestion.series_config import BLS_SERIES
+from ingestion.timeseries.canonicalize import bls_content_hash
 from ingestion.types import RawObservation, RawSeries
 
 
@@ -47,7 +49,9 @@ class BLSFetcher:
     ) -> RawSeries | None:
         sid = meta["series_id"]
         try:
-            obs_list = self.client.get_series_single(sid, start_year=start_year)
+            obs_list, payload, params = self.client.get_series_single_with_raw(
+                sid, start_year=start_year,
+            )
         except Exception:
             return None
         raw_obs = tuple(
@@ -58,10 +62,14 @@ class BLSFetcher:
             )
             for obs in obs_list
         )
+        content_hash = bls_content_hash(payload) if payload else None
         return RawSeries(
             source="bls",
             series_id=sid,
             observations=raw_obs,
             fetched_at=datetime.now(UTC).isoformat(),
             series_metadata=meta,
+            raw_payload=payload or None,
+            content_hash=content_hash,
+            request_params_json=json.dumps(params, sort_keys=True) if params else None,
         )

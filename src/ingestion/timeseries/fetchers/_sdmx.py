@@ -6,12 +6,14 @@ the ``SDMXObservation`` output type.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import UTC, datetime
 from typing import Any
 
 from ingestion.sdmx._base_client import SDMXClient
+from ingestion.timeseries.canonicalize import content_hash_for_source
 from ingestion.types import RawObservation, RawSeries
 
 logger = logging.getLogger(__name__)
@@ -59,15 +61,15 @@ class SDMXFetcher:
             # OECD uses (dataflow, version, key) positional signature;
             # BIS/IMF/base use (dataflow, key) with version as kwarg.
             if version and self.source_name == "oecd":
-                obs_list = self.client.get_data(
+                obs_list, payload, params = self.client.get_data_with_raw(
                     dataflow, version, key, series_id=series_id, limit=30,
                 )
             elif version:
-                obs_list = self.client.get_data(
+                obs_list, payload, params = self.client.get_data_with_raw(
                     dataflow, key, series_id=series_id, version=version, limit=30,
                 )
             else:
-                obs_list = self.client.get_data(
+                obs_list, payload, params = self.client.get_data_with_raw(
                     dataflow, key, series_id=series_id, limit=30,
                 )
         except Exception as exc:
@@ -85,10 +87,14 @@ class SDMXFetcher:
             )
             for obs in obs_list
         )
+        content_hash = content_hash_for_source(self.source_name, payload) if payload else None
         return RawSeries(
             source=self.source_name,
             series_id=series_id,
             observations=raw_obs,
             fetched_at=datetime.now(UTC).isoformat(),
             series_metadata={"category": cfg.get("category", "")},
+            raw_payload=payload or None,
+            content_hash=content_hash,
+            request_params_json=json.dumps(params, sort_keys=True) if params else None,
         )

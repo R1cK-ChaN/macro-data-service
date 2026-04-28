@@ -66,6 +66,18 @@ class IMFClient(SDMXClient):
 
     def get_data(self, dataflow_id, key="all", *, series_id="", version="",
                  start_period=None, end_period=None, limit=100, **kwargs):
+        observations, _payload, _params = self.get_data_with_raw(
+            dataflow_id, key,
+            series_id=series_id, version=version,
+            start_period=start_period, end_period=end_period,
+            limit=limit, **kwargs,
+        )
+        return observations
+
+    def get_data_with_raw(self, dataflow_id, key="all", *, series_id="",
+                          version="", start_period=None, end_period=None,
+                          limit=100, **kwargs):
+        """IMF SDMX 3.0 fetch returning parsed obs + raw payload + params."""
         url = self._build_data_url(dataflow_id, key, version=version)
         params: dict[str, str] = {
             "attributes": "none",
@@ -80,9 +92,21 @@ class IMFClient(SDMXClient):
             params["lastNObservations"] = str(limit)
 
         response = self._get(url, params)
-        return self._parse_data_response(
+        observations = self._parse_data_response(
             response, series_id=series_id, dataflow=dataflow_id, limit=limit,
         )
+        try:
+            payload = self._response_json(
+                response, context=f"{dataflow_id}/{series_id or '*'}",
+            )
+        except ValueError:
+            payload = {}
+        record_params = dict(params)
+        record_params["dataflow_id"] = dataflow_id
+        record_params["key"] = key
+        if version:
+            record_params["version"] = version
+        return observations, payload, record_params
 
     def get_vintages(
         self,

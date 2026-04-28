@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ingestion.scrapers.fred import FredClient
 from ingestion.series_config import MACRO_SERIES
+from ingestion.timeseries.canonicalize import fred_content_hash
 from ingestion.types import RawObservation, RawSeries
 
 
@@ -45,17 +47,23 @@ class FredFetcher:
         self, series_id: str, meta: dict[str, Any], start_date: str
     ) -> RawSeries | None:
         try:
-            obs_list = self.client.get_series(series_id, start_date=start_date, limit=100)
+            obs_list, payload, params = self.client.get_series_with_raw(
+                series_id, start_date=start_date, limit=100,
+            )
         except Exception:
             return None
         raw_obs = tuple(
             RawObservation(date=obs.date, value=obs.value)
             for obs in obs_list
         )
+        content_hash = fred_content_hash(payload) if payload else None
         return RawSeries(
             source="fred",
             series_id=series_id,
             observations=raw_obs,
             fetched_at=datetime.now(UTC).isoformat(),
             series_metadata=meta,
+            raw_payload=payload or None,
+            content_hash=content_hash,
+            request_params_json=json.dumps(params, sort_keys=True) if params else None,
         )

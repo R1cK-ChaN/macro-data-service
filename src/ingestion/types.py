@@ -21,13 +21,23 @@ class RawObservation:
 
 @dataclass(frozen=True)
 class RawSeries:
-    """Unified output from any fetcher — a batch of observations for one series."""
+    """Unified output from any fetcher — a batch of observations for one series.
+
+    The optional ``raw_payload`` / ``content_hash`` / ``request_params_json``
+    fields drive the issue #69 ``obs_raw`` audit lane: when populated by a
+    fetcher, the orchestrator writes one ``obs_raw`` row per ``RawSeries``
+    before normalize. Fetchers that haven't been wired up yet leave them
+    None and the audit write is skipped (additive, not breaking).
+    """
 
     source: str  # 'fred', 'bls', 'eia', 'imf', …
     series_id: str  # provider series ID: 'CPIAUCSL', 'CUUR0000SA0'
     observations: tuple[RawObservation, ...]
     fetched_at: str  # ISO-8601 timestamp
     series_metadata: dict[str, Any] = field(default_factory=dict)
+    raw_payload: dict[str, Any] | None = None       # full HTTP response body
+    content_hash: str | None = None                  # sha256 over canonicalized payload
+    request_params_json: str | None = None           # JSON-encoded request params
 
 
 @dataclass(frozen=True)

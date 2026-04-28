@@ -52,6 +52,30 @@ class FredVintageObservation:
     value: float
 
 
+def _parse_fred_observations(
+    payload: dict, *, series_id: str,
+) -> list["FredObservation"]:
+    """Parse ``payload['observations']`` into typed ``FredObservation`` rows.
+
+    Standalone helper so the issue #69 re-projection path can replay a
+    stored ``obs_raw`` row through the same parser the live HTTP path
+    uses — no behavior drift between live ingest and audit replay.
+    """
+    observations: list[FredObservation] = []
+    for obs in payload.get("observations", []):
+        if obs.get("value") == ".":
+            continue
+        try:
+            observations.append(FredObservation(
+                series_id=series_id,
+                date=obs["date"],
+                value=float(obs["value"]),
+            ))
+        except (KeyError, ValueError, TypeError):
+            continue
+    return observations
+
+
 class FredClient:
     """Client for the FRED and ALFRED REST APIs."""
 
@@ -71,35 +95,43 @@ class FredClient:
         limit: int = 100,
     ) -> list[FredObservation]:
         """Fetch recent observations for a series."""
+        observations, _payload, _params = self.get_series_with_raw(
+            series_id, start_date=start_date, limit=limit,
+        )
+        return observations
+
+    def get_series_with_raw(
+        self,
+        series_id: str,
+        *,
+        start_date: str,
+        limit: int = 100,
+    ) -> tuple[list[FredObservation], dict, dict[str, str]]:
+        """Fetch observations and also return the raw HTTP body + request params.
+
+        Used by the issue #69 ``obs_raw`` write path so the projector
+        boundary can land both the typed observations and the upstream
+        bytes. Returns ``([], {}, params)`` when the API key is unset
+        (matches ``get_series`` no-op semantics).
+        """
+        params = {
+            "series_id": series_id,
+            "observation_start": start_date,
+            "sort_order": "desc",
+            "limit": str(limit),
+            "file_type": "json",
+        }
         if not self.api_key:
-            return []
+            return [], {}, params
         response = self.session.get(
             f"{self.BASE_URL}/series/observations",
-            params={
-                "series_id": series_id,
-                "observation_start": start_date,
-                "sort_order": "desc",
-                "limit": limit,
-                "api_key": self.api_key,
-                "file_type": "json",
-            },
+            params={**params, "api_key": self.api_key},
             timeout=30,
         )
         _raise_for_status(response)
         payload = response.json()
-        observations: list[FredObservation] = []
-        for obs in payload.get("observations", []):
-            if obs.get("value") == ".":
-                continue
-            try:
-                observations.append(FredObservation(
-                    series_id=series_id,
-                    date=obs["date"],
-                    value=float(obs["value"]),
-                ))
-            except (KeyError, ValueError, TypeError):
-                continue
-        return observations
+        observations = _parse_fred_observations(payload, series_id=series_id)
+        return observations, payload, params
 
     def get_series_info(self, series_id: str) -> dict:
         """Fetch metadata for a series (title, frequency, units, etc.)."""
