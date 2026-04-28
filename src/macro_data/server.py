@@ -51,6 +51,8 @@ class MacroDataRequestHandler(BaseHTTPRequestHandler):
 
         - ``domain`` / ``country`` / ``ticker`` / ``subtype`` / ``provider``
           — equality filters; see :meth:`LocalMacroDataService._op_list_calendar_items`.
+        - ``as_of`` — ISO-8601 UTC point-in-time cutoff (issue #65).
+          Future timestamps map to HTTP 400.
         - ``page[offset]`` (default 0), ``page[limit]`` (default 100,
           max 500) — JSON:API pagination.
 
@@ -67,6 +69,7 @@ class MacroDataRequestHandler(BaseHTTPRequestHandler):
             "ticker":      _first("ticker"),
             "subtype":     _first("subtype"),
             "provider":    _first("provider"),
+            "as_of":       _first("as_of"),
             "page_offset": _first("page[offset]"),
             "page_limit":  _first("page[limit]"),
         }
