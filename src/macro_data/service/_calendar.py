@@ -4473,12 +4473,12 @@ class CalendarOpsMixin(LocalMacroDataServiceBase):
           subtype      — optional ``'release'`` / ``'dividend'`` / … .
           provider     — optional ``cal_provider.provider_id``.
           as_of        — optional ISO-8601 UTC cutoff for point-in-time
-                         queries (issue #65). Each economic row in the
-                         page is reconciled against
-                         ``calendar_event_vintages`` so values reflect
-                         what was on the wire at ``as_of``. Corporate
-                         rows surface a ``meta.as_of_corp_unsupported``
-                         flag until C2 ships. Future ``as_of`` is
+                         queries (issue #65). Each row in the page is
+                         reconciled against its lane's revision
+                         history — econ rows against
+                         ``calendar_event_vintages``, corp rows against
+                         ``cal_corp_raw`` — so values reflect what was
+                         on the wire at ``as_of``. Future ``as_of`` is
                          rejected (``error`` in the envelope) so
                          callers cannot mask look-ahead bias as PIT.
           page_offset  — default 0. Rows to skip before the first result.
@@ -4551,20 +4551,9 @@ class CalendarOpsMixin(LocalMacroDataServiceBase):
                 "page_offset": offset + len(items),
                 "page_limit":  limit,
             }
-        meta: dict[str, Any] = {
-            "count":  total,
-            "offset": offset,
-            "limit":  limit,
-        }
-        # Surface the C2 gap explicitly when ``as_of`` is set and any
-        # corporate row landed on this page. Downstream PIT consumers
-        # need to know they're seeing latest-snapshot values for those
-        # rows so they don't silently bake look-ahead into a backtest.
-        if as_of and any(item.get("domain") == "corporate" for item in items):
-            meta["as_of_corp_unsupported"] = True
         return {
             "data":  items,
-            "meta":  meta,
+            "meta":  {"count": total, "offset": offset, "limit": limit},
             "links": {"next": next_cursor},
         }
 

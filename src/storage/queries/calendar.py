@@ -40,6 +40,45 @@ from storage.models.indicator import (
 )
 
 
+def _calendar_corp_raw_at_or_before_with_conn(
+    connection: sqlite3.Connection,
+    *,
+    provider: str,
+    provider_event_id: str,
+    as_of_epoch_ms: int,
+) -> sqlite3.Row | None:
+    """Snapshot from ``cal_corp_raw`` with the greatest
+    ``snapshot_epoch_ms <= as_of_epoch_ms`` for
+    ``(provider, provider_event_id)``. Drives corporate-lane PIT (#65 C2).
+
+    On ties (identical ``snapshot_epoch_ms``), the row with the
+    lexicographically larger ``content_hash`` wins — deterministic but
+    arbitrary; ties at the same millisecond are themselves an upstream
+    pathology and either snapshot would be defensible.
+
+    The ``idx_cal_corp_raw_latest`` index on
+    ``(provider, provider_event_id, snapshot_epoch_ms DESC)`` already
+    drives this lookup, so the per-row scan stays O(log n) at the
+    page sizes ``list_calendar_items`` produces.
+
+    Caveat — ``cal_corp_raw`` PK is
+    ``(provider, provider_event_id, content_hash)``: a payload that
+    reverts to a prior ``content_hash`` is collapsed by INSERT OR
+    IGNORE, so this lookup cannot distinguish the revert from the
+    intervening change. See ``list_calendar_items`` for the full
+    contract.
+    """
+    return connection.execute(
+        "SELECT provider, provider_event_id, snapshot_epoch_ms, "
+        "content_hash, payload_json, fetched_at "
+        "FROM cal_corp_raw "
+        "WHERE provider = ? AND provider_event_id = ? "
+        "AND snapshot_epoch_ms <= ? "
+        "ORDER BY snapshot_epoch_ms DESC, content_hash DESC LIMIT 1",
+        (provider, provider_event_id, as_of_epoch_ms),
+    ).fetchone()
+
+
 def _calendar_vintage_at_or_before_with_conn(
     connection: sqlite3.Connection,
     *,
@@ -997,6 +1036,40 @@ class _CalendarQueriesMixin:
             return None
         return self._row_to_calendar_vintage(row)
 
+    def calendar_corp_as_of(
+        self, provider: str, provider_event_id: str, as_of: str,
+    ) -> dict[str, Any] | None:
+        """Snapshot of ``cal_corp_raw`` active at ``as_of`` for the
+        ``(provider, provider_event_id)`` event. ``as_of`` is ISO-8601
+        UTC; return ``None`` when no snapshot exists at-or-before the
+        cutoff. Issue #65 C2 — the corp-lane analogue of
+        ``calendar_actual_as_of``.
+
+        Returned dict mirrors the underlying row:
+        ``{provider, provider_event_id, snapshot_epoch_ms,
+        content_hash, payload_json, fetched_at}`` — the caller decides
+        whether to ``json.loads(payload_json)`` (downstream HTTP
+        consumers re-encode it as-is, parser callers don't need to).
+        """
+        as_of_epoch_ms = to_epoch_ms(as_of)
+        with self._connection(commit=False) as connection:
+            row = _calendar_corp_raw_at_or_before_with_conn(
+                connection,
+                provider=provider,
+                provider_event_id=provider_event_id,
+                as_of_epoch_ms=as_of_epoch_ms,
+            )
+        if row is None:
+            return None
+        return {
+            "provider":          row["provider"],
+            "provider_event_id": row["provider_event_id"],
+            "snapshot_epoch_ms": int(row["snapshot_epoch_ms"]),
+            "content_hash":      row["content_hash"],
+            "payload_json":      row["payload_json"],
+            "fetched_at":        row["fetched_at"],
+        }
+
     def calendar_vintage_history(
         self, event_id: str, provider: str,
     ) -> list[CalendarEventVintageRecord]:
@@ -1100,20 +1173,47 @@ class _CalendarQueriesMixin:
         Rows are ordered by ``event_time_utc`` ascending then
         ``event_id`` for stable pagination.
 
-        ``as_of`` (ISO-8601 UTC) — when set, each economic row is
-        reconciled against ``calendar_event_vintages``: ``actual /
-        previous / forecast`` and the per-row timestamps are taken from
-        the vintage with the greatest ``observed_at <= as_of`` for
-        ``(provider_event_id, provider)``. Rows with no vintage at-or-
-        before the cutoff drop their econ value-bearing fields entirely
-        — they didn't exist on the wire yet at ``as_of``. The total
-        count and pagination still come from the latest projection
-        (``v_calendar_item``); ``as_of`` only swaps the per-row values
-        in the returned page so downstream pagination math is stable.
+        ``as_of`` (ISO-8601 UTC) — when set, each row is reconciled
+        against the lane's revision history:
 
-        Corporate rows are not yet PIT-resolved here (issue #65 C2);
-        the service-layer caller surfaces an
-        ``meta.as_of_corp_unsupported`` flag while C2 is pending.
+        - **Economic** — ``actual / previous / forecast`` and the per-
+          row timestamps come from the vintage with the greatest
+          ``observed_at <= as_of`` in ``calendar_event_vintages`` for
+          ``(provider_event_id, provider)``.
+        - **Corporate** — ``payload_json`` (and the value-bearing
+          scalars derived from it) come from the ``cal_corp_raw``
+          snapshot with the greatest
+          ``snapshot_epoch_ms <= to_epoch_ms(as_of)`` for
+          ``(provider, provider_event_id)``. ``currency`` is
+          additionally overridden from the snapshot's payload (EODHD
+          marks it mutable). Other parser-derived columns
+          (``event_time_utc`` / ``ticker`` / ``exchange`` /
+          ``reference_date``) lag the snapshot — they're computed
+          from the raw payload at projection time and not stored in
+          the raw blob, so they continue to track the latest
+          projection. Re-parsing per snapshot is a follow-up if
+          structural drift inside an event ever becomes a real PIT
+          need.
+
+          **Revert-to-previous limitation:** ``cal_corp_raw``'s PK is
+          ``(provider, provider_event_id, content_hash)`` with
+          ``INSERT OR IGNORE`` on collision, so a payload that
+          reverts to a previously-seen ``content_hash`` does not get
+          a fresh row. ``as_of`` after the revert therefore returns
+          the most recent stored snapshot whose
+          ``snapshot_epoch_ms`` is within the cutoff — which may be
+          the intervening change rather than the reverted value.
+          A complete fix needs a schema-side allowance for repeated
+          hashes (e.g. include ``snapshot_epoch_ms`` in the PK);
+          tracked separately so downstream PIT users that only ever
+          go forward in time aren't blocked on it.
+
+        Rows with no revision at-or-before the cutoff drop their
+        value-bearing fields entirely — they didn't exist on the wire
+        yet at ``as_of``. The total count and pagination still come
+        from the latest projection (``v_calendar_item``); ``as_of``
+        only swaps the per-row values so downstream pagination math
+        is stable.
         """
         conditions: list[str] = []
         params: list[Any] = []
@@ -1135,6 +1235,12 @@ class _CalendarQueriesMixin:
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         safe_offset = max(0, int(offset))
         safe_limit = max(1, min(500, int(limit)))
+
+        # Convert ``as_of`` ISO once for the corp-lane snapshot lookup
+        # (#65 C2). ``cal_corp_raw.snapshot_epoch_ms`` is integer ms,
+        # so the per-row WHERE clause works against an int rather than
+        # round-tripping every row through julianday().
+        as_of_epoch_ms = to_epoch_ms(as_of) if as_of else 0
 
         with self._connection(commit=False) as connection:
             total_row = connection.execute(
@@ -1203,6 +1309,55 @@ class _CalendarQueriesMixin:
                         except (TypeError, ValueError):
                             last_update_epoch_ms = None
                         source_url = vintage_row["source_url"] or source_url
+
+                # Corp-lane PIT reconciliation (#65 C2): swap the
+                # projection's payload + observed-at for the
+                # ``cal_corp_raw`` snapshot active at ``as_of``.
+                # Structural columns (``event_time_utc`` / ``ticker`` /
+                # ``exchange`` / ``reference_date``) come from the
+                # parser at projection time and are not present in the
+                # raw payload, so they continue to come from the
+                # projection — the value-bearing scalars the parser
+                # flattens into the upstream row dict (e.g. dividend
+                # amount, eps_actual, split ratio) ride on
+                # ``payload_json`` and are what restatements actually
+                # change. ``last_update_epoch_ms`` is repointed at the
+                # snapshot so HTTP clients can correlate the values to
+                # the moment they were on the wire.
+                if as_of and domain_val == "corporate":
+                    snap = _calendar_corp_raw_at_or_before_with_conn(
+                        connection,
+                        provider=provider_val,
+                        provider_event_id=peid,
+                        as_of_epoch_ms=as_of_epoch_ms,
+                    )
+                    if snap is None:
+                        # Pre-existence at ``as_of``: drop the value-
+                        # bearing payload. Structural columns stay so
+                        # the row still identifies the event.
+                        payload_raw = None
+                        last_update_epoch_ms = None
+                    else:
+                        payload_raw = snap["payload_json"]
+                        last_update_epoch_ms = int(snap["snapshot_epoch_ms"])
+                        # EODHD marks ``currency`` as mutable across
+                        # snapshots — without this override the top-
+                        # level ``currency`` would track the latest
+                        # projection while the payload-flattened
+                        # values reflect the snapshot, leaking
+                        # post-cutoff currency corrections into a PIT
+                        # response. Other mutable typed columns
+                        # (``ticker`` / ``exchange``) require re-
+                        # parsing the upstream ``code`` and lag the
+                        # snapshot — see the docstring.
+                        try:
+                            snap_payload = json.loads(payload_raw)
+                        except (TypeError, ValueError):
+                            snap_payload = None
+                        if isinstance(snap_payload, dict):
+                            snap_currency = snap_payload.get("currency")
+                            if isinstance(snap_currency, str) and snap_currency:
+                                currency_val = snap_currency
 
                 values: dict[str, Any] = {}
                 if actual is not None:

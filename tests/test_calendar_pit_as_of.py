@@ -98,8 +98,8 @@ def _seed_revised_econ_event(
 
 
 def _seed_corp_dividend(store: SQLiteEngineStore) -> None:
-    """Project one EODHD-shaped dividend row — used to exercise the
-    C1 corporate fallback (latest values + ``as_of_corp_unsupported``).
+    """Project one EODHD-shaped dividend row plus a single matching
+    raw snapshot. Anchor for the C2-flag-removal regression.
     """
     from datetime import datetime as _dt, timezone as _tz
     now = _dt.now(_tz.utc).isoformat()
@@ -128,6 +128,88 @@ def _seed_corp_dividend(store: SQLiteEngineStore) -> None:
                 "0" * 64, json.dumps(payload, sort_keys=True),
                 1_700_000_000_000, now, now,
             ),
+        )
+        conn.execute(
+            """
+            INSERT INTO cal_corp_raw (
+                provider, provider_event_id, snapshot_epoch_ms,
+                content_hash, payload_json, fetched_at
+            ) VALUES (?,?,?,?,?,?)
+            """,
+            (
+                "eodhd", "eodhd-div-AAPL-20260510",
+                1_700_000_000_000, "0" * 64,
+                json.dumps(payload, sort_keys=True), now,
+            ),
+        )
+
+
+def _seed_corp_dividend_with_revision(
+    store: SQLiteEngineStore,
+) -> None:
+    """Two raw snapshots for one dividend — original 0.24 then a
+    later restatement to 0.30. Drives the C2 corp-PIT specs.
+
+    Snapshot epochs:
+    - ``2026-04-01T00:00:00+00:00`` (1838332800000) → amount=0.24
+    - ``2026-05-15T00:00:00+00:00`` (1842220800000) → amount=0.30
+
+    Projection mirrors the latest snapshot (amount=0.30).
+    """
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).isoformat()
+    payload_v1 = {
+        "code": "AAPL.US", "ex_date": "2026-05-10",
+        "amount": 0.24, "currency": "USD",
+        "payment_date": "2026-05-25",
+    }
+    payload_v2 = {**payload_v1, "amount": 0.30}
+    snap_v1_ms = int(
+        _dt(2026, 4, 1, tzinfo=_tz.utc).timestamp() * 1000,
+    )
+    snap_v2_ms = int(
+        _dt(2026, 5, 15, tzinfo=_tz.utc).timestamp() * 1000,
+    )
+    with store._connection(commit=True) as conn:
+        conn.execute(
+            """
+            INSERT INTO cal_corp_event (
+                provider, provider_event_id, event_subtype,
+                event_time_utc, event_time_precision, ticker, exchange,
+                currency, currency_reporting, title, reference_date,
+                source_url, content_hash, payload_json,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                "eodhd", "eodhd-div-AAPL-20260510", "dividend",
+                "2026-05-10T00:00:00+00:00", "date",
+                "AAPL", "US", "USD", "USD",
+                "AAPL Dividend", "2026-05-10",
+                "https://example.test/div",
+                "h2" * 32, json.dumps(payload_v2, sort_keys=True),
+                snap_v2_ms, now, now,
+            ),
+        )
+        conn.executemany(
+            """
+            INSERT INTO cal_corp_raw (
+                provider, provider_event_id, snapshot_epoch_ms,
+                content_hash, payload_json, fetched_at
+            ) VALUES (?,?,?,?,?,?)
+            """,
+            [
+                (
+                    "eodhd", "eodhd-div-AAPL-20260510",
+                    snap_v1_ms, "h1" * 32,
+                    json.dumps(payload_v1, sort_keys=True), now,
+                ),
+                (
+                    "eodhd", "eodhd-div-AAPL-20260510",
+                    snap_v2_ms, "h2" * 32,
+                    json.dumps(payload_v2, sort_keys=True), now,
+                ),
+            ],
         )
 
 
@@ -191,6 +273,140 @@ def test_econ_as_of_before_release_drops_econ_values(
     assert item["last_update_epoch_ms"] is None
 
 
+def test_corp_as_of_returns_pre_revision_snapshot(
+    store: SQLiteEngineStore,
+) -> None:
+    """C2: cutoff between v1 (amount=0.24) and v2 (amount=0.30) must
+    surface the original snapshot, not the latest projection."""
+    _seed_corp_dividend_with_revision(store)
+    items, total = store.list_calendar_items(
+        as_of="2026-04-15T00:00:00+00:00",
+    )
+    assert total == 1
+    item = items[0]
+    assert item["values"]["amount"] == "0.24"
+    assert item["last_update_epoch_ms"] == int(
+        datetime(2026, 4, 1, tzinfo=timezone.utc).timestamp() * 1000
+    )
+
+
+def test_corp_as_of_after_revision_returns_revised(
+    store: SQLiteEngineStore,
+) -> None:
+    """Cutoff after the restatement returns the revised snapshot —
+    matches the latest projection."""
+    _seed_corp_dividend_with_revision(store)
+    items, _ = store.list_calendar_items(
+        as_of="2026-06-01T00:00:00+00:00",
+    )
+    assert items[0]["values"]["amount"] == "0.3"
+
+
+def test_corp_as_of_before_first_snapshot_drops_payload(
+    store: SQLiteEngineStore,
+) -> None:
+    """Cutoff before any snapshot — payload-derived ``values`` must be
+    absent. Structural columns (ticker, event_time_utc) stay so the
+    row still identifies the event."""
+    _seed_corp_dividend_with_revision(store)
+    items, _ = store.list_calendar_items(
+        as_of="2025-01-01T00:00:00+00:00",
+    )
+    item = items[0]
+    assert item["ticker"] == "AAPL"
+    assert "amount" not in item["values"]
+    assert "ex_date" not in item["values"]
+    assert item["last_update_epoch_ms"] is None
+
+
+def test_corp_as_of_overrides_currency_from_snapshot(
+    store: SQLiteEngineStore,
+) -> None:
+    """Top-level ``currency`` must follow the snapshot's payload —
+    EODHD marks the field mutable across snapshots, so without the
+    override a corp PIT response would leak the latest projection's
+    corrected currency while values come from the older snapshot
+    (Codex P2 finding on the C2 review).
+    """
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).isoformat()
+    snap_v1_ms = int(
+        _dt(2026, 4, 1, tzinfo=_tz.utc).timestamp() * 1000,
+    )
+    snap_v2_ms = int(
+        _dt(2026, 5, 15, tzinfo=_tz.utc).timestamp() * 1000,
+    )
+    payload_v1 = {
+        "code": "AAPL.US", "ex_date": "2026-05-10",
+        "amount": 0.24, "currency": "GBP",
+        "payment_date": "2026-05-25",
+    }
+    payload_v2 = {**payload_v1, "currency": "USD"}
+    with store._connection(commit=True) as conn:
+        conn.execute(
+            """
+            INSERT INTO cal_corp_event (
+                provider, provider_event_id, event_subtype,
+                event_time_utc, event_time_precision, ticker, exchange,
+                currency, currency_reporting, title, reference_date,
+                source_url, content_hash, payload_json,
+                observed_at_epoch_ms, created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                "eodhd", "eodhd-div-AAPL-20260510", "dividend",
+                "2026-05-10T00:00:00+00:00", "date",
+                "AAPL", "US", "USD", "USD",
+                "AAPL Dividend", "2026-05-10",
+                "https://example.test/div",
+                "h2" * 32, json.dumps(payload_v2, sort_keys=True),
+                snap_v2_ms, now, now,
+            ),
+        )
+        conn.executemany(
+            """
+            INSERT INTO cal_corp_raw (
+                provider, provider_event_id, snapshot_epoch_ms,
+                content_hash, payload_json, fetched_at
+            ) VALUES (?,?,?,?,?,?)
+            """,
+            [
+                ("eodhd", "eodhd-div-AAPL-20260510",
+                 snap_v1_ms, "h1" * 32,
+                 json.dumps(payload_v1, sort_keys=True), now),
+                ("eodhd", "eodhd-div-AAPL-20260510",
+                 snap_v2_ms, "h2" * 32,
+                 json.dumps(payload_v2, sort_keys=True), now),
+            ],
+        )
+    items, _ = store.list_calendar_items(
+        as_of="2026-04-15T00:00:00+00:00",
+    )
+    assert items[0]["currency"] == "GBP"
+    assert items[0]["values"]["currency"] == "GBP"
+
+
+def test_calendar_corp_as_of_storage_helper(
+    store: SQLiteEngineStore,
+) -> None:
+    """Direct cover of the new ``calendar_corp_as_of`` storage method.
+    Mirrors ``calendar_actual_as_of`` for the corp lane."""
+    _seed_corp_dividend_with_revision(store)
+    snap = store.calendar_corp_as_of(
+        provider="eodhd",
+        provider_event_id="eodhd-div-AAPL-20260510",
+        as_of="2026-04-15T00:00:00+00:00",
+    )
+    assert snap is not None
+    assert json.loads(snap["payload_json"])["amount"] == 0.24
+    # Cutoff before any snapshot — None.
+    assert store.calendar_corp_as_of(
+        provider="eodhd",
+        provider_event_id="eodhd-div-AAPL-20260510",
+        as_of="2025-01-01T00:00:00+00:00",
+    ) is None
+
+
 def test_econ_as_of_drops_consensus_forecast(
     store: SQLiteEngineStore,
 ) -> None:
@@ -235,28 +451,18 @@ def test_service_op_rejects_unparseable_as_of(
     assert "as_of" in result["error"]
 
 
-def test_service_op_corp_fallback_meta_flag(
+def test_service_op_no_corp_unsupported_flag(
     store: SQLiteEngineStore,
 ) -> None:
-    """C1: corp rows on a PIT response carry the unsupported flag so
-    downstream PIT consumers don't mistake latest values for snapshot."""
+    """C2: the C1-era ``as_of_corp_unsupported`` fallback flag is
+    retired — corp rows are now snapshot-resolved, so the meta flag
+    must not appear on any PIT response (econ-only or mixed)."""
+    _seed_revised_econ_event(store)
     _seed_corp_dividend(store)
     svc = LocalMacroDataService(store=store)
     result = svc.invoke(
         "list_calendar_items",
         {"as_of": "2026-04-01T00:00:00+00:00"},
-    )
-    assert result["meta"].get("as_of_corp_unsupported") is True
-
-
-def test_service_op_no_corp_no_flag(store: SQLiteEngineStore) -> None:
-    """Without corp rows on the page the flag must stay absent — clean
-    PIT semantics for econ-only responses."""
-    _seed_revised_econ_event(store)
-    svc = LocalMacroDataService(store=store)
-    result = svc.invoke(
-        "list_calendar_items",
-        {"as_of": "2026-02-01T00:00:00+00:00"},
     )
     assert "as_of_corp_unsupported" not in result["meta"]
 
