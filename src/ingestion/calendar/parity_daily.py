@@ -300,7 +300,9 @@ def _compare_agency(
     # offset and the official source timestamps it at another.
     agency_by_key: dict[tuple[str, str, str | None], sqlite3.Row] = {}
     for row in agency_rows:
-        canonical = canonicalize_indicator(row["title"])
+        canonical = canonicalize_indicator(
+            row["title"], country=row["country_code"],
+        )
         if not canonical:
             continue
         key = (row["country_code"] or "", canonical, _bucket_key(row["reference_date"]))
@@ -314,7 +316,9 @@ def _compare_agency(
 
     seen_keys: set[tuple[str, str, str | None]] = set()
     for te_row in te_rows:
-        canonical = canonicalize_indicator(te_row["title"])
+        canonical = canonicalize_indicator(
+            te_row["title"], country=te_row["country_code"],
+        )
         if not canonical:
             continue
         country = te_row["country_code"] or ""

@@ -155,6 +155,7 @@ def test_cal_provider_seeded(store: SQLiteEngineStore) -> None:
         ]
     assert rows == [
         ("abs",              "government_agency", "economic",  100),
+        ("bank-indonesia",   "central_bank",      "economic",  100),
         ("banxico",          "central_bank",      "economic",  100),
         ("bcb",              "central_bank",      "economic",  100),
         ("bea",              "government_agency", "economic",  100),
@@ -216,8 +217,8 @@ def test_cal_provider_seed_idempotent(tmp_path: Path) -> None:
     with second._connection(commit=False) as c:
         n = c.execute("SELECT COUNT(*) FROM cal_provider").fetchone()[0]
     # 43 (#56 baseline) + 4 (#84 ibge/bcb, #86 tuik/tcmb) + 2 (#88 inegi/banxico)
-    # + 2 (#90 statssa/sarb) = 51.
-    assert n == 51
+    # + 2 (#90 statssa/sarb) + 1 (#92 bank-indonesia; BPS deferred) = 52.
+    assert n == 52
 
 
 def test_importance_flows_through_view_as_enum_string(store: SQLiteEngineStore) -> None:

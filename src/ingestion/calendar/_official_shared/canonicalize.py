@@ -636,10 +636,65 @@ _ALIASES: dict[str, str] = {
     "south africa repurchase rate": "SARB_RATE",
     "repurchase rate": "SARB_RATE",
     "sarb_rate": "SARB_RATE",
+    # ── Indonesia (Bank Indonesia, issue #92 P1) ───────────────
+    # BI Board of Governors policy rate. Indonesia rebranded the
+    # operational rate from "BI Rate" (pre-2016) → "BI 7-Day Reverse
+    # Repo Rate" (Aug 2016) → "BI-Rate" (Apr 2024); the timeseries
+    # is contiguous across the rebrands so all aliases collapse to
+    # the same canonical token.
+    "bank indonesia interest rate decision": "BI_RATE",
+    "bi interest rate decision": "BI_RATE",
+    "indonesia interest rate decision": "BI_RATE",
+    "bank indonesia rate decision": "BI_RATE",
+    "bi rate decision": "BI_RATE",
+    "bi-rate": "BI_RATE",
+    "bi rate": "BI_RATE",
+    "bi 7-day reverse repo rate": "BI_RATE",
+    "bi 7 day reverse repo rate": "BI_RATE",
+    "bi7drr": "BI_RATE",
+    "indonesia bi rate": "BI_RATE",
+    "bi_rate": "BI_RATE",
 }
 
 
-def canonicalize_indicator(label: str) -> str:
+# Some upstreams (TE notably) supply country-agnostic rate-decision
+# titles (``"Interest Rate Decision"``) for non-G7 central banks. The
+# alias table maps that to ``FOMC_RATE`` (the dominant rate-decision
+# token), which is correct for US rows but wrong for any other country
+# whose rate decisions actually map to a different canonical. The
+# parity bucket key uses ``country_code + canonical_indicator``; without
+# this remap the TE rate row for Indonesia (``country=ID``,
+# ``title="Interest Rate Decision"`` → canonical ``FOMC_RATE``) and the
+# Bank Indonesia row (``country=ID``, ``title="Bank Indonesia Interest
+# Rate Decision"`` → canonical ``BI_RATE``) land in different buckets
+# and the daily comparator silently misses them.
+#
+# This map names every central-bank rate canonical that ships **value-
+# bearing in the parity whitelist** for a non-US country plus its
+# country code. Schedule-only deferrals (BoC / RBI / BOK / TCMB / SARB)
+# are intentionally absent: their parity whitelist is empty, so a
+# silent re-bucket for those countries would re-introduce the alert
+# class the deferral was specifically avoiding.
+_COUNTRY_RATE_OVERRIDES: dict[str, str] = {
+    "AU": "RBA_RATE",        # Australia: RBA cash-rate (#53)
+    "BR": "BCB_RATE",        # Brazil: BCB Selic (#84)
+    "EU": "ECB_MP_DECISION", # Euro Area: ECB main refinancing rate
+    "GB": "BOE_RATE",        # United Kingdom: BoE Bank Rate (#51)
+    "UK": "BOE_RATE",        # alias for GB
+    "ID": "BI_RATE",         # Indonesia: Bank Indonesia BI-Rate (#92)
+    "JP": "BOJ_RATE",        # Japan: BoJ MPM rate
+    "MX": "BANXICO_RATE",    # Mexico: Banxico Tasa Objetivo (#88)
+}
+
+# The ``FOMC_RATE`` canonical is the alias for the country-agnostic
+# ``"Interest Rate Decision"`` title. Only that value triggers the
+# country override — every other canonical (``CPI``, ``GDP``, …) is
+# already country-correct because the alias table covers them
+# explicitly.
+_OVERRIDABLE_CANONICALS: frozenset[str] = frozenset({"FOMC_RATE"})
+
+
+def canonicalize_indicator(label: str, country: str | None = None) -> str:
     """Normalize ``label`` to a canonical indicator token.
 
     Unknown inputs pass through as the normalized form (lowercase, no
@@ -651,6 +706,16 @@ def canonicalize_indicator(label: str) -> str:
     ----------
     label:
         Upstream release title. May be empty.
+    country:
+        Optional ISO-3166 country code. When set, applies a country-
+        specific override on top of the alias-table lookup so TE's
+        country-agnostic ``"Interest Rate Decision"`` rate-decision
+        title routes to the correct central-bank canonical instead of
+        always landing on ``FOMC_RATE``. Connectors that synthesise
+        ``provider_event_id`` from the canonical token should leave
+        this unset (their per-country titles already disambiguate);
+        the parity comparator passes country so its bucket keys
+        line up across both sides.
 
     Returns
     -------
@@ -669,6 +734,16 @@ def canonicalize_indicator(label: str) -> str:
         text = text.replace(dash, " ")
     text = _WHITESPACE_RE.sub(" ", text).strip()
 
+    country_code = (country or "").strip().upper()
+
+    def _apply_country_override(canonical: str) -> str:
+        if (
+            canonical in _OVERRIDABLE_CANONICALS
+            and country_code in _COUNTRY_RATE_OVERRIDES
+        ):
+            return _COUNTRY_RATE_OVERRIDES[country_code]
+        return canonical
+
     # Try alias before stripping modifier suffixes so labels whose
     # modifier carries semantic weight (e.g. "Consumer Confidence Flash"
     # is a distinct release from "Consumer Confidence") have a chance
@@ -676,7 +751,7 @@ def canonicalize_indicator(label: str) -> str:
     # base indicator.
     alias = _ALIASES.get(text)
     if alias is not None:
-        return alias
+        return _apply_country_override(alias)
 
     # Strip modifier suffixes iteratively — "CPI YoY SA" → "CPI".
     changed = True
@@ -688,4 +763,4 @@ def canonicalize_indicator(label: str) -> str:
                 changed = True
                 break
 
-    return _ALIASES.get(text, text)
+    return _apply_country_override(_ALIASES.get(text, text))

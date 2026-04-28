@@ -92,7 +92,7 @@ def test_burst_filters_cover_every_burst_eligible_connector() -> None:
     expected = set(ALL_VALUE_SIDE_CONNECTORS) - {
         "ecb", "eia", "dol", "ons", "boe", "statcan", "boc", "abs", "rba",
         "mospi", "rbi", "kostat", "bok", "ibge", "bcb", "tuik", "tcmb",
-        "inegi", "banxico", "statssa", "sarb",
+        "inegi", "banxico", "statssa", "sarb", "bank-indonesia",
         # Schedule-only speech connectors (issue #56) — no value
         # column to fill, so the "until actual lands" burst predicate
         # never resolves.

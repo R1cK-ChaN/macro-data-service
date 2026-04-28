@@ -1656,6 +1656,8 @@ def apply_schema(connection: sqlite3.Connection) -> None:
             # Issue #90 — South Africa coverage: Stats SA + SARB.
             ("statssa",          "government_agency", "economic",  100, _now_iso, _now_iso),
             ("sarb",             "central_bank",      "economic",  100, _now_iso, _now_iso),
+            # Issue #92 — Indonesia coverage: Bank Indonesia (BPS deferred to P2).
+            ("bank-indonesia",   "central_bank",      "economic",  100, _now_iso, _now_iso),
             # Issue #56 — central-bank speeches calendar (Fed / ECB / BoE / BoJ).
             # Each speech connector writes its own provider id; the parity
             # harness and provider-metadata lookups need a row per id even
