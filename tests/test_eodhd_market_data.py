@@ -901,6 +901,408 @@ def test_split_ratio_parsed_correctly() -> None:
     assert s.new_shares / s.old_shares == 4.0
 
 
+# ── Issue #67 slice 3 — bulk EOD backfill ──────────────────────────────────
+
+
+def _bulk_payload_us_2024_06_14() -> list[dict]:
+    """Realistic bulk-EOD shape — fields exactly match the live probe.
+    Includes one universe-tracked ticker (AAPL) and four non-tracked
+    rows so the universe filter has something to skip."""
+    return [
+        {"code": "AAPL", "exchange_short_name": "US", "date": "2024-06-14",
+         "open": 213.85, "high": 215.17, "low": 213.4, "close": 212.5,
+         "adjusted_close": 211.7, "volume": 70_000_000},
+        {"code": "MSFT", "exchange_short_name": "US", "date": "2024-06-14",
+         "open": 420.1, "high": 422.0, "low": 419.0, "close": 421.5,
+         "adjusted_close": 421.5, "volume": 30_000_000},
+        {"code": "GOOG", "exchange_short_name": "US", "date": "2024-06-14",
+         "open": 175.0, "high": 176.5, "low": 174.5, "close": 176.0,
+         "adjusted_close": 176.0, "volume": 25_000_000},
+        {"code": "ZZZOF", "exchange_short_name": "US", "date": "2024-06-14",
+         "open": 0.11, "high": 0.11, "low": 0.11, "close": 0.11,
+         "adjusted_close": 0.11, "volume": 0},
+        {"code": "^TNX", "exchange_short_name": "US", "date": "2024-06-14",
+         "open": 4.31, "high": 4.35, "low": 4.31, "close": 4.336,
+         "adjusted_close": 4.336, "volume": 0},
+    ]
+
+
+def test_get_bulk_last_day_parses_bulk_shape() -> None:
+    """Bulk rows carry `code` + `exchange_short_name` instead of being
+    URL-keyed. Parser must reconstruct the canonical CODE.EX form so
+    downstream universe routing matches what `get_daily_bars` returns."""
+    client = EODHDClient(api_key="test-key")
+    response = Mock()
+    response.content = b"not-empty"
+    response.text = "[]"
+    response.json.return_value = _bulk_payload_us_2024_06_14()
+    response.raise_for_status.return_value = None
+    client.session = Mock()
+    client.session.get.return_value = response
+
+    bars = client.get_bulk_last_day("US", date="2024-06-14")
+    assert len(bars) == 5
+    assert bars[0].ticker == "AAPL.US"
+    assert bars[0].date == "2024-06-14"
+    assert bars[0].close == pytest.approx(212.5)
+
+
+def test_get_bulk_last_day_handles_empty_body() -> None:
+    """Holiday / weekend bulk requests can return empty body; parser
+    must return [] without raising."""
+    client = EODHDClient(api_key="test-key")
+    response = Mock()
+    response.content = b""
+    response.text = ""
+    response.raise_for_status.return_value = None
+    client.session = Mock()
+    client.session.get.return_value = response
+    assert client.get_bulk_last_day("US", date="2024-06-14") == []
+
+
+def test_backfill_script_filters_universe_at_write(
+    store: SQLiteEngineStore,
+    tmp_path,
+) -> None:
+    """End-to-end test of the slice-3 backfill script: bulk returns 5
+    rows but only AAPL is in the universe, so only one row lands in
+    market_price_bars. Re-running on the same date is idempotent
+    (existing PK)."""
+    import sys as _sys
+    from unittest.mock import patch
+    from ingestion.market._eodhd_universe import EODHDUniverseEntry
+
+    # Stub the EODHD client so the script doesn't hit the network.
+    payload = _bulk_payload_us_2024_06_14()
+    response = Mock()
+    response.content = b"not-empty"
+    response.text = "[]"
+    response.json.return_value = payload
+    response.raise_for_status.return_value = None
+    fake_session = Mock()
+    fake_session.get.return_value = response
+
+    # Single-AAPL universe so MSFT/GOOG/ZZZOF/^TNX are filtered out.
+    custom_universe = (
+        EODHDUniverseEntry(
+            instrument_id="US_AAPL",
+            eodhd_ticker="AAPL.US",
+            primary_ticker="AAPL",
+            exchange_code="US",
+            name="Apple Inc.",
+            asset_class="equity",
+            market="United States equity market",
+            currency="USD",
+        ),
+    )
+
+    # Seed the universe in the store (script seeds via universe lookup,
+    # not seed_universe — but the universe-filter helper reads the module
+    # constant). Patch the module constant for the duration.
+    REPO_ROOT = Path(__file__).resolve().parents[1]
+    SCRIPT_PATH = REPO_ROOT / "scripts" / "backfill_market_bars_bulk.py"
+    _sys.path.insert(0, str(SCRIPT_PATH.parent))
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "backfill_market_bars_bulk", SCRIPT_PATH,
+        )
+        script_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(script_mod)
+
+        with patch.object(script_mod, "EODHD_GLOBAL_UNIVERSE", custom_universe), \
+             patch.object(
+                 script_mod.EODHDClient, "session",
+                 fake_session, create=True,
+             ):
+            # Patch out the network entry on a fresh client by replacing
+            # the constructor return. Cleanest path: subclass.
+            class StubbedClient(script_mod.EODHDClient):
+                def __init__(self, *args, **kwargs):
+                    self.api_key = "test-key"
+                    self.session = fake_session
+
+            with patch.object(script_mod, "EODHDClient", StubbedClient):
+                # Pre-seed the AAPL instrument so the bar write doesn't
+                # crash on FK / lookup expectations.
+                EODHDMarketDataProvider(
+                    universe=custom_universe, request_sleep=0,
+                ).seed_universe(store)
+
+                rc = script_mod.main([
+                    "--exchange", "US",
+                    "--date", "2024-06-14",
+                    "--db-path", str(store.db_path),
+                    "--request-sleep", "0",
+                    "--quiet",
+                    "--log-dir", str(tmp_path),
+                ])
+                assert rc == 0
+
+        bars = store.list_market_price_bars("US_AAPL")
+        assert len(bars) == 1, "Only AAPL is in the universe — others must be filtered"
+        assert bars[0].date == "2024-06-14"
+        assert bars[0].close == pytest.approx(212.5)
+        assert bars[0].source_name == "EODHD"
+
+        # Second run on the same date — idempotent via the PK
+        # (instrument_id, date, bar_interval, source_name, source_symbol).
+        with patch.object(script_mod, "EODHD_GLOBAL_UNIVERSE", custom_universe):
+            class StubbedClient2(script_mod.EODHDClient):
+                def __init__(self, *args, **kwargs):
+                    self.api_key = "test-key"
+                    self.session = fake_session
+
+            with patch.object(script_mod, "EODHDClient", StubbedClient2):
+                script_mod.main([
+                    "--exchange", "US",
+                    "--date", "2024-06-14",
+                    "--db-path", str(store.db_path),
+                    "--request-sleep", "0",
+                    "--quiet",
+                    "--log-dir", str(tmp_path),
+                ])
+        bars_again = store.list_market_price_bars("US_AAPL")
+        assert len(bars_again) == 1, "Re-running on same date must be idempotent"
+
+        # Issue #67 slice-3 codex-round-1 P2: backfill script must seed
+        # the identity rows so the public read path resolves the bar.
+        # get_market_history goes via market_instruments first; if seeding
+        # was skipped the bar would land but the read would return [].
+        history = EODHDMarketDataProvider(
+            universe=custom_universe, request_sleep=0,
+        ).get_market_history(store, "AAPL.US")
+        assert len(history) == 1
+        assert history[0]["ticker"] == "AAPL"
+        assert history[0]["date"] == "2024-06-14"
+    finally:
+        _sys.path.remove(str(SCRIPT_PATH.parent))
+
+
+def test_backfill_script_seeds_identity_rows_on_fresh_db(
+    tmp_path,
+) -> None:
+    """Codex slice-3 round-1 P2: a fresh DB without any prior
+    ``EODHDMarketDataProvider.seed_universe`` call must still result in
+    ``market_instruments`` rows for the touched tickers — otherwise
+    backfilled bars are orphans the read path can't resolve."""
+    import importlib.util
+    import sys as _sys
+    from unittest.mock import patch
+    from ingestion.market._eodhd_universe import EODHDUniverseEntry as _UE
+
+    payload = _bulk_payload_us_2024_06_14()
+    response = Mock()
+    response.content = b"not-empty"
+    response.text = "[]"
+    response.json.return_value = payload
+    response.raise_for_status.return_value = None
+    fake_session = Mock()
+    fake_session.get.return_value = response
+
+    custom_universe = (
+        _UE(
+            instrument_id="US_AAPL", eodhd_ticker="AAPL.US",
+            primary_ticker="AAPL", exchange_code="US",
+            name="Apple Inc.", asset_class="equity",
+            market="United States equity market", currency="USD",
+        ),
+    )
+
+    db_path = tmp_path / "fresh.db"
+    fresh_store = SQLiteEngineStore(db_path=db_path)
+    # Crucially: NO seed_universe call before the script runs. The
+    # script's own seeding step is what we're exercising.
+    assert fresh_store.get_market_instrument("US_AAPL") is None
+
+    REPO_ROOT = Path(__file__).resolve().parents[1]
+    SCRIPT_PATH = REPO_ROOT / "scripts" / "backfill_market_bars_bulk.py"
+    _sys.path.insert(0, str(SCRIPT_PATH.parent))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "backfill_market_bars_bulk", SCRIPT_PATH,
+        )
+        script_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(script_mod)
+
+        class StubbedClient(script_mod.EODHDClient):
+            def __init__(self, *args, **kwargs):
+                self.api_key = "test-key"
+                self.session = fake_session
+
+        with patch.object(script_mod, "EODHD_GLOBAL_UNIVERSE", custom_universe), \
+             patch.object(script_mod, "EODHDClient", StubbedClient):
+            rc = script_mod.main([
+                "--exchange", "US",
+                "--date", "2024-06-14",
+                "--db-path", str(db_path),
+                "--request-sleep", "0",
+                "--quiet",
+                "--log-dir", str(tmp_path),
+            ])
+        assert rc == 0
+        # Identity row landed.
+        instrument = fresh_store.get_market_instrument("US_AAPL")
+        assert instrument is not None
+        assert instrument.primary_ticker == "AAPL"
+        # Bar landed.
+        bars = fresh_store.list_market_price_bars("US_AAPL")
+        assert len(bars) == 1
+        # Read path resolves both.
+        history = EODHDMarketDataProvider(
+            universe=custom_universe, request_sleep=0,
+        ).get_market_history(fresh_store, "AAPL.US")
+        assert len(history) == 1
+    finally:
+        _sys.path.remove(str(SCRIPT_PATH.parent))
+
+
+def test_backfill_trading_days_includes_weekends_for_crypto() -> None:
+    """Codex slice-3 round-2 P2: ``.CC`` exchange trades 24/7 so the
+    ``--start ... --end ...`` walk must include Saturdays/Sundays.
+    Equity exchanges keep the Mon-Fri filter."""
+    import importlib.util
+    REPO_ROOT = Path(__file__).resolve().parents[1]
+    SCRIPT_PATH = REPO_ROOT / "scripts" / "backfill_market_bars_bulk.py"
+    spec = importlib.util.spec_from_file_location(
+        "backfill_market_bars_bulk", SCRIPT_PATH,
+    )
+    script_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script_mod)
+
+    import datetime as _dt
+    # 2024-06-14 (Fri) → 2024-06-17 (Mon): Sat 15 + Sun 16 should be
+    # included for CC, excluded for US.
+    start = _dt.date(2024, 6, 14)
+    end = _dt.date(2024, 6, 17)
+    cc_days = script_mod._trading_days(start, end, exchange="CC")
+    us_days = script_mod._trading_days(start, end, exchange="US")
+    assert cc_days == ["2024-06-14", "2024-06-15", "2024-06-16", "2024-06-17"]
+    assert us_days == ["2024-06-14", "2024-06-17"]
+
+
+def test_backfill_aborts_on_missing_credentials(tmp_path) -> None:
+    """Codex slice-3 round-2 P2: missing EODHD_API_KEY must produce a
+    non-zero exit instead of silently completing with zero rows."""
+    import importlib.util
+    import sys as _sys
+    from unittest.mock import patch
+    REPO_ROOT = Path(__file__).resolve().parents[1]
+    SCRIPT_PATH = REPO_ROOT / "scripts" / "backfill_market_bars_bulk.py"
+    _sys.path.insert(0, str(SCRIPT_PATH.parent))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "backfill_market_bars_bulk", SCRIPT_PATH,
+        )
+        script_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(script_mod)
+
+        # Stub the EODHDClient so api_key resolves to "" regardless of
+        # the operator's .env contents.
+        class NoKeyClient(script_mod.EODHDClient):
+            def __init__(self, *args, **kwargs):
+                self.api_key = ""
+                self.session = None
+
+        # Empty universe filter would short-circuit before the
+        # credential check, so use a real entry's exchange and patch
+        # the universe to one row.
+        from ingestion.market._eodhd_universe import EODHDUniverseEntry as _UE
+        custom = (
+            _UE(instrument_id="US_AAPL", eodhd_ticker="AAPL.US",
+                primary_ticker="AAPL", exchange_code="US",
+                name="Apple", asset_class="equity",
+                market="US", currency="USD"),
+        )
+        with patch.object(script_mod, "EODHD_GLOBAL_UNIVERSE", custom), \
+             patch.object(script_mod, "EODHDClient", NoKeyClient):
+            db_path = tmp_path / "fresh.db"
+            rc = script_mod.main([
+                "--exchange", "US",
+                "--date", "2024-06-14",
+                "--db-path", str(db_path),
+                "--request-sleep", "0",
+                "--quiet",
+                "--log-dir", str(tmp_path),
+            ])
+        assert rc == 2, "Missing API key must abort with non-zero exit"
+    finally:
+        _sys.path.remove(str(SCRIPT_PATH.parent))
+
+
+def test_backfill_script_does_not_set_pre2018_delisted_flag(
+    store: SQLiteEngineStore,
+    tmp_path,
+) -> None:
+    """Codex slice-3 round-1 P2: bulk path can't run
+    ``check_adjustment_applied`` (needs a per-ticker series) so it
+    must NOT set ``has_pre2018_delisted`` based on date alone —
+    otherwise adjusted history before 2018 surfaces as falsely
+    flagged. Operators rely on per-ticker ``refresh_market_history``
+    to set the flag correctly."""
+    import importlib.util
+    import sys as _sys
+    from unittest.mock import patch
+    from ingestion.market._eodhd_universe import EODHDUniverseEntry as _UE
+
+    pre2018_payload = [
+        {"code": "AAPL", "exchange_short_name": "US", "date": "2017-06-14",
+         "open": 144.0, "high": 145.0, "low": 143.0, "close": 144.5,
+         "adjusted_close": 144.5, "volume": 50_000_000},
+    ]
+    response = Mock()
+    response.content = b"not-empty"
+    response.text = "[]"
+    response.json.return_value = pre2018_payload
+    response.raise_for_status.return_value = None
+    fake_session = Mock()
+    fake_session.get.return_value = response
+
+    custom_universe = (
+        _UE(
+            instrument_id="US_AAPL", eodhd_ticker="AAPL.US",
+            primary_ticker="AAPL", exchange_code="US",
+            name="Apple Inc.", asset_class="equity",
+            market="United States equity market", currency="USD",
+        ),
+    )
+
+    REPO_ROOT = Path(__file__).resolve().parents[1]
+    SCRIPT_PATH = REPO_ROOT / "scripts" / "backfill_market_bars_bulk.py"
+    _sys.path.insert(0, str(SCRIPT_PATH.parent))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "backfill_market_bars_bulk", SCRIPT_PATH,
+        )
+        script_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(script_mod)
+
+        class StubbedClient(script_mod.EODHDClient):
+            def __init__(self, *args, **kwargs):
+                self.api_key = "test-key"
+                self.session = fake_session
+
+        with patch.object(script_mod, "EODHD_GLOBAL_UNIVERSE", custom_universe), \
+             patch.object(script_mod, "EODHDClient", StubbedClient):
+            script_mod.main([
+                "--exchange", "US",
+                "--date", "2017-06-14",
+                "--db-path", str(store.db_path),
+                "--request-sleep", "0",
+                "--quiet",
+                "--log-dir", str(tmp_path),
+            ])
+        bars = store.list_market_price_bars("US_AAPL")
+        assert len(bars) == 1
+        assert bars[0].date == "2017-06-14"
+        assert not bars[0].has_pre2018_delisted, (
+            "Bulk path can't determine adjustment_applied — must not "
+            "claim pre-2018 delisted on adjusted history"
+        )
+    finally:
+        _sys.path.remove(str(SCRIPT_PATH.parent))
+
+
 def test_refresh_universe_ingests_custom_universe_entries(
     store: SQLiteEngineStore,
 ) -> None:

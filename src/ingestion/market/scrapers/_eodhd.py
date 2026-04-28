@@ -230,6 +230,93 @@ class EODHDClient:
         bars.sort(key=lambda b: b.date)
         return bars
 
+    def get_bulk_last_day(
+        self,
+        exchange: str,
+        *,
+        date: str | None = None,
+    ) -> list[EODHDDailyBar]:
+        """Fetch every actively traded symbol on ``exchange`` for one day.
+
+        Wraps ``/api/eod-bulk-last-day/{exchange}``. Without ``date``,
+        returns the most recent trading day. Single request returns ≥4k
+        rows for ``US``; the ~75% quota saving over per-ticker EOD is the
+        whole point of using this for backfill.
+
+        Each bulk row carries ``code`` + ``exchange_short_name`` instead
+        of being keyed on the URL path; the parser builds the canonical
+        ``TICKER.EXCHANGE`` form for the returned ``EODHDDailyBar.ticker``
+        field so downstream code can route bars through the same universe
+        machinery used by :meth:`get_daily_bars`.
+        """
+        if not self.api_key:
+            logger.warning(
+                "EODHD_API_KEY not set; skipping bulk-EOD for %s", exchange
+            )
+            return []
+        params: dict[str, str] = {"api_token": self.api_key, "fmt": "json"}
+        if date:
+            params["date"] = date
+        response = self.session.get(
+            f"{self.BASE_URL}/eod-bulk-last-day/{exchange}",
+            params=params,
+            timeout=120,
+        )
+        _raise_for_status(response, ticker=f"BULK:{exchange}")
+
+        text_body = response.text if response.content else ""
+        stripped = text_body.strip()
+        if not stripped:
+            return []
+        if not stripped.startswith(("[", "{")):
+            logger.info("EODHD reported %r for bulk-EOD %s", stripped[:120], exchange)
+            return []
+        try:
+            payload = response.json()
+        except ValueError:
+            logger.warning(
+                "EODHD returned non-JSON body for bulk-EOD %s: %r",
+                exchange, stripped[:120],
+            )
+            return []
+        if not isinstance(payload, list):
+            return []
+
+        bars: list[EODHDDailyBar] = []
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            date_str = str(row.get("date", ""))[:10]
+            code = str(row.get("code", "") or "").strip()
+            ex = str(row.get("exchange_short_name", "") or "").strip()
+            if not date_str or not code:
+                continue
+            full_ticker = f"{code}.{ex}" if ex else code
+            try:
+                adj_close = _as_optional_float(row.get("adjusted_close"))
+                bars.append(
+                    EODHDDailyBar(
+                        ticker=full_ticker,
+                        date=date_str,
+                        open=_as_float(row.get("open")),
+                        high=_as_float(row.get("high")),
+                        low=_as_float(row.get("low")),
+                        close=_as_float(row.get("close")),
+                        volume=_as_float(row.get("volume"), default=0.0),
+                        adj_open=None,
+                        adj_high=None,
+                        adj_low=None,
+                        adj_close=adj_close,
+                        adj_volume=None,
+                        div_cash=0.0,
+                        split_factor=1.0,
+                    )
+                )
+            except (TypeError, ValueError):
+                logger.debug("EODHD bulk row skipped for %s: %s", full_ticker, row)
+                continue
+        return bars
+
     def get_historical_dividends(
         self,
         ticker: str,
