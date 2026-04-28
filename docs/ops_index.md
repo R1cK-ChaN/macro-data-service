@@ -7,12 +7,13 @@ grouped by mixin. The op name is the value passed to
 `service.invoke(operation_name, arguments)`; the summary is the
 first line of the method's docstring.
 
-Total: **112** ops across 6 mixins.
+Total: **116** ops across 6 mixins.
 
-## Calendar (`_calendar.py`) — 68 ops
+## Calendar (`_calendar.py`) — 72 ops
 
 | Op | Summary |
 | --- | --- |
+| `calendar_corp_backfill` | Resumable historical backfill of one corp calendar subtype. |
 | `calendar_corp_fetch` | Fetch one EODHD corporate calendar subtype into ``cal_corp_*``. |
 | `calendar_corp_fetch_dividend_details` | Enrich discovered dividends via ``/api/div/{TICKER}.{EXCHANGE}``. |
 | `calendar_econ_backfill` | Plan or run a TE Calendar API backfill window. |
@@ -29,8 +30,10 @@ Total: **112** ops across 6 mixins.
 | `calendar_econ_fetch_census` | Fetch Census EITS observations into the calendar. |
 | `calendar_econ_fetch_conference_board` | Fetch current Conference Board indicator values. |
 | `calendar_econ_fetch_destatis` | Fetch Destatis GENESIS observations into the calendar. |
+| `calendar_econ_fetch_dol` | Sweep DOL UI Weekly Claims releases (issue #50). |
 | `calendar_econ_fetch_ec_bcs` | Fetch due EC BCS press-release values into the calendar. |
 | `calendar_econ_fetch_ecb` | Fetch ECB Data Portal SDMX observations into the calendar. |
+| `calendar_econ_fetch_eia` | Pull EIA weekly stocks via the v2 JSON API (issue #50). |
 | `calendar_econ_fetch_eurostat` | Fetch Eurostat JSON-stat observations into the calendar. |
 | `calendar_econ_fetch_fed` | Scrape FOMC meeting calendar into the calendar schema. |
 | `calendar_econ_fetch_fed_releases` | Consume ``/json/calendar.json`` into the calendar schema. |
@@ -48,6 +51,7 @@ Total: **112** ops across 6 mixins.
 | `calendar_econ_fetch_mof_values` | Scrape MoF trade-report XMLs and fill ``actual`` on existing rows. |
 | `calendar_econ_fetch_nar` | Fetch current NAR housing indicator values. |
 | `calendar_econ_fetch_nbs` | Scrape an NBS yearly-calendar article into the calendar schema. |
+| `calendar_econ_fetch_nbs_values` | Sweep the NBS English press-release listing for due actuals (issue #49). |
 | `calendar_econ_fetch_stat_bureau` | Scrape Statistics Bureau schedule surfaces for CPI and LFS. |
 | `calendar_econ_fetch_stat_bureau_values` | Fetch e-Stat scalar values and fill ``actual``. |
 | `calendar_econ_fetch_umich` | Fetch the current U Michigan Consumer Sentiment value. |

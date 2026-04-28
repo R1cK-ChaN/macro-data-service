@@ -22,6 +22,14 @@ Scaffold only: nothing auto-runs. Callers must pass ``dry_run=False``.
 
 from __future__ import annotations
 
+from .backfill import (
+    CorpBackfillRunner,
+    CorpBackfillSummary,
+    CorpWindow,
+    PHASES as CORP_BACKFILL_PHASES,
+    SUBTYPES_BACKFILLABLE,
+    plan_corp_windows,
+)
 from .client import (
     EODHDAPIClient,
     EODHDAuthMissing,
@@ -43,14 +51,19 @@ from .parser import (
 from .projector import project_corp_events, store_corp_raw
 
 __all__ = [
+    "CORP_BACKFILL_PHASES",
     "CalendarCorpEventRecord",
     "CalendarCorpRawRecord",
+    "CorpBackfillRunner",
+    "CorpBackfillSummary",
     "CorpCalendarFetcher",
     "CorpRunSummary",
+    "CorpWindow",
     "EODHDAPIClient",
     "EODHDAuthMissing",
     "EODHDThrottled",
     "SUBTYPES",
+    "SUBTYPES_BACKFILLABLE",
     "fetch_dividend_details",
     "parse_dividend_detail_row",
     "parse_dividend_row",
@@ -58,6 +71,7 @@ __all__ = [
     "parse_ipo_row",
     "parse_split_row",
     "parse_trend_row",
+    "plan_corp_windows",
     "project_corp_events",
     "store_corp_raw",
     "synthesize_provider_event_id",

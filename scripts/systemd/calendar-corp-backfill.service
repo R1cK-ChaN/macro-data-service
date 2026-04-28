@@ -1,0 +1,38 @@
+[Unit]
+Description=Macro-data corp calendar historical backfill (issue #62)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# One-shot, not a timer — operator triggers per (subtype, phase) sweep
+# manually so the request budget stays under direct human control.
+# Forward maintenance lives on a separate (future) timer; this unit is
+# for the 2015→present backfill only.
+#
+# Override CORP_BACKFILL_ARGS via the environment to point at a specific
+# subtype / phase / budget, e.g.:
+#
+#   CORP_BACKFILL_ARGS='--subtype split --phase early --max-requests 200' \
+#     systemctl --user start calendar-corp-backfill.service
+#
+# Default is a dry-run plan — no credentials touched, no DB writes — so
+# `systemctl start` without overrides is safe.
+Environment="REPO_ROOT=%h/Desktop/analyst/macro-data-service"
+Environment="CORP_BACKFILL_ARGS=--dry-run --subtype split --phase early"
+WorkingDirectory=%h/Desktop/analyst/macro-data-service
+ExecStart=/bin/sh -c '%h/Desktop/analyst/macro-data-service/scripts/backfill_corp_calendar.py $CORP_BACKFILL_ARGS'
+
+# A 200-request sweep at EODHD's free-tier cadence lands in well under
+# 30 minutes; capping at 1h kills runaway loops without truncating a
+# legitimate large-budget invocation.
+TimeoutStartSec=3600
+
+# No restart — the cursor makes the next manual invocation idempotent.
+Restart=no
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
