@@ -1,0 +1,27 @@
+[Unit]
+Description=Macro-data EODHD fundamentals forward sweep (issue #68)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Daily after the US market close. The wrapper resolves .macro-data/,
+# .env, and scripts/ relative to REPO_ROOT and acquires the
+# fundamentals_recurring.lock so two timers cannot race the engine DB.
+Environment=REPO_ROOT=%h/Desktop/analyst/macro-data-service
+ExecStart=%h/Desktop/analyst/macro-data-service/scripts/backfill_fundamentals_wrapper.sh
+
+# Soft watchdog — 17-ticker default × 1 request each fits comfortably
+# inside 5 minutes at EODHD's free-tier cadence. Anything past 15
+# minutes is a stuck call; tomorrow's firing picks up missed work.
+TimeoutStartSec=900
+
+# Daily cadence makes systemd retries redundant — content_hash + PIT
+# guards keep a missed run from corrupting state.
+Restart=no
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

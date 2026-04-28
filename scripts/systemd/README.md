@@ -8,6 +8,7 @@ Files in this directory wire the recurring calendar jobs into
 | `calendar-schedule-refresh.timer` | daily 04:00 UTC | every connector pulls forward-looking schedule rows | #31 |
 | `calendar-value-sweep.timer` | hourly at :15 | every value-side connector fills `actual` on recent rows | #31 |
 | `parity-daily.timer` | daily 06:00 UTC | TE-vs-official parity tripwire (depends on the 04:00 refresh having run) | #22 |
+| `fundamentals-forward.timer` | daily 23:00 ET | EODHD `/api/fundamentals/` snapshot for the seeded universe (~17 tickers) | #68 |
 
 # Parity tripwire systemd unit
 
@@ -154,3 +155,47 @@ Design notes (calendar units):
   back only that connector. Connector-level signal lives in
   `calendar_connector_state` and is enforced by `cooling_until_ms`,
   not by systemd `Restart=`.
+
+## EODHD fundamentals daily sweep (issue #68)
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp scripts/systemd/fundamentals-forward.service ~/.config/systemd/user/
+cp scripts/systemd/fundamentals-forward.timer   ~/.config/systemd/user/
+
+# Same Environment= / ExecStart= caveat — edit if the checkout path
+# differs from ~/Desktop/analyst/macro-data-service.
+
+systemctl --user daemon-reload
+systemctl --user enable --now fundamentals-forward.timer
+```
+
+Operations:
+
+* Daily structured log: `.macro-data/logs/backfill_fundamentals.log`
+  (one JSON per run — `tickers_planned`, `tickers_fetched`,
+  `requests_spent`, `raw_inserted`, `company_upserted`,
+  `financials_upserted`, `highlights_upserted`, `stopped_reason`,
+  `errors[]`).
+* Cadence ordering — 23:00 ET sits one hour after the corp calendar
+  forward sweep (22:00 ET); both share `.macro-data/` but use
+  separate locks (`fundamentals_recurring.lock` vs
+  `calendar_recurring.lock`) so they don't queue against each other.
+* Idempotency: `fundamentals_raw` ignores duplicate
+  `(provider, ticker, content_hash)`; projections only update when
+  the incoming `observed_at_epoch_ms` is at least as recent. A
+  late-resumed missed firing (`Persistent=true`) cannot create stale
+  state.
+
+Manual run:
+
+```bash
+# Default: walk the seeded universe (~17 tickers), live execute.
+scripts/backfill_fundamentals_wrapper.sh
+
+# Subset by ticker.
+scripts/backfill_fundamentals_wrapper.sh --tickers AAPL.US MSFT.US
+
+# Plan-only via the python entry-point (no --execute):
+PYTHONPATH=src python3 scripts/backfill_fundamentals.py
+```

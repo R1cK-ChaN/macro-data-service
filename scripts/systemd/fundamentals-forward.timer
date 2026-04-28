@@ -1,0 +1,22 @@
+[Unit]
+Description=Daily EODHD fundamentals forward sweep (issue #68)
+
+[Timer]
+# Daily at 23:00 America/New_York — staggered after the corp calendar
+# forward sweep (22:00) so the two share the engine DB without
+# write-lock contention. EODHD updates Highlights / Valuation roughly
+# daily after the US market close, so the cadence catches new ratio
+# snapshots and new quarter filings within a day of upstream
+# publication.
+OnCalendar=*-*-* 23:00:00 America/New_York
+AccuracySec=1m
+
+# Same rationale as the calendar timer — engine.db writes are
+# idempotent (raw ignores duplicates, projections guard on
+# observed_at_epoch_ms), so a late catch-up cannot create stale state.
+Persistent=true
+
+Unit=fundamentals-forward.service
+
+[Install]
+WantedBy=timers.target
