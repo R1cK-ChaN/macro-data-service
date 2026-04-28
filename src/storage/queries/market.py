@@ -17,6 +17,7 @@ from typing import Any
 
 from contracts import utc_now
 from storage.models.market import (
+    MarketCorpActionsRawRecord,
     MarketInstrumentRecord,
     MarketPriceBarRecord,
     MarketPriceRecord,
@@ -284,6 +285,178 @@ class _MarketQueriesMixin:
             )
             for row in rows
         ]
+
+    # ── Market corp-actions audit lane (issue #67 slice 2) ─────────────
+
+    def insert_market_corp_actions_raw(
+        self,
+        records: list[MarketCorpActionsRawRecord],
+    ) -> int:
+        """Insert raw corp-action snapshots; return number of new rows.
+
+        ``INSERT OR IGNORE`` on the
+        ``(provider, ticker, action_type, event_date, content_hash)`` PK,
+        matching the ``cal_corp_raw`` idempotency contract — same hash =
+        same row, no duplicate write. A revised dividend amount changes
+        the hash and lands as a new row, preserving the revision chain.
+        """
+        if not records:
+            return 0
+        rows = [
+            (
+                r.provider,
+                r.ticker,
+                r.action_type,
+                r.event_date,
+                r.snapshot_epoch_ms,
+                r.content_hash,
+                r.payload_json,
+                r.fetched_at,
+            )
+            for r in records
+        ]
+        with self._connection(commit=True) as connection:
+            before = connection.total_changes
+            connection.executemany(
+                """
+                INSERT OR IGNORE INTO market_corp_actions_raw (
+                    provider, ticker, action_type, event_date,
+                    snapshot_epoch_ms, content_hash, payload_json, fetched_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            return connection.total_changes - before
+
+    def latest_market_corp_actions_for_ticker(
+        self,
+        provider: str,
+        ticker: str,
+    ) -> list[MarketCorpActionsRawRecord]:
+        """Latest snapshot per ``(action_type, event_date)`` for the
+        ``(provider, ticker)`` pair. Drives the projection step:
+        re-running projection from raw never re-fetches EODHD.
+
+        Hitting ``idx_market_corp_actions_raw_latest``
+        (``provider, ticker, action_type, event_date, snapshot_epoch_ms DESC``)
+        keeps this O(distinct events) regardless of revision-chain depth.
+        """
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT t.provider, t.ticker, t.action_type, t.event_date,
+                       t.snapshot_epoch_ms, t.content_hash, t.payload_json,
+                       t.fetched_at
+                FROM market_corp_actions_raw t
+                INNER JOIN (
+                    SELECT provider, ticker, action_type, event_date,
+                           MAX(snapshot_epoch_ms) AS max_epoch
+                    FROM market_corp_actions_raw
+                    WHERE provider = ? AND ticker = ?
+                    GROUP BY provider, ticker, action_type, event_date
+                ) latest
+                  ON t.provider = latest.provider
+                 AND t.ticker = latest.ticker
+                 AND t.action_type = latest.action_type
+                 AND t.event_date = latest.event_date
+                 AND t.snapshot_epoch_ms = latest.max_epoch
+                ORDER BY t.action_type, t.event_date
+                """,
+                (provider, ticker),
+            ).fetchall()
+        return [
+            MarketCorpActionsRawRecord(
+                provider=row["provider"],
+                ticker=row["ticker"],
+                action_type=row["action_type"],
+                event_date=row["event_date"],
+                snapshot_epoch_ms=int(row["snapshot_epoch_ms"]),
+                content_hash=row["content_hash"],
+                payload_json=row["payload_json"],
+                fetched_at=row["fetched_at"],
+            )
+            for row in rows
+        ]
+
+    def update_market_price_bar_corp_action(
+        self,
+        *,
+        instrument_id: str,
+        date: str,
+        bar_interval: str = "1d",
+        dividend_cash: float | None = None,
+        split_factor: float | None = None,
+    ) -> int:
+        """Set ``dividend_cash`` and/or ``split_factor`` on every bar
+        matching ``(instrument_id, date, bar_interval)``.
+
+        Returns the number of bar rows actually updated. Used by the
+        slice-2 projection step — the bar PK is
+        ``(instrument_id, date, bar_interval, source_name, source_symbol)``
+        so multiple-source rows on the same date all get refreshed by a
+        single call (rare, but possible if both EODHD and Tiingo write
+        the same instrument).
+
+        ``has_missing_corp_acts`` is also cleared to 0 because the
+        bar now carries a real value from the audit lane — the flag is
+        a "we never had a corp-action snapshot for this bar" signal,
+        not a "we don't have one right now" signal.
+        """
+        sets: list[str] = []
+        params: list[Any] = []
+        if dividend_cash is not None:
+            sets.append("dividend_cash = ?")
+            params.append(float(dividend_cash))
+        if split_factor is not None:
+            sets.append("split_factor = ?")
+            params.append(float(split_factor))
+        if not sets:
+            return 0
+        sets.append("has_missing_corp_acts = 0")
+        params.extend([instrument_id, date, bar_interval])
+        with self._connection(commit=True) as connection:
+            cursor = connection.execute(
+                f"UPDATE market_price_bars SET {', '.join(sets)} "
+                "WHERE instrument_id = ? AND date = ? AND bar_interval = ?",
+                params,
+            )
+            return cursor.rowcount
+
+    def clear_market_price_bars_missing_corp_acts(
+        self,
+        *,
+        instrument_id: str,
+        start: str | None = None,
+        end: str | None = None,
+        bar_interval: str = "1d",
+    ) -> int:
+        """Clear ``has_missing_corp_acts`` on bars in the window.
+
+        After ``refresh_corp_actions`` lands every dividend / split
+        EODHD knows for the ticker, the audit lane has *confirmed*
+        there are no corp actions on the bars where the projection
+        loop had no event — they are not "missing", they're "verified
+        empty". Walking the window once and clearing the flag matches
+        the new ground truth. Bars outside the window keep their prior
+        flag (we haven't yet fetched corp actions for those dates).
+
+        Returns the number of rows updated.
+        """
+        sql = [
+            "UPDATE market_price_bars SET has_missing_corp_acts = 0 "
+            "WHERE instrument_id = ? AND bar_interval = ? "
+            "AND has_missing_corp_acts = 1"
+        ]
+        params: list[Any] = [instrument_id, bar_interval]
+        if start:
+            sql.append("AND date >= ?")
+            params.append(start)
+        if end:
+            sql.append("AND date <= ?")
+            params.append(end)
+        with self._connection(commit=True) as connection:
+            cursor = connection.execute(" ".join(sql), params)
+            return cursor.rowcount
 
     def latest_market_prices(self) -> list[MarketPriceRecord]:
         with self._connection(commit=False) as connection:

@@ -406,6 +406,501 @@ def test_client_handles_real_ticker_not_found_text_body() -> None:
     assert client.get_daily_bars("BOGUS.XX") == []
 
 
+# ── Issue #67 slice 2 — historical corp actions (raw + projection) ────────
+
+
+def _mock_corp_action_client(
+    *, dividends_payload: object, splits_payload: object,
+) -> EODHDClient:
+    """Build a mocked EODHDClient that returns one payload for /api/div
+    and another for /api/splits, dispatched by URL."""
+    client = EODHDClient(api_key="test-key")
+    client.session = Mock()
+
+    def _route_get(url, params=None, timeout=None):
+        response = Mock()
+        response.content = b"not-empty"
+        response.text = "[]"  # any JSON-ish string so the parser proceeds to .json()
+        response.raise_for_status.return_value = None
+        if "/div/" in url:
+            response.json.return_value = dividends_payload
+        elif "/splits/" in url:
+            response.json.return_value = splits_payload
+        else:
+            response.json.return_value = []
+        return response
+
+    client.session.get.side_effect = _route_get
+    return client
+
+
+def _aapl_dividends() -> list[dict]:
+    """Realistic /api/div/AAPL.US payload (probed live 2026-04-28)."""
+    return [
+        {"date": "2024-02-09", "declarationDate": "2024-02-01",
+         "recordDate": "2024-02-12", "paymentDate": "2024-02-15",
+         "period": "Quarterly", "value": 0.24, "unadjustedValue": 0.24,
+         "currency": "USD"},
+        {"date": "2024-05-10", "declarationDate": "2024-05-02",
+         "recordDate": "2024-05-13", "paymentDate": "2024-05-16",
+         "period": "Quarterly", "value": 0.25, "unadjustedValue": 0.25,
+         "currency": "USD"},
+        {"date": "2024-08-12", "declarationDate": "2024-08-01",
+         "recordDate": "2024-08-12", "paymentDate": "2024-08-15",
+         "period": "Quarterly", "value": 0.25, "unadjustedValue": 0.25,
+         "currency": "USD"},
+        {"date": "2024-11-08", "declarationDate": "2024-10-31",
+         "recordDate": "2024-11-11", "paymentDate": "2024-11-14",
+         "period": "Quarterly", "value": 0.25, "unadjustedValue": 0.25,
+         "currency": "USD"},
+    ]
+
+
+def _aapl_splits() -> list[dict]:
+    return [
+        {"date": "2020-08-31", "split": "4.000000/1.000000"},
+    ]
+
+
+def _aapl_test_universe():
+    """Single-entry custom universe for AAPL.US used by slice-2 tests."""
+    from ingestion.market._eodhd_universe import EODHDUniverseEntry
+
+    return (
+        EODHDUniverseEntry(
+            instrument_id="US_AAPL",
+            eodhd_ticker="AAPL.US",
+            primary_ticker="AAPL",
+            exchange_code="US",
+            name="Apple Inc.",
+            asset_class="equity",
+            market="United States equity market",
+            currency="USD",
+            description_for_agent="Apple — US mega-cap tech.",
+        ),
+    )
+
+
+def test_get_historical_dividends_parses_full_history() -> None:
+    client = _mock_corp_action_client(
+        dividends_payload=_aapl_dividends(),
+        splits_payload=[],
+    )
+    divs = client.get_historical_dividends("AAPL.US")
+    assert [d.date for d in divs] == [
+        "2024-02-09", "2024-05-10", "2024-08-12", "2024-11-08",
+    ]
+    assert all(d.value > 0 for d in divs)
+    assert divs[0].declaration_date == "2024-02-01"
+    assert divs[0].period == "Quarterly"
+    assert divs[0].currency == "USD"
+
+
+def test_get_historical_splits_parses_ratio() -> None:
+    client = _mock_corp_action_client(
+        dividends_payload=[], splits_payload=_aapl_splits(),
+    )
+    splits = client.get_historical_splits("AAPL.US")
+    assert len(splits) == 1
+    s = splits[0]
+    assert s.date == "2020-08-31"
+    assert s.new_shares == 4.0 and s.old_shares == 1.0
+    assert s.raw_ratio == "4.000000/1.000000"
+
+
+def test_refresh_corp_actions_populates_raw_and_projects_to_bars(
+    store: SQLiteEngineStore,
+) -> None:
+    """Acceptance: ``market_corp_actions_raw`` carries every dividend
+    + split, and ``market_price_bars`` rows for the matching dates land
+    with non-default ``dividend_cash`` / ``split_factor``."""
+    universe = _aapl_test_universe()
+    bars_payload = [
+        {"date": "2020-08-31", "open": 100.0, "high": 102.0, "low": 99.0,
+         "close": 101.0, "adjusted_close": 25.25, "volume": 1_000_000},
+        {"date": "2024-02-09", "open": 190.0, "high": 191.0, "low": 188.0,
+         "close": 189.0, "adjusted_close": 189.0, "volume": 50_000_000},
+        {"date": "2024-05-10", "open": 184.0, "high": 185.0, "low": 183.0,
+         "close": 184.5, "adjusted_close": 184.5, "volume": 50_000_000},
+        {"date": "2024-08-12", "open": 217.0, "high": 218.0, "low": 216.0,
+         "close": 217.5, "adjusted_close": 217.5, "volume": 50_000_000},
+        {"date": "2024-11-08", "open": 226.0, "high": 227.0, "low": 225.0,
+         "close": 226.5, "adjusted_close": 226.5, "volume": 50_000_000},
+    ]
+    client = EODHDClient(api_key="test-key")
+    client.session = Mock()
+
+    def _route_get(url, params=None, timeout=None):
+        response = Mock()
+        response.content = b"not-empty"
+        response.text = "[]"  # any JSON-ish string so the parser proceeds to .json()
+        response.raise_for_status.return_value = None
+        if "/div/" in url:
+            response.json.return_value = _aapl_dividends()
+        elif "/splits/" in url:
+            response.json.return_value = _aapl_splits()
+        elif "/eod/" in url:
+            response.json.return_value = bars_payload
+        else:
+            response.json.return_value = []
+        return response
+
+    client.session.get.side_effect = _route_get
+
+    provider = EODHDMarketDataProvider(
+        client=client, universe=universe, request_sleep=0,
+    )
+    provider.seed_universe(store)
+
+    # Step 1: populate market_price_bars via the existing path.
+    provider.refresh_market_history(store, "AAPL.US")
+    bars = store.list_market_price_bars("US_AAPL")
+    assert {b.date for b in bars} == {
+        "2020-08-31", "2024-02-09", "2024-05-10",
+        "2024-08-12", "2024-11-08",
+    }
+    # Pre-projection: missing-CA flag is set, dividend/split fields are
+    # the schema defaults.
+    assert all(b.has_missing_corp_acts for b in bars)
+    assert all(b.dividend_cash == 0.0 and b.split_factor == 1.0 for b in bars)
+
+    # Step 2: refresh_corp_actions lands raw rows + projects.
+    stats = provider.refresh_corp_actions(store, "AAPL.US")
+    assert stats.count >= 5, "every dividend + the split should write its bar"
+
+    raw_rows = store.latest_market_corp_actions_for_ticker(
+        provider="eodhd", ticker="AAPL.US",
+    )
+    by_action = {(r.action_type, r.event_date): r for r in raw_rows}
+    assert ("dividend", "2024-02-09") in by_action
+    assert ("dividend", "2024-05-10") in by_action
+    assert ("dividend", "2024-08-12") in by_action
+    assert ("dividend", "2024-11-08") in by_action
+    assert ("split", "2020-08-31") in by_action
+
+    # Step 3: bars now carry the projected values + the missing flag is
+    # cleared on rows that landed a corp-action snapshot.
+    bars_after = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
+    assert bars_after["2024-02-09"].dividend_cash == 0.24
+    assert bars_after["2024-05-10"].dividend_cash == 0.25
+    assert bars_after["2024-08-12"].dividend_cash == 0.25
+    assert bars_after["2024-11-08"].dividend_cash == 0.25
+    assert bars_after["2020-08-31"].split_factor == 4.0
+    for date in (
+        "2020-08-31", "2024-02-09", "2024-05-10",
+        "2024-08-12", "2024-11-08",
+    ):
+        assert not bars_after[date].has_missing_corp_acts, (
+            f"projection should clear missing-CA flag on {date}"
+        )
+
+
+def test_refresh_corp_actions_idempotent_on_unchanged_data(
+    store: SQLiteEngineStore,
+) -> None:
+    """Re-running the refresh on identical data inserts zero new rows
+    in market_corp_actions_raw — content_hash + INSERT OR IGNORE."""
+    universe = _aapl_test_universe()
+    bars_payload = [
+        {"date": "2024-02-09", "open": 190.0, "high": 191.0, "low": 188.0,
+         "close": 189.0, "adjusted_close": 189.0, "volume": 50_000_000},
+    ]
+    client = EODHDClient(api_key="test-key")
+    client.session = Mock()
+
+    def _route_get(url, params=None, timeout=None):
+        response = Mock()
+        response.content = b"not-empty"
+        response.text = "[]"  # any JSON-ish string so the parser proceeds to .json()
+        response.raise_for_status.return_value = None
+        if "/div/" in url:
+            response.json.return_value = _aapl_dividends()
+        elif "/splits/" in url:
+            response.json.return_value = _aapl_splits()
+        elif "/eod/" in url:
+            response.json.return_value = bars_payload
+        else:
+            response.json.return_value = []
+        return response
+
+    client.session.get.side_effect = _route_get
+
+    provider = EODHDMarketDataProvider(
+        client=client, universe=universe, request_sleep=0,
+    )
+    provider.seed_universe(store)
+    provider.refresh_corp_actions(store, "AAPL.US")
+    initial_rows = store.latest_market_corp_actions_for_ticker(
+        provider="eodhd", ticker="AAPL.US",
+    )
+    provider.refresh_corp_actions(store, "AAPL.US")
+    final_rows = store.latest_market_corp_actions_for_ticker(
+        provider="eodhd", ticker="AAPL.US",
+    )
+    assert len(final_rows) == len(initial_rows), (
+        "Re-running with identical data must not add new latest rows"
+    )
+
+
+def test_refresh_corp_actions_records_revision_on_changed_amount(
+    store: SQLiteEngineStore,
+) -> None:
+    """A revised dividend amount produces a NEW raw row (different
+    content_hash); old version is preserved; latest projects."""
+    universe = _aapl_test_universe()
+    bars_payload = [
+        {"date": "2024-02-09", "open": 190.0, "high": 191.0, "low": 188.0,
+         "close": 189.0, "adjusted_close": 189.0, "volume": 50_000_000},
+    ]
+    revised_dividends = [
+        {"date": "2024-02-09", "declarationDate": "2024-02-01",
+         "recordDate": "2024-02-12", "paymentDate": "2024-02-15",
+         "period": "Quarterly", "value": 0.30,  # restated
+         "unadjustedValue": 0.30, "currency": "USD"},
+    ]
+    original = [_aapl_dividends()[0]]  # value=0.24
+    div_payload = original
+
+    client = EODHDClient(api_key="test-key")
+    client.session = Mock()
+
+    def _route_get(url, params=None, timeout=None):
+        response = Mock()
+        response.content = b"not-empty"
+        response.text = "[]"  # any JSON-ish string so the parser proceeds to .json()
+        response.raise_for_status.return_value = None
+        if "/div/" in url:
+            response.json.return_value = div_payload
+        elif "/splits/" in url:
+            response.json.return_value = []
+        elif "/eod/" in url:
+            response.json.return_value = bars_payload
+        else:
+            response.json.return_value = []
+        return response
+
+    client.session.get.side_effect = _route_get
+
+    provider = EODHDMarketDataProvider(
+        client=client, universe=universe, request_sleep=0,
+    )
+    provider.seed_universe(store)
+    provider.refresh_market_history(store, "AAPL.US")
+    provider.refresh_corp_actions(store, "AAPL.US")
+    bars_v1 = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
+    assert bars_v1["2024-02-09"].dividend_cash == 0.24
+
+    # EODHD restates the dividend.
+    div_payload = revised_dividends
+    provider.refresh_corp_actions(store, "AAPL.US")
+
+    # Both revisions live in raw, the latest snapshot wins on projection.
+    with store.get_connection() as conn:
+        rows = conn.execute(
+            "SELECT content_hash, snapshot_epoch_ms FROM market_corp_actions_raw "
+            "WHERE provider='eodhd' AND ticker='AAPL.US' "
+            "AND action_type='dividend' AND event_date='2024-02-09' "
+            "ORDER BY snapshot_epoch_ms"
+        ).fetchall()
+    assert len(rows) == 2, "Restatement should add a second raw row"
+    assert rows[0]["content_hash"] != rows[1]["content_hash"]
+
+    bars_v2 = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
+    assert bars_v2["2024-02-09"].dividend_cash == 0.30, (
+        "Latest snapshot must drive the projection"
+    )
+
+
+def test_refresh_corp_actions_clears_missing_flag_in_window(
+    store: SQLiteEngineStore,
+) -> None:
+    """Codex slice-2 round-1 P2: a refresh window with bars on
+    no-corp-action dates must clear ``has_missing_corp_acts`` on those
+    bars too — the audit lane just confirmed there's nothing missing
+    for those dates."""
+    universe = _aapl_test_universe()
+    bars_payload = [
+        {"date": "2024-01-15", "open": 185.0, "high": 186.0, "low": 184.0,
+         "close": 185.5, "adjusted_close": 185.5, "volume": 50_000_000},
+        {"date": "2024-02-09", "open": 190.0, "high": 191.0, "low": 188.0,
+         "close": 189.0, "adjusted_close": 189.0, "volume": 50_000_000},
+        {"date": "2024-03-15", "open": 195.0, "high": 196.0, "low": 194.0,
+         "close": 195.0, "adjusted_close": 195.0, "volume": 50_000_000},
+    ]
+    client = EODHDClient(api_key="test-key")
+    client.session = Mock()
+
+    def _route_get(url, params=None, timeout=None):
+        response = Mock()
+        response.content = b"not-empty"
+        response.text = "[]"
+        response.raise_for_status.return_value = None
+        if "/div/" in url:
+            response.json.return_value = [_aapl_dividends()[0]]  # 2024-02-09
+        elif "/splits/" in url:
+            response.json.return_value = []
+        elif "/eod/" in url:
+            response.json.return_value = bars_payload
+        else:
+            response.json.return_value = []
+        return response
+
+    client.session.get.side_effect = _route_get
+
+    provider = EODHDMarketDataProvider(
+        client=client, universe=universe, request_sleep=0,
+    )
+    provider.seed_universe(store)
+    provider.refresh_market_history(store, "AAPL.US")
+    # Pre: every bar carries missing-CA.
+    pre = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
+    assert all(b.has_missing_corp_acts for b in pre.values())
+
+    provider.refresh_corp_actions(
+        store, "AAPL.US", start="2024-01-01", end="2024-03-31",
+    )
+
+    post = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
+    # The dividend date carries div_cash and is no longer missing.
+    assert post["2024-02-09"].dividend_cash == 0.24
+    assert not post["2024-02-09"].has_missing_corp_acts
+    # The two no-corp-action bars in window are also cleared — audit
+    # lane has confirmed the nothing-to-project state.
+    assert not post["2024-01-15"].has_missing_corp_acts
+    assert not post["2024-03-15"].has_missing_corp_acts
+
+
+def test_refresh_market_history_preserves_projected_corp_action_values(
+    store: SQLiteEngineStore,
+) -> None:
+    """Codex slice-2 round-1 P2: after a corp-action projection lands
+    ``dividend_cash`` / ``split_factor`` on a bar, a subsequent
+    refresh_market_history call must NOT wipe those values back to the
+    EOD-endpoint defaults (0.0 / 1.0). The fix re-projects from raw
+    after every bar upsert in the refresh path.
+
+    Round-2 follow-up: refresh_market_history does NOT clear missing-CA
+    on no-event bars (audit-window awareness is reserved for
+    refresh_corp_actions). Test only asserts on event-date bars because
+    that's the contract refresh_market_history maintains."""
+    universe = _aapl_test_universe()
+    bars_payload = [
+        {"date": "2024-02-09", "open": 190.0, "high": 191.0, "low": 188.0,
+         "close": 189.0, "adjusted_close": 189.0, "volume": 50_000_000},
+        {"date": "2020-08-31", "open": 100.0, "high": 102.0, "low": 99.0,
+         "close": 101.0, "adjusted_close": 25.25, "volume": 1_000_000},
+    ]
+    client = EODHDClient(api_key="test-key")
+    client.session = Mock()
+
+    def _route_get(url, params=None, timeout=None):
+        response = Mock()
+        response.content = b"not-empty"
+        response.text = "[]"
+        response.raise_for_status.return_value = None
+        if "/div/" in url:
+            response.json.return_value = [_aapl_dividends()[0]]
+        elif "/splits/" in url:
+            response.json.return_value = _aapl_splits()
+        elif "/eod/" in url:
+            response.json.return_value = bars_payload
+        else:
+            response.json.return_value = []
+        return response
+
+    client.session.get.side_effect = _route_get
+    provider = EODHDMarketDataProvider(
+        client=client, universe=universe, request_sleep=0,
+    )
+    provider.seed_universe(store)
+    provider.refresh_market_history(store, "AAPL.US")
+    provider.refresh_corp_actions(store, "AAPL.US")
+
+    bars_v1 = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
+    assert bars_v1["2024-02-09"].dividend_cash == 0.24
+    assert bars_v1["2020-08-31"].split_factor == 4.0
+
+    # A scheduled price refresh (refresh_market_history called again with
+    # the same bars) must NOT wipe the projected corp-action values.
+    provider.refresh_market_history(store, "AAPL.US")
+    bars_v2 = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
+    assert bars_v2["2024-02-09"].dividend_cash == 0.24, (
+        "Price refresh should preserve projected dividend_cash"
+    )
+    assert bars_v2["2020-08-31"].split_factor == 4.0, (
+        "Price refresh should preserve projected split_factor"
+    )
+
+
+def test_refresh_corp_actions_sums_same_day_dividends(
+    store: SQLiteEngineStore,
+) -> None:
+    """Codex slice-2 round-1 P2: same ex-date can carry multiple
+    dividend rows (regular + special). The projection must sum them
+    instead of last-write-wins.
+    """
+    universe = _aapl_test_universe()
+    same_day_dividends = [
+        {"date": "2024-12-20", "declarationDate": "2024-12-01",
+         "recordDate": "2024-12-21", "paymentDate": "2024-12-30",
+         "period": "Quarterly", "value": 0.25, "unadjustedValue": 0.25,
+         "currency": "USD"},
+        {"date": "2024-12-20", "declarationDate": "2024-12-01",
+         "recordDate": "2024-12-21", "paymentDate": "2024-12-30",
+         "period": "Special", "value": 1.50, "unadjustedValue": 1.50,
+         "currency": "USD"},
+    ]
+    bars_payload = [
+        {"date": "2024-12-20", "open": 250.0, "high": 251.0, "low": 249.0,
+         "close": 250.5, "adjusted_close": 250.5, "volume": 50_000_000},
+    ]
+    client = EODHDClient(api_key="test-key")
+    client.session = Mock()
+
+    def _route_get(url, params=None, timeout=None):
+        response = Mock()
+        response.content = b"not-empty"
+        response.text = "[]"
+        response.raise_for_status.return_value = None
+        if "/div/" in url:
+            response.json.return_value = same_day_dividends
+        elif "/splits/" in url:
+            response.json.return_value = []
+        elif "/eod/" in url:
+            response.json.return_value = bars_payload
+        else:
+            response.json.return_value = []
+        return response
+
+    client.session.get.side_effect = _route_get
+
+    provider = EODHDMarketDataProvider(
+        client=client, universe=universe, request_sleep=0,
+    )
+    provider.seed_universe(store)
+    provider.refresh_market_history(store, "AAPL.US")
+    provider.refresh_corp_actions(store, "AAPL.US")
+
+    bars = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
+    # Quarterly 0.25 + Special 1.50 = 1.75; last-write-wins would have
+    # left the bar at 0.25 or 1.50 depending on iteration order.
+    assert bars["2024-12-20"].dividend_cash == pytest.approx(1.75), (
+        "Same-day dividends must accumulate, not overwrite"
+    )
+
+
+def test_split_ratio_parsed_correctly() -> None:
+    """4-for-1 split lands as split_factor=4.0, matching the
+    market_price_bars convention (split_factor = new / old)."""
+    client = _mock_corp_action_client(
+        dividends_payload=[],
+        splits_payload=[{"date": "2020-08-31", "split": "4.000000/1.000000"}],
+    )
+    splits = client.get_historical_splits("AAPL.US")
+    s = splits[0]
+    assert s.new_shares / s.old_shares == 4.0
+
+
 def test_refresh_universe_ingests_custom_universe_entries(
     store: SQLiteEngineStore,
 ) -> None:

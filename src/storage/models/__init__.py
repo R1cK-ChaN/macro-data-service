@@ -19,6 +19,7 @@ from .market import (
     MarketInstrumentRecord,
     MarketSymbolHistoryRecord,
     MarketPriceBarRecord,
+    MarketCorpActionsRawRecord,
 )
 from .indicator import (
     CentralBankCommunicationRecord,
@@ -87,6 +88,7 @@ __all__ = [
     "GroupProfileRecord",
     "IndicatorObservationRecord",
     "IndicatorVintageRecord",
+    "MarketCorpActionsRawRecord",
     "MarketInstrumentRecord",
     "MarketPriceBarRecord",
     "MarketPriceRecord",

@@ -168,6 +168,46 @@ def apply_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_price_bars_instrument_date ON market_price_bars(instrument_id, date)"
     )
+    # ── Market corporate-actions audit lane (issue #67 slice 2) ──────────
+    # Structurally mirrors cal_corp_raw — same content-hash + raw-payload
+    # + snapshot pattern — but kept as an independent table because the
+    # two domains evolve independently: cal_corp_raw is event-shaped (one
+    # row per discovered calendar event); market_corp_actions_raw is
+    # ticker-shaped (one row per ticker × action × event_date). Same
+    # shape, different consumers, deliberately separate code per
+    # CLAUDE.md rule 3 (only two callers — wait for a third before
+    # collapsing).
+    #
+    # Why this lane exists at all (audit-layer rationale):
+    #   * Every value of market_price_bars.dividend_cash / .split_factor
+    #     is reproducible from market_corp_actions_raw — so projection
+    #     can be re-run after a bug fix without re-fetching from EODHD
+    #     (zero quota cost).
+    #   * Restatement detection — a revised dividend amount inserts a
+    #     new row (different content_hash) instead of overwriting; the
+    #     full revision chain stays queryable.
+    #   * Schema-drift insurance — payload_json keeps the raw EODHD row
+    #     verbatim so even renamed/added fields stay parseable.
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_corp_actions_raw (
+            provider           TEXT NOT NULL,
+            ticker             TEXT NOT NULL,
+            action_type        TEXT NOT NULL
+                CHECK (action_type IN ('dividend','split')),
+            event_date         TEXT NOT NULL,
+            snapshot_epoch_ms  INTEGER NOT NULL,
+            content_hash       TEXT NOT NULL,
+            payload_json       TEXT NOT NULL,
+            fetched_at         TEXT NOT NULL,
+            PRIMARY KEY (provider, ticker, action_type, event_date, content_hash)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_corp_actions_raw_latest "
+        "ON market_corp_actions_raw(provider, ticker, action_type, event_date, snapshot_epoch_ms DESC)"
+    )
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS central_bank_comms (
