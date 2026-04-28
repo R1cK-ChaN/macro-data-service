@@ -21,6 +21,13 @@ from .market import (
     MarketPriceBarRecord,
     MarketCorpActionsRawRecord,
 )
+from .fundamentals import (
+    FundamentalsCompanyRecord,
+    FundamentalsEstimatesRecord,
+    FundamentalsFinancialsRecord,
+    FundamentalsHighlightsRecord,
+    FundamentalsRawRecord,
+)
 from .indicator import (
     CentralBankCommunicationRecord,
     IndicatorObservationRecord,
@@ -82,6 +89,11 @@ __all__ = [
     "DocumentBlobRecord",
     "DocumentExtraRecord",
     "DocumentRecord",
+    "FundamentalsCompanyRecord",
+    "FundamentalsEstimatesRecord",
+    "FundamentalsFinancialsRecord",
+    "FundamentalsHighlightsRecord",
+    "FundamentalsRawRecord",
     "GeneratedNoteRecord",
     "GroupMemberRecord",
     "GroupMessageRecord",

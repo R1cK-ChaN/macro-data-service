@@ -45,6 +45,15 @@ class MacroDataRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/v1/calendar/revisions":
             self._handle_calendar_revisions(parsed.query)
             return
+        if parsed.path.startswith("/v1/fundamentals/"):
+            ticker = parsed.path[len("/v1/fundamentals/"):]
+            if not ticker:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST, {"error": "ticker is required"},
+                )
+                return
+            self._handle_fundamentals_get(ticker, parsed.query)
+            return
         self._write_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
     def _handle_calendar_list(self, query: str) -> None:
@@ -133,6 +142,53 @@ class MacroDataRequestHandler(BaseHTTPRequestHandler):
             result = service.invoke("list_corp_revisions", arguments)
         except Exception as exc:
             logger.exception("GET /v1/calendar/revisions failed")
+            self._write_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"error": str(exc)},
+            )
+            return
+        if isinstance(result, dict) and "error" in result:
+            self._write_json(HTTPStatus.BAD_REQUEST, result)
+            return
+        self._write_json(HTTPStatus.OK, result)
+
+    def _handle_fundamentals_get(self, ticker: str, query: str) -> None:
+        """GET /v1/fundamentals/{ticker} — read fundamentals projection.
+
+        Query params:
+
+        - ``provider`` — optional, default ``eodhd``.
+        - ``as_of`` — ISO-8601 UTC point-in-time cutoff (issue #65).
+          Future timestamps map to HTTP 400.
+        - ``statement`` — ``IS`` / ``BS`` / ``CF`` financials filter.
+        - ``period`` — ``Q`` / ``A`` financials filter.
+        - ``limit`` — financials row cap (default 100, max 500).
+
+        Returns ``{"ticker", "provider", "as_of", "company",
+        "highlights", "financials"}`` over the same shape produced by
+        the ``get_fundamentals`` op.
+        """
+        from urllib.parse import unquote
+
+        params = parse_qs(query, keep_blank_values=False)
+
+        def _first(key: str) -> str:
+            values = params.get(key) or []
+            return values[0] if values else ""
+
+        arguments: dict[str, Any] = {
+            "ticker":    unquote(ticker),
+            "provider":  _first("provider"),
+            "as_of":     _first("as_of"),
+            "statement": _first("statement"),
+            "period":    _first("period"),
+            "limit":     _first("limit"),
+        }
+        service = self.server.service  # type: ignore[attr-defined]
+        try:
+            result = service.invoke("get_fundamentals", arguments)
+        except Exception as exc:
+            logger.exception("GET /v1/fundamentals/%s failed", ticker)
             self._write_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
                 {"error": str(exc)},

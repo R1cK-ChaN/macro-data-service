@@ -624,3 +624,289 @@ class TimeseriesOpsMixin(LocalMacroDataServiceBase):
             "content_type": communication.content_type,
             "summary": summary,
         }
+
+    # ────────────────────────────────────────────────────────────────────
+    # Fundamentals (issue #68 slice 2)
+    # ────────────────────────────────────────────────────────────────────
+
+    def _op_fundamentals_fetch(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Fetch ``/api/fundamentals/`` for one or more EODHD tickers.
+
+        Arguments:
+          tickers       — required list (or comma-string) of EODHD
+                          tickers like ``["AAPL.US","MSFT.US"]``.
+          sections      — optional list of section names to filter the
+                          response (``General`` / ``Highlights`` /
+                          ``Financials`` / …). Default keeps the
+                          slice-1 set: General, Highlights, Valuation,
+                          SharesStats, Financials. Pass ``[]`` to
+                          request the full unfiltered payload.
+          dry_run       — default True. Returns the ticker plan
+                          without any HTTP call.
+          max_requests  — default 20. Hard upper bound on requests
+                          spent in one invocation, including retry
+                          attempts inside a single ticker call.
+
+        Returns request / row / insert counts and a stop reason. The
+        per-ticker error list surfaces 404s, throttle, and parse
+        errors without aborting the whole batch.
+        """
+        from ingestion.market.fundamentals.eodhd_fundamentals import (
+            EODHDFundamentalsClient,
+            FundamentalsFetcher,
+        )
+
+        raw_tickers = arguments.get("tickers")
+        tickers: list[str]
+        if isinstance(raw_tickers, list):
+            tickers = [str(t).strip() for t in raw_tickers if str(t).strip()]
+        elif isinstance(raw_tickers, str) and raw_tickers.strip():
+            tickers = [t.strip() for t in raw_tickers.split(",") if t.strip()]
+        else:
+            tickers = []
+        if not tickers:
+            return {"error": "tickers is required"}
+
+        raw_sections = arguments.get("sections")
+        sections: list[str] | None
+        if isinstance(raw_sections, list):
+            sections = [str(s).strip() for s in raw_sections if str(s).strip()]
+        elif isinstance(raw_sections, str):
+            sections = [s.strip() for s in raw_sections.split(",") if s.strip()] or None
+        else:
+            sections = None
+
+        dry_run = bool(arguments.get("dry_run", True))
+        try:
+            max_requests = max(1, int(arguments.get("max_requests") or 20))
+        except (TypeError, ValueError):
+            max_requests = 20
+
+        # Partial-section fetches are dry-run only. In execute mode the
+        # response anchors PIT reconstruction (``as_of`` reads re-parse
+        # ``fundamentals_raw``), so a Highlights-only payload would
+        # surface as ``financials=[]`` for any later ``as_of`` cutoff
+        # against that snapshot — corrupting the projection history.
+        if not dry_run and sections is not None:
+            from ingestion.market.fundamentals.eodhd_fundamentals import (
+                FundamentalsFetcher,
+            )
+
+            required = set(FundamentalsFetcher.DEFAULT_SECTIONS)
+            missing = sorted(required.difference(sections))
+            if missing:
+                return {
+                    "error": (
+                        "execute-mode fetch requires the full slice-1 "
+                        f"section set; missing: {missing}"
+                    ),
+                }
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        with EODHDFundamentalsClient() as client:
+            connection = get_conn()
+            try:
+                fetcher = FundamentalsFetcher(
+                    connection=connection,
+                    client=client,
+                    max_requests=max_requests,
+                )
+                summary = fetcher.fetch(
+                    tickers=tickers, sections=sections, dry_run=dry_run,
+                )
+                connection.commit()
+            except ValueError as exc:
+                connection.rollback()
+                return {"error": str(exc)}
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+        return {
+            "dry_run":              summary.dry_run,
+            "tickers_planned":      summary.tickers_planned,
+            "tickers_fetched":      summary.tickers_fetched,
+            "tickers_skipped_error": summary.tickers_skipped_error,
+            "tickers":              summary.tickers,
+            "requests_spent":       summary.requests_spent,
+            "raw_inserted":         summary.raw_inserted,
+            "company_upserted":     summary.company_upserted,
+            "financials_upserted":  summary.financials_upserted,
+            "highlights_upserted":  summary.highlights_upserted,
+            "parse_errors":         summary.parse_errors,
+            "stopped_reason":       summary.stopped_reason,
+            "errors":               summary.errors,
+        }
+
+    def _op_get_fundamentals(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Read-side query over ``fundamentals_*`` projections.
+
+        Arguments:
+          ticker       — required EODHD ticker like ``AAPL.US``.
+          provider     — default ``eodhd``.
+          as_of        — optional ISO-8601 UTC cutoff. When set:
+                         * ``company`` is returned as-is (it's a
+                           one-row ticker profile);
+                         * ``highlights`` returns the latest snapshot
+                           with ``as_of_date <=`` the cutoff;
+                         * ``financials`` is reconstructed from the
+                           latest ``fundamentals_raw`` row at-or-
+                           before the cutoff so restated quarters
+                           return the prior-version numbers visible
+                           on that date.
+                         Future ``as_of`` is rejected.
+          statement    — optional ``IS`` / ``BS`` / ``CF`` filter on
+                         the financials list.
+          period       — optional ``Q`` / ``A`` filter.
+          limit        — financials row cap (default 100, max 500).
+
+        Returns:
+          {"ticker": "...",
+           "as_of": "..." | null,
+           "company": {...} | null,
+           "highlights": {...} | null,
+           "financials": [ {...}, ... ]}
+        """
+        from datetime import datetime, timezone
+        import json as _json
+
+        from ingestion.market.fundamentals.eodhd_fundamentals import (
+            parse_financials_section,
+            parse_highlights_section,
+        )
+        from storage.queries.fundamentals import parse_as_of_to_epoch_ms
+
+        ticker = (arguments.get("ticker") or "").strip()
+        if not ticker:
+            return {"error": "ticker is required"}
+        provider = (arguments.get("provider") or "eodhd").strip()
+        statement = (arguments.get("statement") or "").strip().upper() or None
+        period = (arguments.get("period") or "").strip().upper() or None
+        if statement and statement not in {"IS", "BS", "CF"}:
+            return {"error": f"invalid statement: {statement!r}"}
+        if period and period not in {"Q", "A"}:
+            return {"error": f"invalid period: {period!r}"}
+        try:
+            limit = int(arguments.get("limit") or 100)
+        except (TypeError, ValueError):
+            limit = 100
+        limit = max(1, min(500, limit))
+
+        as_of_raw = (arguments.get("as_of") or "").strip()
+        as_of_epoch_ms: int | None = None
+        as_of_iso: str | None = None
+        if as_of_raw:
+            try:
+                as_of_epoch_ms = parse_as_of_to_epoch_ms(as_of_raw)
+            except ValueError:
+                return {"error": f"invalid as_of: {as_of_raw!r}"}
+            now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+            if as_of_epoch_ms > now_ms:
+                return {"error": "as_of must not be in the future"}
+            as_of_iso = datetime.fromtimestamp(
+                as_of_epoch_ms / 1000, tz=timezone.utc,
+            ).isoformat()
+
+        company = self._store.get_fundamentals_company_row(
+            provider=provider, ticker=ticker,
+        )
+
+        if as_of_epoch_ms is None:
+            highlights = self._store.get_fundamentals_highlights_row(
+                provider=provider, ticker=ticker,
+            )
+            financials = self._store.list_fundamentals_financials(
+                provider=provider, ticker=ticker,
+                statement=statement, period_type=period, limit=limit,
+            )
+        else:
+            # Reconstruct both highlights and financials from the same
+            # raw snapshot at-or-before the cutoff. Querying the
+            # ``fundamentals_highlights`` projection by ``as_of_date``
+            # leaks intra-day post-cutoff values when two snapshots
+            # land on the same UTC day (the grain is one row per day,
+            # not per snapshot — Codex review #68 S2 round 1 P2).
+            raw = self._store.get_fundamentals_raw_at(
+                provider=provider, ticker=ticker,
+                as_of_epoch_ms=as_of_epoch_ms,
+            )
+            if raw is None:
+                highlights = None
+                financials = []
+            else:
+                try:
+                    payload = _json.loads(raw["payload_json"])
+                except (TypeError, ValueError):
+                    payload = {}
+                snapshot_ms = int(raw["snapshot_epoch_ms"])
+                highlights_record = parse_highlights_section(
+                    payload, ticker=ticker, snapshot_epoch_ms=snapshot_ms,
+                )
+                if highlights_record is None:
+                    highlights = None
+                else:
+                    highlights = {
+                        "provider":             highlights_record.provider,
+                        "ticker":               highlights_record.ticker,
+                        "as_of_date":           highlights_record.as_of_date,
+                        "market_cap":           highlights_record.market_cap,
+                        "pe_ratio":             highlights_record.pe_ratio,
+                        "eps_ttm":              highlights_record.eps_ttm,
+                        "dividend_yield":       highlights_record.dividend_yield,
+                        "book_value":           highlights_record.book_value,
+                        "shares_outstanding":   highlights_record.shares_outstanding,
+                        "payload_json":         highlights_record.payload_json,
+                        "content_hash":         highlights_record.content_hash,
+                        "observed_at_epoch_ms": highlights_record.observed_at_epoch_ms,
+                    }
+                rows = parse_financials_section(
+                    payload, ticker=ticker, snapshot_epoch_ms=snapshot_ms,
+                )
+                financials = [
+                    {
+                        "provider":              r.provider,
+                        "ticker":                r.ticker,
+                        "period_end":            r.period_end,
+                        "period_type":           r.period_type,
+                        "statement":             r.statement,
+                        "currency":              r.currency,
+                        "filing_date":           r.filing_date,
+                        "revenue":               r.revenue,
+                        "net_income":            r.net_income,
+                        "eps_basic":             r.eps_basic,
+                        "total_assets":          r.total_assets,
+                        "total_equity":          r.total_equity,
+                        "total_liabilities":     r.total_liabilities,
+                        "cash_from_ops":         r.cash_from_ops,
+                        "capex":                 r.capex,
+                        "payload_json":          r.payload_json,
+                        "content_hash":          r.content_hash,
+                        "observed_at_epoch_ms":  r.observed_at_epoch_ms,
+                    }
+                    for r in rows
+                    if (statement is None or r.statement == statement)
+                    and (period is None or r.period_type == period)
+                ]
+                # Match the SQL ORDER BY in list_fundamentals_financials:
+                # ``period_end DESC, statement ASC, period_type ASC``.
+                # Python's sort is stable, so a primary sort on the
+                # ascending tiebreakers followed by a descending
+                # ``period_end`` sort lands rows in the same order as
+                # the latest-projection path (Codex review #68 S2 R2 P2).
+                financials.sort(key=lambda r: (r["statement"], r["period_type"]))
+                financials.sort(key=lambda r: r["period_end"], reverse=True)
+                financials = financials[:limit]
+
+        return {
+            "ticker":     ticker,
+            "provider":   provider,
+            "as_of":      as_of_iso,
+            "company":    company,
+            "highlights": highlights,
+            "financials": financials,
+        }

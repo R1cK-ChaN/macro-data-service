@@ -43,6 +43,11 @@ from storage.models import (
     DocumentBlobRecord,
     DocumentExtraRecord,
     DocumentRecord,
+    FundamentalsCompanyRecord,
+    FundamentalsEstimatesRecord,
+    FundamentalsFinancialsRecord,
+    FundamentalsHighlightsRecord,
+    FundamentalsRawRecord,
     GeneratedNoteRecord,
     GroupMemberRecord,
     GroupMessageRecord,
@@ -76,6 +81,7 @@ from storage.queries.calendar import (
     append_calendar_event_vintage_if_changed_with_conn,
 )
 from storage.queries.documents import _DocumentsQueriesMixin
+from storage.queries.fundamentals import _FundamentalsQueriesMixin
 from storage.queries.indicator import _IndicatorQueriesMixin
 from storage.queries.market import _MarketQueriesMixin
 from storage.queries.messaging import _MessagingQueriesMixin
@@ -93,6 +99,7 @@ class SQLiteEngineStore(
     _AnalyticalQueriesMixin,
     _CalendarQueriesMixin,
     _DocumentsQueriesMixin,
+    _FundamentalsQueriesMixin,
     _IndicatorQueriesMixin,
     _MarketQueriesMixin,
     _MessagingQueriesMixin,

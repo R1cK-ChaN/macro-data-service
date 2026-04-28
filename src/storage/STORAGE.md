@@ -428,6 +428,12 @@ capability/catalog state describes what a source *can* expose, while
 |-------|---------|
 | `calendar_events` | Legacy economic calendar compatibility table; HTML refresh retired |
 | `market_prices` | Asset price snapshots (yfinance) |
+| `market_corp_actions_raw` | Per-ticker dividend/split audit lane (issue #67 slice 2) |
+| `fundamentals_raw` | EODHD `/api/fundamentals/` snapshot audit lane (issue #68 slice 1) |
+| `fundamentals_company` | Company profile from `General` block — sector / industry / FY end |
+| `fundamentals_financials` | IS / BS / CF × quarterly + annual — typed columns + payload_json |
+| `fundamentals_highlights` | Highlights + Valuation + SharesStats merged ratio snapshot, ~daily grain |
+| `fundamentals_estimates` | Forward-looking analyst estimates (schema only in slice 1) |
 | `central_bank_comms` | Fed speeches, statements, testimony (RSS feeds) |
 | `obs_source` | Observation data providers (FRED, EIA, Treasury Fiscal, NY Fed, rateprobability) |
 | `obs_family` | Series definitions — canonical metadata for each observation stream |
@@ -608,7 +614,12 @@ storage/models/
                     ResolvedObservation, ReleaseScheduleRecord,
                     ReleaseStatusRecord, CentralBankCommunicationRecord.
   market.py       — MarketPriceRecord, MarketInstrumentRecord,
-                    MarketSymbolHistoryRecord, MarketPriceBarRecord.
+                    MarketSymbolHistoryRecord, MarketPriceBarRecord,
+                    MarketCorpActionsRawRecord.
+  fundamentals.py — FundamentalsRawRecord, FundamentalsCompanyRecord,
+                    FundamentalsFinancialsRecord,
+                    FundamentalsHighlightsRecord,
+                    FundamentalsEstimatesRecord (issue #68 slice 1).
   messaging.py    — ClientProfileRecord, ConversationMessageRecord,
                     DeliveryQueueRecord, GroupProfileRecord,
                     GroupMemberRecord, GroupMessageRecord.
