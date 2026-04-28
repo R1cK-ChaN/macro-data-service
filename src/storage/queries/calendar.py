@@ -1416,6 +1416,163 @@ class _CalendarQueriesMixin:
             )
         return items, total_count
 
+    def list_corp_revisions(
+        self,
+        *,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+        ticker: str | None = None,
+        subtype: str | None = None,
+        min_versions: int = 2,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Aggregate ``cal_corp_raw`` revision counts per event (#66).
+
+        Returns ``(items, total_count)``. Each item describes a single
+        ``(provider, provider_event_id)`` for which ``cal_corp_raw``
+        captured at least ``min_versions`` distinct ``content_hash``
+        values within the optional ``[from_ts, to_ts]`` snapshot window.
+
+        Filter semantics:
+
+        - ``from_ts`` / ``to_ts`` (ISO-8601 UTC) bound
+          ``snapshot_epoch_ms`` *before* the GROUP BY, so the version
+          count reflects revisions seen *inside* the window — the
+          intended phrasing of "what got restated in the last week".
+        - ``ticker`` / ``subtype`` are equality filters on the
+          ``cal_corp_event`` projection (a LEFT JOIN — events that
+          haven't projected yet still appear, but match no
+          ticker/subtype clause).
+        - ``min_versions`` defaults to 2 (only events with revisions);
+          set to 1 to enumerate every event with at least one snapshot.
+
+        ``idx_cal_corp_raw_latest`` on
+        ``(provider, provider_event_id, snapshot_epoch_ms DESC)``
+        already supports the GROUP BY without a separate index.
+
+        Rows are ordered by ``last_snapshot_epoch_ms DESC`` so the
+        most recently revised events come first; ``provider_event_id``
+        breaks ties for stable pagination.
+        """
+        conditions: list[str] = []
+        params: list[Any] = []
+        if from_ts:
+            conditions.append("raw.snapshot_epoch_ms >= ?")
+            params.append(to_epoch_ms(from_ts))
+        if to_ts:
+            conditions.append("raw.snapshot_epoch_ms <= ?")
+            params.append(to_epoch_ms(to_ts))
+        if ticker:
+            conditions.append("evt.ticker = ?")
+            params.append(ticker)
+        if subtype:
+            conditions.append("evt.event_subtype = ?")
+            params.append(subtype)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        safe_offset = max(0, int(offset))
+        safe_limit = max(1, min(500, int(limit)))
+        safe_min = max(1, int(min_versions))
+
+        base = (
+            "FROM cal_corp_raw raw "
+            "LEFT JOIN cal_corp_event evt "
+            "  ON evt.provider = raw.provider "
+            " AND evt.provider_event_id = raw.provider_event_id "
+            f"{where} "
+            "GROUP BY raw.provider, raw.provider_event_id "
+            "HAVING COUNT(DISTINCT raw.content_hash) >= ?"
+        )
+
+        with self._connection(commit=False) as connection:
+            total_row = connection.execute(
+                f"SELECT COUNT(*) FROM (SELECT 1 {base})",
+                [*params, safe_min],
+            ).fetchone()
+            total_count = int(total_row[0]) if total_row else 0
+            rows = connection.execute(
+                f"""
+                SELECT raw.provider, raw.provider_event_id,
+                       evt.event_subtype, evt.ticker, evt.exchange,
+                       evt.event_time_utc, evt.title,
+                       COUNT(DISTINCT raw.content_hash) AS versions,
+                       MIN(raw.snapshot_epoch_ms) AS first_snapshot_epoch_ms,
+                       MAX(raw.snapshot_epoch_ms) AS last_snapshot_epoch_ms
+                {base}
+                ORDER BY last_snapshot_epoch_ms DESC,
+                         raw.provider_event_id ASC
+                LIMIT ? OFFSET ?
+                """,
+                [*params, safe_min, safe_limit, safe_offset],
+            ).fetchall()
+
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            items.append(
+                {
+                    "provider":                 row["provider"],
+                    "provider_event_id":        row["provider_event_id"],
+                    "subtype":                  row["event_subtype"],
+                    "ticker":                   row["ticker"],
+                    "exchange":                 row["exchange"],
+                    "event_time_utc":           row["event_time_utc"],
+                    "title":                    row["title"],
+                    "versions":                 int(row["versions"]),
+                    "first_snapshot_epoch_ms":  int(row["first_snapshot_epoch_ms"]),
+                    "last_snapshot_epoch_ms":   int(row["last_snapshot_epoch_ms"]),
+                }
+            )
+        return items, total_count
+
+    def list_corp_revision_versions(
+        self,
+        *,
+        provider: str,
+        provider_event_id: str,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Full ``cal_corp_raw`` snapshot chain for one event (#66).
+
+        Returns ``(versions, total_count)``. Versions are ordered by
+        ``snapshot_epoch_ms ASC`` so callers can reconstruct the
+        revision timeline; ``content_hash`` breaks ties at the same
+        millisecond.
+
+        ``payload_json`` is returned verbatim — the caller is
+        responsible for parsing it.
+        """
+        safe_offset = max(0, int(offset))
+        safe_limit = max(1, min(500, int(limit)))
+        with self._connection(commit=False) as connection:
+            total_row = connection.execute(
+                "SELECT COUNT(*) FROM cal_corp_raw "
+                "WHERE provider = ? AND provider_event_id = ?",
+                (provider, provider_event_id),
+            ).fetchone()
+            total_count = int(total_row[0]) if total_row else 0
+            rows = connection.execute(
+                """
+                SELECT snapshot_epoch_ms, content_hash, payload_json,
+                       fetched_at
+                FROM cal_corp_raw
+                WHERE provider = ? AND provider_event_id = ?
+                ORDER BY snapshot_epoch_ms ASC, content_hash ASC
+                LIMIT ? OFFSET ?
+                """,
+                (provider, provider_event_id, safe_limit, safe_offset),
+            ).fetchall()
+        versions = [
+            {
+                "snapshot_epoch_ms": int(row["snapshot_epoch_ms"]),
+                "content_hash":      row["content_hash"],
+                "payload_json":      row["payload_json"],
+                "fetched_at":        row["fetched_at"],
+            }
+            for row in rows
+        ]
+        return versions, total_count
+
     def list_calendar_indicators(
         self,
         *,

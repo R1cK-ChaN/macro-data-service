@@ -570,6 +570,14 @@ phases for the current month) — no separate `cal_budget` table.
 HTTP surface: `GET /v1/calendar?domain=economic&country=US` or
 `?domain=corporate&ticker=AAPL&subtype=earnings` reads this view.
 
+`GET /v1/calendar/revisions` (issue #66) surfaces `cal_corp_raw`'s
+multi-version capture — aggregate listing of events with N+ distinct
+`content_hash` values, plus a per-event drill-down via
+`?event_id=<provider:peid>&include_versions=true` that returns the full
+raw-snapshot chain. Writer-side, `store_corp_raw` emits a structured
+`corp-event revised` INFO log per event whose distinct-hash count grows
+on insert.
+
 ### Relationship to legacy `calendar_events`
 
 `calendar_events` is retained as a compatibility table for old local DBs.

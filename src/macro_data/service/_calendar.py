@@ -4557,6 +4557,150 @@ class CalendarOpsMixin(LocalMacroDataServiceBase):
             "links": {"next": next_cursor},
         }
 
+    def _op_list_corp_revisions(
+        self, arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Surface ``cal_corp_raw`` multi-version revisions (#66).
+
+        Two modes share one op so HTTP callers don't need a second
+        endpoint to drill into a single event:
+
+        - **Aggregate** (default) — list events whose
+          ``cal_corp_raw`` capture has at least ``min_versions``
+          distinct ``content_hash`` values. Each row carries the
+          version count, first/last snapshot epoch, and the
+          ``cal_corp_event`` projection columns (ticker, subtype,
+          event_time_utc) when the event is projected.
+
+        - **Per-event chain** — when ``include_versions=true`` and
+          ``event_id`` is set (the synthetic
+          ``provider:provider_event_id`` form ``v_calendar_item``
+          emits), return the full ordered list of raw snapshots for
+          that event: ``snapshot_epoch_ms``, ``content_hash``,
+          ``payload_json``, ``fetched_at``.
+
+        Arguments:
+          from_ts          — optional ISO-8601 UTC; lower bound on
+                             ``snapshot_epoch_ms`` (filters revisions
+                             observed in the window).
+          to_ts            — optional ISO-8601 UTC; upper bound.
+          ticker / subtype — optional equality filters on the
+                             ``cal_corp_event`` projection.
+          min_versions     — default 2; set to 1 to enumerate every
+                             event with at least one snapshot.
+          event_id         — optional synthetic id (``provider:peid``)
+                             for the per-event mode.
+          include_versions — default False. Setting ``true`` requires
+                             ``event_id`` and switches modes.
+          page_offset      — default 0.
+          page_limit       — default 100; capped at 500.
+
+        Returns the same JSON:API envelope as
+        ``_op_list_calendar_items``: ``{"data": …, "meta": …,
+        "links": {"next": cursor or null}}``.
+        """
+        include_versions = bool(arguments.get("include_versions", False))
+        event_id_raw = (arguments.get("event_id") or "").strip()
+        try:
+            offset = int(arguments.get("page_offset") or 0)
+        except (TypeError, ValueError):
+            offset = 0
+        try:
+            limit = int(arguments.get("page_limit") or 100)
+        except (TypeError, ValueError):
+            limit = 100
+        offset = max(0, offset)
+        limit = max(1, min(500, limit))
+
+        if include_versions:
+            if not event_id_raw or ":" not in event_id_raw:
+                return {
+                    "error": (
+                        "include_versions requires event_id of the "
+                        "form 'provider:provider_event_id'"
+                    ),
+                }
+            provider_part, _, peid_part = event_id_raw.partition(":")
+            versioner = getattr(
+                self._store, "list_corp_revision_versions", None,
+            )
+            if not callable(versioner):
+                return {
+                    "error": "store does not expose list_corp_revision_versions",
+                }
+            data, total = versioner(
+                provider=provider_part,
+                provider_event_id=peid_part,
+                offset=offset,
+                limit=limit,
+            )
+            next_cursor: dict[str, Any] | None = None
+            if offset + len(data) < total:
+                next_cursor = {
+                    "page_offset":      offset + len(data),
+                    "page_limit":       limit,
+                    "event_id":         event_id_raw,
+                    "include_versions": True,
+                }
+            return {
+                "data":  data,
+                "meta":  {"count": total, "offset": offset, "limit": limit},
+                "links": {"next": next_cursor},
+            }
+
+        from_ts_raw = (arguments.get("from_ts") or "").strip()
+        to_ts_raw = (arguments.get("to_ts") or "").strip()
+        for label, raw in (("from_ts", from_ts_raw), ("to_ts", to_ts_raw)):
+            if not raw:
+                continue
+            try:
+                datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError:
+                return {"error": f"invalid {label}: {raw!r}"}
+
+        ticker = (arguments.get("ticker") or "").strip() or None
+        subtype = (arguments.get("subtype") or "").strip() or None
+        try:
+            min_versions = int(arguments.get("min_versions") or 2)
+        except (TypeError, ValueError):
+            min_versions = 2
+        min_versions = max(1, min_versions)
+
+        lister = getattr(self._store, "list_corp_revisions", None)
+        if not callable(lister):
+            return {"error": "store does not expose list_corp_revisions"}
+
+        items, total = lister(
+            from_ts=from_ts_raw or None,
+            to_ts=to_ts_raw or None,
+            ticker=ticker,
+            subtype=subtype,
+            min_versions=min_versions,
+            offset=offset,
+            limit=limit,
+        )
+        next_cursor = None
+        if offset + len(items) < total:
+            next_cursor = {
+                "page_offset": offset + len(items),
+                "page_limit":  limit,
+            }
+            if from_ts_raw:
+                next_cursor["from_ts"] = from_ts_raw
+            if to_ts_raw:
+                next_cursor["to_ts"] = to_ts_raw
+            if ticker:
+                next_cursor["ticker"] = ticker
+            if subtype:
+                next_cursor["subtype"] = subtype
+            if min_versions != 2:
+                next_cursor["min_versions"] = min_versions
+        return {
+            "data":  items,
+            "meta":  {"count": total, "offset": offset, "limit": limit},
+            "links": {"next": next_cursor},
+        }
+
     def _op_calendar_econ_fetch_nbs(
         self, arguments: dict[str, Any],
     ) -> dict[str, Any]:
