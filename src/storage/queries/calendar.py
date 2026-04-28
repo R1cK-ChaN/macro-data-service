@@ -40,6 +40,33 @@ from storage.models.indicator import (
 )
 
 
+def _calendar_vintage_at_or_before_with_conn(
+    connection: sqlite3.Connection,
+    *,
+    event_id: str,
+    provider: str,
+    as_of: str,
+) -> sqlite3.Row | None:
+    """Vintage row with the greatest ``observed_at <= as_of`` for
+    ``(event_id, provider)``. Shared by ``calendar_actual_as_of`` and
+    PIT (``as_of``) reconciliation in ``list_calendar_items``.
+
+    Comparison uses ``julianday`` so fractional-second ISO timestamps
+    sort correctly against whole-second ones — the same rationale as in
+    ``append_calendar_event_vintage_if_changed_with_conn``.
+    """
+    return connection.execute(
+        "SELECT event_id, provider, vintage_date, observed_at, "
+        "actual, forecast, previous, metadata_json, "
+        "source_url, evidence_archive_url "
+        "FROM calendar_event_vintages "
+        "WHERE event_id = ? AND provider = ? "
+        "AND julianday(observed_at) <= julianday(?) "
+        "ORDER BY julianday(observed_at) DESC, id DESC LIMIT 1",
+        (event_id, provider, as_of),
+    ).fetchone()
+
+
 def append_calendar_event_vintage_if_changed_with_conn(
     connection: sqlite3.Connection,
     *,
@@ -963,16 +990,9 @@ class _CalendarQueriesMixin:
         wins — i.e. the most recently appended vintage at that timestamp.
         """
         with self._connection(commit=False) as connection:
-            row = connection.execute(
-                "SELECT event_id, provider, vintage_date, observed_at, "
-                "actual, forecast, previous, metadata_json, "
-                "source_url, evidence_archive_url "
-                "FROM calendar_event_vintages "
-                "WHERE event_id = ? AND provider = ? "
-                "AND julianday(observed_at) <= julianday(?) "
-                "ORDER BY julianday(observed_at) DESC, id DESC LIMIT 1",
-                (event_id, provider, as_of),
-            ).fetchone()
+            row = _calendar_vintage_at_or_before_with_conn(
+                connection, event_id=event_id, provider=provider, as_of=as_of,
+            )
         if row is None:
             return None
         return self._row_to_calendar_vintage(row)
@@ -1052,6 +1072,7 @@ class _CalendarQueriesMixin:
         ticker: str | None = None,
         subtype: str | None = None,
         provider: str | None = None,
+        as_of: str | None = None,
         offset: int = 0,
         limit: int = 100,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -1078,6 +1099,21 @@ class _CalendarQueriesMixin:
         ``offset`` is clamped to ``>= 0``; ``limit`` to ``[1, 500]``.
         Rows are ordered by ``event_time_utc`` ascending then
         ``event_id`` for stable pagination.
+
+        ``as_of`` (ISO-8601 UTC) — when set, each economic row is
+        reconciled against ``calendar_event_vintages``: ``actual /
+        previous / forecast`` and the per-row timestamps are taken from
+        the vintage with the greatest ``observed_at <= as_of`` for
+        ``(provider_event_id, provider)``. Rows with no vintage at-or-
+        before the cutoff drop their econ value-bearing fields entirely
+        — they didn't exist on the wire yet at ``as_of``. The total
+        count and pagination still come from the latest projection
+        (``v_calendar_item``); ``as_of`` only swaps the per-row values
+        in the returned page so downstream pagination math is stable.
+
+        Corporate rows are not yet PIT-resolved here (issue #65 C2);
+        the service-layer caller surfaces an
+        ``meta.as_of_corp_unsupported`` flag while C2 is pending.
         """
         conditions: list[str] = []
         params: list[Any] = []
@@ -1122,45 +1158,82 @@ class _CalendarQueriesMixin:
                 [*params, safe_limit, safe_offset],
             ).fetchall()
 
-        items: list[dict[str, Any]] = []
-        for row in rows:
-            (
-                event_id, domain_val, subtype_val, provider_val, _peid,
-                event_time_utc, precision, title, country_val,
-                ticker_val, exchange_val, currency_val, importance_val,
-                indicator_id, reference_date, actual, previous, forecast,
-                consensus_forecast, source_url, last_update_epoch_ms,
-                _observed_at, payload_raw,
-            ) = row
-            values: dict[str, Any] = {}
-            if actual is not None:
-                values["actual"] = actual
-            if previous is not None:
-                values["previous"] = previous
-            if forecast is not None:
-                values["forecast"] = forecast
-            if consensus_forecast is not None:
-                values["consensus_forecast"] = consensus_forecast
-            # Corporate lane: the value-bearing fields (eps_actual,
-            # dividend_amount, split_ratio, ipo_price, …) live in
-            # ``cal_corp_event.payload_json`` — the economic-column
-            # slots are NULL in the view. Flatten scalar keys from the
-            # payload into ``values`` so the unified DTO carries the
-            # subtype-specific data HTTP clients need. Nested objects
-            # / arrays are skipped here because the CalendarItem
-            # contract declares ``values: dict[str, str | None]``.
-            if payload_raw and domain_val == "corporate":
-                try:
-                    payload = json.loads(payload_raw)
-                except (TypeError, ValueError):
-                    payload = None
-                if isinstance(payload, dict):
-                    for key, val in payload.items():
-                        if val is None:
-                            continue
-                        if isinstance(val, (str, int, float, bool)):
-                            values.setdefault(str(key), str(val))
-            items.append(
+            items: list[dict[str, Any]] = []
+            for row in rows:
+                (
+                    event_id, domain_val, subtype_val, provider_val, peid,
+                    event_time_utc, precision, title, country_val,
+                    ticker_val, exchange_val, currency_val, importance_val,
+                    indicator_id, reference_date, actual, previous, forecast,
+                    consensus_forecast, source_url, last_update_epoch_ms,
+                    _observed_at, payload_raw,
+                ) = row
+
+                # Econ-lane PIT reconciliation: swap the per-row values
+                # for the vintage active at ``as_of``. Vintages key on
+                # ``provider_event_id`` (without the synthetic
+                # ``provider:`` prefix the view emits as ``event_id``).
+                if as_of and domain_val == "economic":
+                    vintage_row = _calendar_vintage_at_or_before_with_conn(
+                        connection,
+                        event_id=peid,
+                        provider=provider_val,
+                        as_of=as_of,
+                    )
+                    if vintage_row is None:
+                        # Pre-existence at ``as_of``: zero out econ values.
+                        actual = None
+                        previous = None
+                        forecast = None
+                        consensus_forecast = None
+                        last_update_epoch_ms = None
+                    else:
+                        actual = vintage_row["actual"]
+                        previous = vintage_row["previous"]
+                        forecast = vintage_row["forecast"]
+                        # Vintages don't snapshot consensus_forecast —
+                        # the field has no historical record so it
+                        # cannot honour ``as_of``. Drop it rather than
+                        # leak the latest value.
+                        consensus_forecast = None
+                        try:
+                            last_update_epoch_ms = to_epoch_ms(
+                                vintage_row["observed_at"],
+                            )
+                        except (TypeError, ValueError):
+                            last_update_epoch_ms = None
+                        source_url = vintage_row["source_url"] or source_url
+
+                values: dict[str, Any] = {}
+                if actual is not None:
+                    values["actual"] = actual
+                if previous is not None:
+                    values["previous"] = previous
+                if forecast is not None:
+                    values["forecast"] = forecast
+                if consensus_forecast is not None:
+                    values["consensus_forecast"] = consensus_forecast
+                # Corporate lane: the value-bearing fields (eps_actual,
+                # dividend_amount, split_ratio, ipo_price, …) live in
+                # ``cal_corp_event.payload_json`` — the economic-column
+                # slots are NULL in the view. Flatten scalar keys from
+                # the payload into ``values`` so the unified DTO carries
+                # the subtype-specific data HTTP clients need. Nested
+                # objects / arrays are skipped here because the
+                # CalendarItem contract declares
+                # ``values: dict[str, str | None]``.
+                if payload_raw and domain_val == "corporate":
+                    try:
+                        payload = json.loads(payload_raw)
+                    except (TypeError, ValueError):
+                        payload = None
+                    if isinstance(payload, dict):
+                        for key, val in payload.items():
+                            if val is None:
+                                continue
+                            if isinstance(val, (str, int, float, bool)):
+                                values.setdefault(str(key), str(val))
+                items.append(
                 {
                     "event_id": event_id,
                     "release_time": event_time_utc,
