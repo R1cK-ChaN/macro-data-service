@@ -86,3 +86,22 @@ class MarketPriceBarRecord:
     has_missing_corp_acts: bool = False
     has_mapping_review_needed: bool = False
     quality_flags_json: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class MarketCorpActionsRawRecord:
+    """Audit-lane raw row for the market corporate-actions table.
+
+    Mirrors ``CalendarCorpRawRecord`` in shape — separate types because
+    the two lanes evolve independently (event-shaped vs ticker-shaped).
+    See ``storage/schema.py`` for the rationale comment on the table.
+    """
+
+    provider: str           # "eodhd"
+    ticker: str             # full provider ticker e.g. "AAPL.US"
+    action_type: str        # "dividend" | "split"
+    event_date: str         # YYYY-MM-DD — ex-date (div) or split-date
+    snapshot_epoch_ms: int  # when WE fetched this snapshot
+    content_hash: str       # sha256 over normalized mutable fields
+    payload_json: str       # raw response row, verbatim
+    fetched_at: str         # ISO-8601 UTC

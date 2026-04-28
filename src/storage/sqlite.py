@@ -49,6 +49,7 @@ from storage.models import (
     GroupProfileRecord,
     IndicatorObservationRecord,
     IndicatorVintageRecord,
+    MarketCorpActionsRawRecord,
     MarketInstrumentRecord,
     MarketPriceBarRecord,
     MarketPriceRecord,
