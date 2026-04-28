@@ -50,6 +50,25 @@ class RefreshStats:
         self.count = count
 
 
+# Asset classes that can carry corporate actions (dividends/splits) and
+# can be "delisted". FX, crypto, and spot metals are continuous-tape
+# instruments — there are no splits, no dividends, and the "pre-2018
+# delisted" probe doesn't apply. Bars for these asset classes must NOT
+# carry has_missing_corp_acts / has_pre2018_delisted flags, otherwise
+# downstream agents will surface bogus quality warnings on every FX /
+# crypto / spot-metal bar.
+#
+# bond_etf / commodity_etf are kept in the bearing set: bond ETFs make
+# regular distributions, and commodity ETFs do split. Indices are kept
+# even though indices themselves don't pay dividends because EODHD
+# returns adjusted_close = close for indices and the missing-CA flag
+# remains the right signal for "we don't have an underlying-basket
+# total-return view yet".
+_CORP_ACTION_BEARING_ASSET_CLASSES = frozenset({
+    "equity", "equity_etf", "bond_etf", "commodity_etf", "index",
+})
+
+
 class EODHDMarketDataProvider:
     """High-level EODHD provider for global (non-US) coverage."""
 
@@ -181,9 +200,20 @@ class EODHDMarketDataProvider:
             return RefreshStats(source="eodhd", count=0)
 
         adjustment_applied = check_adjustment_applied(bars)
+        # FX / crypto / spot-metal lines have no corporate actions and
+        # don't "delist" in the equity sense — gate the equity-only flags
+        # to corp-action-bearing asset classes so non-equity bars don't
+        # surface bogus warnings to downstream agents.
+        carries_corp_actions = entry.asset_class in _CORP_ACTION_BEARING_ASSET_CLASSES
+        # Break detection: run when adjustments are present (so the series
+        # is comparable across corporate actions) OR when the series has
+        # no corporate actions to begin with — for FX/crypto/spot-metal
+        # tapes a provider splice or scale jump still needs to surface as
+        # has_break_detected, even though adjusted_close equals close
+        # because there's nothing to adjust for.
         break_dates = (
             detect_history_breaks(bars, threshold=self.break_threshold)
-            if adjustment_applied
+            if adjustment_applied or not carries_corp_actions
             else []
         )
         break_set = set(break_dates)
@@ -196,7 +226,8 @@ class EODHDMarketDataProvider:
                 flags_json["ohlc_sanity"] = "failed"
             if not adjustment_applied:
                 flags_json["adjustment_check"] = "raw_only"
-            flags_json["corp_acts_missing"] = "eodhd_eod_endpoint_has_no_div_split"
+            if carries_corp_actions:
+                flags_json["corp_acts_missing"] = "eodhd_eod_endpoint_has_no_div_split"
             if bar.date in break_set:
                 flags_json["break_detected"] = True
 
@@ -221,8 +252,12 @@ class EODHDMarketDataProvider:
                     source_name="EODHD",
                     source_symbol=entry.eodhd_ticker,
                     has_break_detected=bar.date in break_set,
-                    has_pre2018_delisted=bar.date < PRE2018_CUTOFF and not adjustment_applied,
-                    has_missing_corp_acts=True,
+                    has_pre2018_delisted=(
+                        carries_corp_actions
+                        and bar.date < PRE2018_CUTOFF
+                        and not adjustment_applied
+                    ),
+                    has_missing_corp_acts=carries_corp_actions,
                     has_mapping_review_needed=False,
                     quality_flags_json=flags_json,
                 )

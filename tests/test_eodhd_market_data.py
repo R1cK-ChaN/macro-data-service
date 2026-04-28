@@ -116,7 +116,9 @@ def test_client_without_api_key_returns_empty_list() -> None:
 def test_seed_universe_upserts_global_instruments(store: SQLiteEngineStore) -> None:
     provider = EODHDMarketDataProvider(client=_mock_client(_sample_rows()))
     count = provider.seed_universe(store)
-    assert count == len(EODHD_GLOBAL_UNIVERSE) == 6
+    # 6 original (indices/ETF/equities) + 10 FX + 5 spot metals + 5 crypto
+    # added by issue #67 slice 1.
+    assert count == len(EODHD_GLOBAL_UNIVERSE) == 26
 
     nikkei = store.get_market_instrument("JP_NIKKEI225")
     assert nikkei is not None
@@ -126,6 +128,21 @@ def test_seed_universe_upserts_global_instruments(store: SQLiteEngineStore) -> N
     sap = store.get_market_instrument("DE_SAP")
     assert sap.isin == "DE0007164600"
     assert sap.currency == "EUR"
+
+    eurusd = store.get_market_instrument("FX_EURUSD")
+    assert eurusd is not None
+    assert eurusd.asset_class == "fx"
+    assert eurusd.exchange_code == "FOREX"
+
+    btc = store.get_market_instrument("CRYPTO_BTC_USD")
+    assert btc is not None
+    assert btc.asset_class == "crypto"
+    assert btc.exchange_code == "CC"
+
+    gold = store.get_market_instrument("COMMOD_GOLD_SPOT")
+    assert gold is not None
+    assert gold.asset_class == "commodity"
+    assert gold.provider_symbols_json == {"eodhd": "XAUUSD.FOREX"}
 
 
 def test_refresh_market_history_persists_bars_and_flags(store: SQLiteEngineStore) -> None:
@@ -238,6 +255,123 @@ def test_get_market_history_agent_native_shape(store: SQLiteEngineStore) -> None
 def test_universe_has_no_duplicate_tickers() -> None:
     tickers = [e.eodhd_ticker for e in EODHD_GLOBAL_UNIVERSE]
     assert len(tickers) == len(set(tickers))
+
+
+def test_universe_no_instrument_id_clash_with_macro_lane() -> None:
+    """EODHD spot FX and the FRED/ECB macro projections both surface
+    EUR/USD into ``market_price_bars`` — but they must keep distinct
+    ``instrument_id`` values so downstream picks the right definition.
+    The no-overlap-by-design rule (see module docstring) is structural;
+    this test makes the contract explicit."""
+    from ingestion.market._macro_map import MACRO_MARKET_BY_INSTRUMENT_ID
+
+    eodhd_ids = {e.instrument_id for e in EODHD_GLOBAL_UNIVERSE}
+    macro_ids = set(MACRO_MARKET_BY_INSTRUMENT_ID)
+    assert eodhd_ids.isdisjoint(macro_ids)
+
+
+def test_refresh_market_history_no_corp_acts_flag_for_fx_crypto_metal(
+    store: SQLiteEngineStore,
+) -> None:
+    """FX, crypto, and spot-metal bars must not carry the
+    ``has_missing_corp_acts`` or ``has_pre2018_delisted`` flags — these
+    are equity-only signals and surfacing them on continuous-tape
+    instruments would emit bogus warnings to downstream agents."""
+    provider = EODHDMarketDataProvider(
+        client=_mock_client(_sample_rows()),
+        request_sleep=0,
+    )
+    provider.seed_universe(store)
+
+    for instrument_id, ticker in (
+        ("FX_EURUSD", "EURUSD.FOREX"),
+        ("CRYPTO_BTC_USD", "BTC-USD.CC"),
+        ("COMMOD_GOLD_SPOT", "XAUUSD.FOREX"),
+    ):
+        provider.refresh_market_history(store, ticker)
+        bars = store.list_market_price_bars(instrument_id)
+        assert len(bars) == 3, f"no bars persisted for {instrument_id}"
+        assert all(not b.has_missing_corp_acts for b in bars), (
+            f"{instrument_id} bars should not be flagged corp_acts_missing"
+        )
+        assert all(not b.has_pre2018_delisted for b in bars), (
+            f"{instrument_id} bars should not be flagged pre2018_delisted"
+        )
+        assert all("corp_acts_missing" not in b.quality_flags_json for b in bars), (
+            f"{instrument_id} bars must not carry the corp_acts_missing JSON flag"
+        )
+
+    # Sanity: equity rows still flagged as before so the gate doesn't
+    # over-broadly suppress the warning.
+    provider.refresh_market_history(store, "N225.INDX")
+    nikkei_bars = store.list_market_price_bars("JP_NIKKEI225")
+    assert all(b.has_missing_corp_acts for b in nikkei_bars), (
+        "Index bars should still be flagged corp_acts_missing pending issue #67 slice 2"
+    )
+
+
+def test_refresh_market_history_break_detection_runs_for_continuous_tapes(
+    store: SQLiteEngineStore,
+) -> None:
+    """FX / crypto / spot-metal series have ``adjusted_close == close``
+    so the equity-style ``adjustment_applied`` gate would otherwise skip
+    break detection entirely. Slice 1 fixes that — break detection still
+    runs for these continuous-tape asset classes so a provider splice
+    or scale jump on EURUSD/BTC/XAU surfaces as ``has_break_detected``.
+    """
+    # Construct a series with a 60% drop on day 3 — above the default
+    # break threshold (DEFAULT_BREAK_THRESHOLD = 0.5, strict-greater check).
+    payload = [
+        {"date": "2026-04-15", "open": 1.10, "high": 1.11, "low": 1.10,
+         "close": 1.10, "adjusted_close": 1.10, "volume": 1000},
+        {"date": "2026-04-16", "open": 1.10, "high": 1.11, "low": 1.10,
+         "close": 1.10, "adjusted_close": 1.10, "volume": 1000},
+        {"date": "2026-04-17", "open": 0.40, "high": 0.40, "low": 0.40,
+         "close": 0.40, "adjusted_close": 0.40, "volume": 1000},
+    ]
+    provider = EODHDMarketDataProvider(
+        client=_mock_client(payload),
+        request_sleep=0,
+    )
+    provider.seed_universe(store)
+    provider.refresh_market_history(store, "EURUSD.FOREX")
+    bars = store.list_market_price_bars("FX_EURUSD")
+    breaks = [b for b in bars if b.has_break_detected]
+    assert len(breaks) >= 1, (
+        "FX scale jump should surface as has_break_detected even when "
+        "adjusted_close == close"
+    )
+
+
+def test_corp_action_bearing_classes_include_etf_variants() -> None:
+    """bond_etf / commodity_etf are real asset_class values used by
+    ``ingestion.market._tiingo_universe.TIINGO_MACRO_ETF_UNIVERSE`` —
+    bond ETFs make distributions and commodity ETFs do split, so they
+    must stay in the missing-corp-acts gate. Without this guard a
+    custom EODHD universe of macro ETFs would silently bypass the
+    quality flag."""
+    from ingestion.market.clients._eodhd import (
+        _CORP_ACTION_BEARING_ASSET_CLASSES,
+    )
+
+    assert "bond_etf" in _CORP_ACTION_BEARING_ASSET_CLASSES
+    assert "commodity_etf" in _CORP_ACTION_BEARING_ASSET_CLASSES
+    assert "equity_etf" in _CORP_ACTION_BEARING_ASSET_CLASSES
+    # Negative invariants — non-corp-action-bearing classes must stay out.
+    assert "fx" not in _CORP_ACTION_BEARING_ASSET_CLASSES
+    assert "crypto" not in _CORP_ACTION_BEARING_ASSET_CLASSES
+    assert "commodity" not in _CORP_ACTION_BEARING_ASSET_CLASSES
+
+
+def test_universe_new_asset_classes_present() -> None:
+    """Slice 1 adds 10 FX, 5 spot metals (asset_class=commodity), 5
+    crypto. Guard against accidental drops on future edits."""
+    classes = [e.asset_class for e in EODHD_GLOBAL_UNIVERSE]
+    assert classes.count("fx") == 10
+    assert classes.count("crypto") == 5
+    # 5 spot metals; original universe had no commodity rows so the count
+    # equals the slice-1 contribution.
+    assert classes.count("commodity") == 5
 
 
 def test_orchestrator_registers_eodhd_market_source(store: SQLiteEngineStore) -> None:
