@@ -20,6 +20,7 @@ from .market import (
     MarketSymbolHistoryRecord,
     MarketPriceBarRecord,
     MarketCorpActionsRawRecord,
+    MarketPriceBarsRawRecord,
 )
 from .fundamentals import (
     FundamentalsCompanyRecord,
@@ -104,6 +105,7 @@ __all__ = [
     "MarketCorpActionsRawRecord",
     "MarketInstrumentRecord",
     "MarketPriceBarRecord",
+    "MarketPriceBarsRawRecord",
     "MarketPriceRecord",
     "MarketSymbolHistoryRecord",
     "NewsArticleRecord",

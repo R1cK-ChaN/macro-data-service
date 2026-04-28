@@ -57,6 +57,7 @@ from storage.models import (
     MarketCorpActionsRawRecord,
     MarketInstrumentRecord,
     MarketPriceBarRecord,
+    MarketPriceBarsRawRecord,
     MarketPriceRecord,
     MarketSymbolHistoryRecord,
     NewsArticleRecord,

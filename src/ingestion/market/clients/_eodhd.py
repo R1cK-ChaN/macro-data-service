@@ -45,6 +45,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from ingestion.market._bars_canonicalize import bars_content_hash
 from ingestion.market._eodhd_universe import (
     EODHD_GLOBAL_UNIVERSE,
     EODHDUniverseEntry,
@@ -68,6 +69,7 @@ from storage import (
     MarketCorpActionsRawRecord,
     MarketInstrumentRecord,
     MarketPriceBarRecord,
+    MarketPriceBarsRawRecord,
     MarketSymbolHistoryRecord,
     SQLiteEngineStore,
 )
@@ -223,7 +225,9 @@ class EODHDMarketDataProvider:
             self._seed_single_entry(store, entry)
 
         try:
-            bars = self.get_daily_bars(entry.eodhd_ticker, start_date=start, end_date=end)
+            bars, raw_payload, request_params = self.client.get_daily_bars_with_raw(
+                entry.eodhd_ticker, start_date=start, end_date=end,
+            )
         except EODHDNotFoundError:
             logger.warning("EODHD ticker not found: %s", entry.eodhd_ticker)
             return RefreshStats(source="eodhd", count=0)
@@ -233,6 +237,15 @@ class EODHDMarketDataProvider:
 
         if not bars:
             return RefreshStats(source="eodhd", count=0)
+
+        # Issue #69 slice 2: capture raw payload before projecting bars.
+        # Same content-hash + INSERT OR IGNORE pattern as the calendar
+        # _raw lanes — re-fetching unchanged data dedupes; a new bar (or
+        # a revised close) flips the hash and lands as a fresh row.
+        if raw_payload:
+            self._capture_bars_raw(
+                store, entry.eodhd_ticker, raw_payload, request_params,
+            )
 
         adjustment_applied = check_adjustment_applied(bars)
         # FX / crypto / spot-metal lines have no corporate actions and
@@ -316,6 +329,36 @@ class EODHDMarketDataProvider:
             self._reproject_corp_actions(store, entry)
 
         return RefreshStats(source="eodhd", count=count)
+
+    @staticmethod
+    def _capture_bars_raw(
+        store: SQLiteEngineStore,
+        ticker: str,
+        payload: list[dict[str, Any]],
+        request_params: dict[str, str],
+    ) -> int:
+        """Land one ``market_price_bars_raw`` row for the fetched payload.
+
+        Idempotent — same canonicalized hash dedupes via INSERT OR
+        IGNORE. Issue #69 slice 2.
+        """
+        snapshot_epoch_ms = int(datetime.now(UTC).timestamp() * 1000)
+        record = MarketPriceBarsRawRecord(
+            provider="eodhd",
+            ticker=ticker,
+            snapshot_epoch_ms=snapshot_epoch_ms,
+            content_hash=bars_content_hash(payload),
+            payload_json=json.dumps(payload, sort_keys=True, ensure_ascii=False),
+            fetched_at=datetime.now(UTC).isoformat(),
+            request_params_json=json.dumps(request_params, sort_keys=True),
+        )
+        try:
+            return store.insert_market_price_bars_raw([record])
+        except Exception:
+            logger.warning(
+                "market_price_bars_raw write failed for %s", ticker, exc_info=True,
+            )
+            return 0
 
     @staticmethod
     def _reproject_corp_actions(

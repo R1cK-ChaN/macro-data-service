@@ -10,11 +10,13 @@ Wraps ``TiingoClient`` to:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+from ingestion.market._bars_canonicalize import bars_content_hash
 from ingestion.market._tiingo_universe import (
     TIINGO_MACRO_ETF_UNIVERSE,
     TIINGO_UNIVERSE_BY_INSTRUMENT_ID,
@@ -29,6 +31,7 @@ from ingestion.market.scrapers._tiingo import (
 from storage import (
     MarketInstrumentRecord,
     MarketPriceBarRecord,
+    MarketPriceBarsRawRecord,
     MarketSymbolHistoryRecord,
     SQLiteEngineStore,
 )
@@ -225,13 +228,24 @@ class TiingoMarketDataProvider:
             self._seed_single_entry(store, entry)
 
         try:
-            bars = self.get_daily_bars(entry.ticker, start_date=start, end_date=end)
+            bars, raw_payload, request_params = self.client.get_daily_bars_with_raw(
+                entry.ticker, start_date=start, end_date=end,
+            )
         except TiingoAPIError:
             logger.warning("Tiingo fetch failed for %s", entry.ticker, exc_info=True)
             return RefreshStats(source="tiingo", count=0)
 
         if not bars:
             return RefreshStats(source="tiingo", count=0)
+
+        # Issue #69 slice 2: capture raw payload before projecting bars.
+        # Same idempotent INSERT OR IGNORE contract as the EODHD lane —
+        # unchanged daily refresh dedupes on content_hash, a new bar
+        # flips the hash and lands as a fresh row.
+        if raw_payload:
+            self._capture_bars_raw(
+                store, entry.ticker, raw_payload, request_params,
+            )
 
         adjustment_applied = check_adjustment_applied(bars)
         break_dates = detect_history_breaks(bars, threshold=self.break_threshold) if adjustment_applied else []
@@ -284,6 +298,36 @@ class TiingoMarketDataProvider:
             # existing alert back to provider_continuous here.
             store.update_instrument_history_status(entry.instrument_id, "break_detected")
         return RefreshStats(source="tiingo", count=count)
+
+    @staticmethod
+    def _capture_bars_raw(
+        store: SQLiteEngineStore,
+        ticker: str,
+        payload: list[dict[str, Any]],
+        request_params: dict[str, str],
+    ) -> int:
+        """Land one ``market_price_bars_raw`` row for the fetched payload.
+
+        Idempotent — same canonicalized hash dedupes via INSERT OR
+        IGNORE. Issue #69 slice 2.
+        """
+        snapshot_epoch_ms = int(datetime.now(UTC).timestamp() * 1000)
+        record = MarketPriceBarsRawRecord(
+            provider="tiingo",
+            ticker=ticker,
+            snapshot_epoch_ms=snapshot_epoch_ms,
+            content_hash=bars_content_hash(payload),
+            payload_json=json.dumps(payload, sort_keys=True, ensure_ascii=False),
+            fetched_at=datetime.now(UTC).isoformat(),
+            request_params_json=json.dumps(request_params, sort_keys=True),
+        )
+        try:
+            return store.insert_market_price_bars_raw([record])
+        except Exception:
+            logger.warning(
+                "market_price_bars_raw write failed for %s", ticker, exc_info=True,
+            )
+            return 0
 
     def refresh_universe(
         self,

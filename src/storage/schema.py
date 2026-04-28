@@ -208,6 +208,36 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_market_corp_actions_raw_latest "
         "ON market_corp_actions_raw(provider, ticker, action_type, event_date, snapshot_epoch_ms DESC)"
     )
+    # ── Market price-bars audit lane (issue #69 slice 2) ─────────────────
+    # Mirrors cal_corp_raw / market_corp_actions_raw — same content-hash +
+    # raw-payload + snapshot pattern. One row per HTTP response (per
+    # provider × ticker × bar window): the ``payload_json`` holds the full
+    # EODHD ``/api/eod`` or Tiingo ``/tiingo/daily/{t}/prices`` body.
+    # ``content_hash`` is sha256 over the canonicalized bar array (sorted
+    # by date, volatile envelope fields dropped) so re-fetching unchanged
+    # data dedupes.
+    #
+    # Audit floor — historical bars already in market_price_bars cannot be
+    # replayed into raw because providers only return their current-best
+    # version. This table captures from "first write after #69 ships".
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_price_bars_raw (
+            provider            TEXT NOT NULL,
+            ticker              TEXT NOT NULL,
+            snapshot_epoch_ms   INTEGER NOT NULL,
+            content_hash        TEXT NOT NULL,
+            payload_json        TEXT NOT NULL,
+            fetched_at          TEXT NOT NULL,
+            request_params_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (provider, ticker, content_hash)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_price_bars_raw_latest "
+        "ON market_price_bars_raw(provider, ticker, snapshot_epoch_ms DESC)"
+    )
     # ── EODHD fundamentals (issue #68 slice 1) ───────────────────────────
     # One raw audit lane + four typed projections. Same content-hash +
     # observed-at PIT discipline as cal_corp_*: raw is append-only on

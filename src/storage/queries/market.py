@@ -20,6 +20,7 @@ from storage.models.market import (
     MarketCorpActionsRawRecord,
     MarketInstrumentRecord,
     MarketPriceBarRecord,
+    MarketPriceBarsRawRecord,
     MarketPriceRecord,
     MarketSymbolHistoryRecord,
 )
@@ -327,6 +328,81 @@ class _MarketQueriesMixin:
                 rows,
             )
             return connection.total_changes - before
+
+    # ── Market price-bars audit lane (issue #69 slice 2) ───────────────
+
+    def insert_market_price_bars_raw(
+        self,
+        records: list[MarketPriceBarsRawRecord],
+    ) -> int:
+        """Insert raw price-bar snapshots; return number of new rows.
+
+        ``INSERT OR IGNORE`` on the ``(provider, ticker, content_hash)``
+        PK matches the calendar / corp-actions raw idempotency contract:
+        same canonicalized payload = same row, no duplicate write. A
+        revised bar (corrected close, new bar appended, etc.) flips the
+        hash and lands as a new row, preserving the revision chain.
+        """
+        if not records:
+            return 0
+        rows = [
+            (
+                r.provider,
+                r.ticker,
+                r.snapshot_epoch_ms,
+                r.content_hash,
+                r.payload_json,
+                r.fetched_at,
+                r.request_params_json,
+            )
+            for r in records
+        ]
+        with self._connection(commit=True) as connection:
+            before = connection.total_changes
+            connection.executemany(
+                """
+                INSERT OR IGNORE INTO market_price_bars_raw (
+                    provider, ticker, snapshot_epoch_ms,
+                    content_hash, payload_json, fetched_at, request_params_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            return connection.total_changes - before
+
+    def latest_market_price_bars_raw(
+        self, provider: str, ticker: str,
+    ) -> MarketPriceBarsRawRecord | None:
+        """Latest snapshot for ``(provider, ticker)``.
+
+        Hits ``idx_market_price_bars_raw_latest`` so the lookup is O(1)
+        regardless of revision-chain depth. Used by re-projection: replay
+        the latest raw payload through the parser without re-fetching
+        EODHD / Tiingo.
+        """
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                """
+                SELECT provider, ticker, snapshot_epoch_ms, content_hash,
+                       payload_json, fetched_at, request_params_json
+                FROM market_price_bars_raw
+                WHERE provider = ? AND ticker = ?
+                ORDER BY snapshot_epoch_ms DESC
+                LIMIT 1
+                """,
+                (provider, ticker),
+            ).fetchone()
+        if row is None:
+            return None
+        return MarketPriceBarsRawRecord(
+            provider=row["provider"],
+            ticker=row["ticker"],
+            snapshot_epoch_ms=int(row["snapshot_epoch_ms"]),
+            content_hash=row["content_hash"],
+            payload_json=row["payload_json"],
+            fetched_at=row["fetched_at"],
+            request_params_json=row["request_params_json"] or "{}",
+        )
 
     def latest_market_corp_actions_for_ticker(
         self,
