@@ -213,6 +213,147 @@ class CalendarOpsMixin(LocalMacroDataServiceBase):
             "stopped_reason":    summary.stopped_reason,
         }
 
+    def _op_calendar_corp_backfill(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Resumable historical backfill of one corp calendar subtype.
+
+        Mirror of ``_op_calendar_corp_fetch`` for long sweeps: each
+        invocation is bounded by ``max_requests`` and persists progress
+        to ``cal_corp_backfill_cursor`` so a budget breach or 429 storm
+        does not start the next run from scratch.
+
+        Arguments:
+          subtype                  — ``earnings`` / ``ipo`` / ``split`` /
+                                     ``dividend``. ``earnings_trend`` is
+                                     forward-only and rejected here.
+          phases                   — optional list of ``recent`` / ``mid``
+                                     / ``early``; omit to cover all three.
+          from / to                — optional ISO bounds clipped to the
+                                     phase spans (default: phase floors
+                                     → today).
+          symbols                  — optional ticker filter for subtypes
+                                     that accept it (earnings, split,
+                                     dividend).
+          dry_run                  — default True. Returns the plan and
+                                     cursor state without HTTP traffic.
+          max_requests             — default 50. Caps EODHD calls per
+                                     invocation.
+          window_days              — default 7. Window slice width.
+          enrich_dividend_details  — default True. When ``subtype`` is
+                                     ``dividend``, runs the per-ticker
+                                     /api/div detail enrichment after
+                                     the discovery sweep using leftover
+                                     budget.
+        """
+        from datetime import date as _date
+
+        from ingestion.calendar.eodhd_api import (
+            CorpBackfillRunner,
+            EODHDAPIClient,
+            SUBTYPES_BACKFILLABLE,
+        )
+
+        subtype = (arguments.get("subtype") or "").strip()
+        if not subtype:
+            return {"error": "subtype is required"}
+        if subtype not in SUBTYPES_BACKFILLABLE:
+            return {
+                "error": f"subtype {subtype!r} is not backfillable; "
+                         f"expected one of {list(SUBTYPES_BACKFILLABLE)} "
+                         f"(earnings_trend has no historical floor)"
+            }
+
+        dry_run = bool(arguments.get("dry_run", True))
+        try:
+            max_requests = max(1, int(arguments.get("max_requests") or 50))
+        except (TypeError, ValueError):
+            max_requests = 50
+        try:
+            window_days = max(1, int(arguments.get("window_days") or 7))
+        except (TypeError, ValueError):
+            window_days = 7
+        enrich_dividend_details = bool(
+            arguments.get("enrich_dividend_details", True)
+        )
+
+        def _parse_iso(v: Any) -> tuple[_date | None, str | None]:
+            if v is None or v == "":
+                return None, None
+            try:
+                return _date.fromisoformat(str(v)), None
+            except ValueError:
+                return None, str(v)
+
+        start, bad_start = _parse_iso(arguments.get("from"))
+        end, bad_end = _parse_iso(arguments.get("to"))
+        if bad_start is not None:
+            return {"error": f"invalid 'from' date: {bad_start!r} (expected YYYY-MM-DD)"}
+        if bad_end is not None:
+            return {"error": f"invalid 'to' date: {bad_end!r} (expected YYYY-MM-DD)"}
+
+        raw_phases = arguments.get("phases")
+        phases: list[str] | None = None
+        if isinstance(raw_phases, list) and raw_phases:
+            phases = [str(p).strip() for p in raw_phases if str(p).strip()]
+        elif isinstance(raw_phases, str) and raw_phases.strip():
+            phases = [p.strip() for p in raw_phases.split(",") if p.strip()]
+
+        raw_symbols = arguments.get("symbols")
+        symbols: list[str]
+        if isinstance(raw_symbols, list):
+            symbols = [str(s).strip() for s in raw_symbols if str(s).strip()]
+        elif isinstance(raw_symbols, str) and raw_symbols.strip():
+            symbols = [s.strip() for s in raw_symbols.split(",") if s.strip()]
+        else:
+            symbols = []
+
+        get_conn = getattr(self._store, "get_connection", None)
+        if not callable(get_conn):
+            return {"error": "store does not expose get_connection"}
+
+        with EODHDAPIClient() as client:
+            connection = get_conn()
+            try:
+                runner = CorpBackfillRunner(
+                    connection=connection,
+                    client=client,
+                    max_requests=max_requests,
+                    window_days=window_days,
+                )
+                summary = runner.run(
+                    subtype=subtype,
+                    start=start,
+                    end=end,
+                    phases=phases,
+                    symbols=symbols or None,
+                    dry_run=dry_run,
+                    enrich_dividend_details=enrich_dividend_details,
+                )
+                connection.commit()
+            except ValueError as exc:
+                connection.rollback()
+                return {"error": str(exc)}
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+        return {
+            "subtype":           summary.subtype,
+            "dry_run":           summary.dry_run,
+            "phases_planned":    summary.phases_planned,
+            "windows_planned":   summary.windows_planned,
+            "requests_spent":    summary.requests_spent,
+            "rows_parsed":       summary.rows_parsed,
+            "rows_raw_inserted": summary.rows_raw_inserted,
+            "events_upserted":   summary.events_upserted,
+            "parse_errors":      summary.parse_errors,
+            "windows_fetched":   summary.windows_fetched,
+            "dividend_detail_symbols": summary.dividend_detail_symbols,
+            "stopped_reason":    summary.stopped_reason,
+            "cursor_state":      summary.cursor_state,
+        }
+
     def _op_calendar_corp_fetch_dividend_details(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:

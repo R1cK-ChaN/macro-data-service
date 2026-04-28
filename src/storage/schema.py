@@ -1584,6 +1584,28 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         """
     )
 
+    # Corporate-lane equivalent of cal_backfill_cursor. The corp lane has
+    # five subtypes whose density and budget cost differ wildly (per-symbol
+    # dividend detail vs. one-shot global splits), so the cursor PK adds
+    # `subtype` — a budget breach on `dividend` mustn't reset progress on
+    # `split`. Phase split mirrors the econ lane.
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cal_corp_backfill_cursor (
+            provider         TEXT NOT NULL,
+            subtype          TEXT NOT NULL,
+            phase            TEXT NOT NULL,
+            cursor_date      TEXT NOT NULL,
+            window_end_date  TEXT NOT NULL,
+            rows_ingested    INTEGER NOT NULL DEFAULT 0,
+            requests_spent   INTEGER NOT NULL DEFAULT 0,
+            last_run_at      TEXT NOT NULL DEFAULT '',
+            is_complete      INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (provider, subtype, phase)
+        )
+        """
+    )
+
     # Seed provider dim. INSERT OR IGNORE = idempotent on repeated
     # init_schema calls. Official-tier providers (precedence=100)
     # rank above the TE aggregator (precedence=10); the current
