@@ -108,6 +108,7 @@ from .inegi_api import fetch_inegi_calendar
 from .banxico_api import fetch_banxico_calendar
 from .statssa_api import fetch_statssa_calendar
 from .sarb_api import fetch_sarb_calendar
+from .bi_api import fetch_bi_calendar
 from .zew_api import fetch_zew_calendar, schedule_zew_calendar
 from .ifo_api import fetch_ifo_calendar, schedule_ifo_calendar
 from .gfk_api import fetch_gfk_calendar, schedule_gfk_calendar
@@ -362,6 +363,17 @@ def _sarb(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return fetch_sarb_calendar(conn, dry_run=dry_run)
 
 
+def _bi(conn: sqlite3.Connection, dry_run: bool) -> Any:
+    # Bank Indonesia BI-Rate history HTML re-fetch picks up any new
+    # Board of Governors decision since the last sweep. Page 1 of the
+    # rate table lists every meeting (change OR hold) with the new
+    # rate inline, so the P1 slice ships value-bearing events on day
+    # one and ``(ID, BI_RATE)`` joins the parity whitelist immediately
+    # — RBA / BCB / Banxico-style coverage rather than the TCMB / SARB
+    # rate-change-only deferral.
+    return fetch_bi_calendar(conn, dry_run=dry_run)
+
+
 def _eurostat(conn: sqlite3.Connection, dry_run: bool) -> Any:
     return schedule_eurostat_calendar(conn, dry_run=dry_run)
 
@@ -508,6 +520,7 @@ _DEFAULT_CONNECTORS: tuple[tuple[ConnectorName, _ConnectorFn], ...] = (
     ("banxico", _banxico),
     ("statssa", _statssa),
     ("sarb", _sarb),
+    ("bank-indonesia", _bi),
     ("eurostat", _eurostat),
     ("destatis", _destatis),
     ("zew", _zew),
@@ -575,6 +588,7 @@ ALL_VALUE_SIDE_CONNECTORS: tuple[ConnectorName, ...] = (
     "banxico",
     "statssa",
     "sarb",
+    "bank-indonesia",
     "eurostat",
     "destatis",
     "zew",
@@ -1500,6 +1514,13 @@ def sweep_value_side(
         # deferred to P2).
         return fetch_sarb_calendar(conn, dry_run=dry_run)
 
+    def _bi_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
+        # Bank Indonesia BI-Rate history re-fetch picks up any new
+        # Board of Governors announcement since the last sweep. Each
+        # fetch returns the new BI-Rate inline next to the meeting
+        # date, so the same op fills schedule and value.
+        return fetch_bi_calendar(conn, dry_run=dry_run)
+
     def _fed_speeches_values(conn: sqlite3.Connection, dry_run: bool) -> Any:
         # Fed speeches archive re-fetch picks up newly-posted Board
         # speeches throughout the day. Schedule-only — no value to
@@ -1658,6 +1679,7 @@ def sweep_value_side(
         "banxico":    _banxico_values,
         "statssa":    _statssa_values,
         "sarb":       _sarb_values,
+        "bank-indonesia": _bi_values,
         "eurostat":   _eurostat_values,
         "destatis":   _destatis_values,
         "zew":        _zew_values,

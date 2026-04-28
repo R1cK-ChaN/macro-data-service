@@ -662,6 +662,22 @@ AGENCIES: tuple[AgencyDecl, ...] = (
         providers=("sarb",),
         indicators=frozenset(),
     ),
+    AgencyDecl(
+        agency_id="BANK_INDONESIA",
+        label="Bank Indonesia",
+        # The BI-Rate history page lists every BI Board of Governors
+        # meeting (change OR hold) with the new rate inline, so the
+        # P1 slice ships value-bearing rows for every announcement —
+        # RBA / BCB / Banxico-style coverage. The parity whitelist
+        # lights up in P1 without a separate value-side scrape
+        # (unlike the BoC / RBI / BOK / TCMB / SARB schedule-only or
+        # rate-change-only deferrals). BPS (the statistics-agency
+        # counterpart) is deferred to P2 because the public schedule
+        # is Cloudflare-protected and the official WebAPI requires
+        # registered API key provisioning.
+        providers=("bank-indonesia",),
+        indicators=frozenset({("ID", "BI_RATE")}),
+    ),
     # NBS deliberately stays out of the parity registry in this
     # slice. The schedule connector anchors NBS rows on the *release*
     # month (April 13 release → reference_date=2026-04-01) while

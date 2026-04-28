@@ -78,6 +78,8 @@ OFFICIAL_PROVIDERS: tuple[str, ...] = (
     "inegi", "banxico",
     # Issue #90 — South Africa coverage (Stats SA Publication Schedule + SARB MRDREPOR repo-rate history).
     "statssa", "sarb",
+    # Issue #92 — Indonesia coverage (Bank Indonesia BI-Rate history; BPS deferred to P2).
+    "bank-indonesia",
 )
 
 
@@ -275,7 +277,9 @@ def calendar_econ_parity(
         tuple[str, str, str | None, str], dict[str, list[sqlite3.Row]]
     ] = {}
     for row in rows:
-        canonical = canonicalize_indicator(row["title"])
+        canonical = canonicalize_indicator(
+            row["title"], country=row["country_code"],
+        )
         if not canonical:
             continue
         if indicator_filter is not None and canonical not in indicator_filter:

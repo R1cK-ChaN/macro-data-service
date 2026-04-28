@@ -205,6 +205,9 @@ _CALENDAR_COUNTRY_ALIASES: dict[str, str] = {
     "ZAF": "ZA",
     "SOUTH AFRICA": "ZA",
     "RSA": "ZA",
+    "ID": "ID",
+    "IDN": "ID",
+    "INDONESIA": "ID",
 }
 
 _CALENDAR_COUNTRY_DISPLAY: dict[str, str] = {
@@ -225,6 +228,7 @@ _CALENDAR_COUNTRY_DISPLAY: dict[str, str] = {
     "TR": "Turkey",
     "MX": "Mexico",
     "ZA": "South Africa",
+    "ID": "Indonesia",
 }
 
 
