@@ -1,0 +1,21 @@
+[Unit]
+Description=Daily corp calendar forward sweep (issue #63)
+
+[Timer]
+# Daily at 22:00 America/New_York — off-peak in EODHD's primary
+# timezone, after the US market close. Staggered well off the hourly
+# value-side sweep (:15 of every hour) and the 04:00 schedule refresh
+# so the shared calendar_recurring.lock never queues a run.
+OnCalendar=*-*-* 22:00:00 America/New_York
+AccuracySec=1m
+
+# If the laptop was suspended over the firing slot, run the missed
+# firing on resume. The rolling [today−7, today+90] window is
+# idempotent — an event already in cal_corp_event upserts on the same
+# provider_event_id, so the late catch-up cannot create duplicate state.
+Persistent=true
+
+Unit=calendar-corp-forward.service
+
+[Install]
+WantedBy=timers.target

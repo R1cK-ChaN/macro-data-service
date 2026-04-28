@@ -100,6 +100,13 @@ its TE `CalendarId`.
 - `cal_econ_event` stays provider-agnostic enough for API consumers.
 - New forward connectors should share parser and projector concepts with
   `te_api/`, while keeping source-specific transport code separate.
+- Corporate lane forward window (`cal_corp_*`) refreshes daily via the
+  `calendar-corp-forward.timer` systemd unit (issue #63), 22:00
+  America/New_York. Sweep covers `[today − 7, today + 90]` across
+  `earnings`, `ipo`, `split`, `dividend` (discovery) plus per-ticker
+  dividend enrichment, with per-subtype isolation and a 30-request
+  budget per subtype. Historical backfill (`calendar-corp-backfill.service`,
+  issue #62) remains a separate, operator-driven one-shot.
 
 ## Implementation Notes
 
