@@ -208,6 +208,136 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_market_corp_actions_raw_latest "
         "ON market_corp_actions_raw(provider, ticker, action_type, event_date, snapshot_epoch_ms DESC)"
     )
+    # ── EODHD fundamentals (issue #68 slice 1) ───────────────────────────
+    # One raw audit lane + four typed projections. Same content-hash +
+    # observed-at PIT discipline as cal_corp_*: raw is append-only on
+    # (provider, ticker, content_hash); projections only update when
+    # the incoming observed_at_epoch_ms is at least as recent as the
+    # stored value, so a late-arriving older snapshot cannot overwrite
+    # a newer view. Restated past quarters land as a new raw row;
+    # ``as_of`` PIT queries reconstruct historical projections by
+    # scanning raw at-or-before a target epoch.
+    #
+    # Per-section split:
+    #   _company    — General block; one row per ticker (sector / FY end).
+    #   _financials — Financials.{IS,BS,CF} × {Q,A}; PK by period_end.
+    #   _highlights — Highlights + Valuation + SharesStats merged; ~daily.
+    #   _estimates  — schema-only in slice 1; population deferred.
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fundamentals_raw (
+            provider           TEXT NOT NULL,
+            ticker             TEXT NOT NULL,
+            snapshot_epoch_ms  INTEGER NOT NULL,
+            content_hash       TEXT NOT NULL,
+            payload_json       TEXT NOT NULL,
+            fetched_at         TEXT NOT NULL,
+            PRIMARY KEY (provider, ticker, content_hash)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_fundamentals_raw_latest "
+        "ON fundamentals_raw(provider, ticker, snapshot_epoch_ms DESC)"
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fundamentals_company (
+            provider             TEXT NOT NULL,
+            ticker               TEXT NOT NULL,
+            name                 TEXT NOT NULL DEFAULT '',
+            asset_type           TEXT NOT NULL DEFAULT '',
+            sector               TEXT NOT NULL DEFAULT '',
+            industry             TEXT NOT NULL DEFAULT '',
+            fiscal_year_end      TEXT NOT NULL DEFAULT '',
+            listing_exchange     TEXT NOT NULL DEFAULT '',
+            currency_code        TEXT NOT NULL DEFAULT '',
+            country_iso          TEXT NOT NULL DEFAULT '',
+            isin                 TEXT NOT NULL DEFAULT '',
+            cusip                TEXT NOT NULL DEFAULT '',
+            payload_json         TEXT NOT NULL DEFAULT '{}',
+            content_hash         TEXT NOT NULL,
+            observed_at_epoch_ms INTEGER NOT NULL,
+            created_at           TEXT NOT NULL,
+            updated_at           TEXT NOT NULL,
+            PRIMARY KEY (provider, ticker)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fundamentals_financials (
+            provider             TEXT NOT NULL,
+            ticker               TEXT NOT NULL,
+            period_end           TEXT NOT NULL,
+            period_type          TEXT NOT NULL
+                CHECK (period_type IN ('Q','A')),
+            statement            TEXT NOT NULL
+                CHECK (statement IN ('IS','BS','CF')),
+            currency             TEXT NOT NULL DEFAULT '',
+            filing_date          TEXT NOT NULL DEFAULT '',
+            revenue              REAL,
+            net_income           REAL,
+            eps_basic            REAL,
+            total_assets         REAL,
+            total_equity         REAL,
+            total_liabilities    REAL,
+            cash_from_ops        REAL,
+            capex                REAL,
+            payload_json         TEXT NOT NULL DEFAULT '{}',
+            content_hash         TEXT NOT NULL,
+            observed_at_epoch_ms INTEGER NOT NULL,
+            created_at           TEXT NOT NULL,
+            updated_at           TEXT NOT NULL,
+            PRIMARY KEY (provider, ticker, period_end, period_type, statement)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_fundamentals_financials_ticker_period "
+        "ON fundamentals_financials(ticker, period_type, period_end DESC)"
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fundamentals_highlights (
+            provider             TEXT NOT NULL,
+            ticker               TEXT NOT NULL,
+            as_of_date           TEXT NOT NULL,
+            market_cap           REAL,
+            pe_ratio             REAL,
+            eps_ttm              REAL,
+            dividend_yield       REAL,
+            book_value           REAL,
+            shares_outstanding   REAL,
+            payload_json         TEXT NOT NULL DEFAULT '{}',
+            content_hash         TEXT NOT NULL,
+            observed_at_epoch_ms INTEGER NOT NULL,
+            created_at           TEXT NOT NULL,
+            updated_at           TEXT NOT NULL,
+            PRIMARY KEY (provider, ticker, as_of_date)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fundamentals_estimates (
+            provider             TEXT NOT NULL,
+            ticker               TEXT NOT NULL,
+            period_end           TEXT NOT NULL,
+            period_type          TEXT NOT NULL
+                CHECK (period_type IN ('Q','A')),
+            metric               TEXT NOT NULL,
+            value                REAL,
+            analyst_count        INTEGER,
+            payload_json         TEXT NOT NULL DEFAULT '{}',
+            content_hash         TEXT NOT NULL,
+            observed_at_epoch_ms INTEGER NOT NULL,
+            created_at           TEXT NOT NULL,
+            updated_at           TEXT NOT NULL,
+            PRIMARY KEY (provider, ticker, period_end, period_type, metric)
+        )
+        """
+    )
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS central_bank_comms (
