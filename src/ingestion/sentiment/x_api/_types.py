@@ -44,7 +44,10 @@ class XPost:
     Field names match ``x_posts`` columns 1:1 so the persistence layer
     can call ``asdict(post)`` without remapping. ``query_context`` is
     set by the caller (``'timeline'`` for the user-tweets endpoint;
-    keyword text for ``search/recent``).
+    keyword text for ``search/recent``). ``hashtags`` is hydrated
+    only when the caller passes ``include_entities=True`` to the
+    HTTP method — used by the P3 broad-discovery path to extract
+    co-occurring hashtags without a second fetch.
     """
 
     post_id: str
@@ -59,3 +62,4 @@ class XPost:
     quote_count: int
     query_context: str
     fetched_at: str  # ISO-8601 stamp set by the caller
+    hashtags: tuple[str, ...] = ()

@@ -16,17 +16,29 @@ from ingestion.sentiment.x_api.client import (
     XKeywordSearchIngestor,
     XTimelineIngestor,
 )
+from ingestion.sentiment.x_api.discovery import (
+    DEFAULT_DISCOVERY_QUERY,
+    HashtagDiscoveryResult,
+    SocialBreakoutInjection,
+    XHashtagDiscoveryRunner,
+    XSpikeDetector,
+)
 from ingestion.sentiment.x_api.scrapers import XV2Client
 
 __all__ = [
+    "DEFAULT_DISCOVERY_QUERY",
+    "HashtagDiscoveryResult",
     "KeywordPollResult",
+    "SocialBreakoutInjection",
     "TimelinePollResult",
     "XAPIError",
     "XAuthError",
+    "XHashtagDiscoveryRunner",
     "XKeywordSearchIngestor",
     "XNotFoundError",
     "XPost",
     "XRateLimitError",
+    "XSpikeDetector",
     "XTimelineIngestor",
     "XUser",
     "XV2Client",

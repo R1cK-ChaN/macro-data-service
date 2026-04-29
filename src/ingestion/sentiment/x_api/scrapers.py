@@ -82,6 +82,13 @@ def _parse_post(
         logger.debug("X post skipped (missing id/author_id/created_at): %s", item)
         return None
     metrics = item.get("public_metrics") or {}
+    entities = item.get("entities") or {}
+    hashtag_tags = entities.get("hashtags") or []
+    hashtags = tuple(
+        str(tag.get("tag") or "").lower()
+        for tag in hashtag_tags
+        if isinstance(tag, dict) and tag.get("tag")
+    )
     return XPost(
         post_id=str(post_id),
         author_id=str(author_id),
@@ -95,6 +102,7 @@ def _parse_post(
         quote_count=int(metrics.get("quote_count") or 0),
         query_context=query_context,
         fetched_at=fetched_at,
+        hashtags=hashtags,
     )
 
 
@@ -218,6 +226,7 @@ class XV2Client:
         since_id: str = "",
         max_results: int = 100,
         max_pages: int = 5,
+        include_entities: bool = False,
     ) -> tuple[list[XPost], str, bool]:
         """Run ``GET /2/tweets/search/recent`` for one keyword.
 
@@ -242,9 +251,16 @@ class XV2Client:
         if not keyword.strip():
             raise ValueError("keyword must be non-empty")
         url = f"{self.BASE_URL}/tweets/search/recent"
+        # Issue #76 P3 — broad discovery enables ``entities`` so the
+        # hashtag co-occurrence pipeline can extract tags without a
+        # second fetch.
+        tweet_fields = (
+            f"{_DEFAULT_TWEET_FIELDS},entities"
+            if include_entities else _DEFAULT_TWEET_FIELDS
+        )
         base_params: dict[str, str | int] = {
             "query": f"{keyword.strip()} {_DEFAULT_SEARCH_OPERATORS}",
-            "tweet.fields": _DEFAULT_TWEET_FIELDS,
+            "tweet.fields": tweet_fields,
             "expansions": _DEFAULT_SEARCH_EXPANSIONS,
             "user.fields": _DEFAULT_USER_FIELDS,
             "max_results": max(10, min(max_results, 100)),
