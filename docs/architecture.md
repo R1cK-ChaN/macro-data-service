@@ -305,6 +305,7 @@ src/
       market.py             market_prices/instruments/symbol_history/price_bars + portfolio_*
       messaging.py          client_profiles, conversations, delivery_queue, group_*
       news.py               news_articles, trend_topics, article_fingerprint, news_context scoring
+      sentiment.py          x_tracked_accounts, x_posts, x_keyword_pool — X (Twitter) lane (issue #76)
       trading.py            trade_signals, decision_log, position_state, performance, trading_artifacts
     STORAGE.md              Table-by-table narrative (kept in sync with schema.py)
     subjects.py             Subject vocabulary loader + tagger
@@ -315,7 +316,7 @@ src/
     release_schedule.py     Date-math resolvers + availability state machine
     validation/             Data quality + cross-source checks
     sdmx/                   Unified SDMX engine (base client, parsing, providers/)
-    timeseries/, news/, documents/, trends/, market/, calendar/  One dir per domain
+    timeseries/, news/, documents/, trends/, market/, calendar/, sentiment/  One dir per domain
     _shared/                http_transport, url_canon, selector versioning
   macro_data/
     service/                LocalMacroDataService — the one interface downstream reads
@@ -338,7 +339,7 @@ src/
 | Issue | Branch | Slice |
 |---|---|---|
 | #8 | `fix/issue-8-retire-legacy-calendar` | Final retirement slice: legacy HTML calendar source is inert, old read helpers point at `cal_econ_event`, and `/v1/calendar` is the downstream contract. |
-| #76 | `feat/issue-76-x-twitter-ingestion` | Sentiment lane bootstrap. P0 (schema): five `x_*` tables (`x_tracked_accounts`, `x_keyword_pool`, `x_posts`, `x_post_keywords`, `x_post_event_links`), `cal_econ_event.event_type` extension, `v_calendar_item` projects `event_type` as `subtype`, ~50-keyword and ~25-account seeds. P1–P4 (timeline/keyword/discovery/availability) pending. |
+| #76 | `feat/issue-76-x-twitter-ingestion` | Sentiment lane bootstrap. P0 (schema): five `x_*` tables (`x_tracked_accounts`, `x_keyword_pool`, `x_posts`, `x_post_keywords`, `x_post_event_links`), `cal_econ_event.event_type` extension, `v_calendar_item` projects `event_type` as `subtype`, ~50-keyword and ~25-account seeds. P1 (timeline polling): `XV2Client` (requests-based, paginated with `pagination_token`, truncated-pagination preserves the old cursor), `XTimelineIngestor` orchestrator, `_SentimentQueriesMixin` with priority-tiered scheduler query (15min/30min/1h tiers). P2–P4 (keyword/discovery/availability) pending. |
 
 Closed recently (context only — the code is the source of truth):
 

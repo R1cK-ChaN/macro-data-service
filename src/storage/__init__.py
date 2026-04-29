@@ -48,6 +48,7 @@ from .sqlite import (
     TradeSignalRecord,
     TrendTopicRecord,
     TradingArtifactRecord,
+    XPostRecord,
     default_engine_db_path,
 )
 
@@ -101,5 +102,6 @@ __all__ = [
     "TradeSignalRecord",
     "TrendTopicRecord",
     "TradingArtifactRecord",
+    "XPostRecord",
     "default_engine_db_path",
 ]
