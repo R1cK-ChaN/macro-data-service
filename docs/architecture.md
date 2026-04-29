@@ -338,6 +338,7 @@ src/
 | Issue | Branch | Slice |
 |---|---|---|
 | #8 | `fix/issue-8-retire-legacy-calendar` | Final retirement slice: legacy HTML calendar source is inert, old read helpers point at `cal_econ_event`, and `/v1/calendar` is the downstream contract. |
+| #76 | `feat/issue-76-x-twitter-ingestion` | Sentiment lane bootstrap. P0 (schema): five `x_*` tables (`x_tracked_accounts`, `x_keyword_pool`, `x_posts`, `x_post_keywords`, `x_post_event_links`), `cal_econ_event.event_type` extension, `v_calendar_item` projects `event_type` as `subtype`, ~50-keyword and ~25-account seeds. P1–P4 (timeline/keyword/discovery/availability) pending. |
 
 Closed recently (context only — the code is the source of truth):
 
