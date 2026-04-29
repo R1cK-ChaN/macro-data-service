@@ -1667,6 +1667,17 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_cal_econ_event_date_indicator "
         "ON cal_econ_event(indicator_id, date(event_time_utc))"
     )
+    # Issue #76 P0 — accept synthetic events injected by the X (Twitter)
+    # social_breakout detector (`source='x_derived'`). The new column is
+    # blank for the existing official-feed rows and only populated by the
+    # sentiment lane.
+    _ensure_table_columns(
+        connection,
+        table_name="cal_econ_event",
+        columns={
+            "event_type": "TEXT NOT NULL DEFAULT ''",
+        },
+    )
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS cal_econ_drops (
@@ -1744,7 +1755,7 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         SELECT
             provider || ':' || provider_event_id AS event_id,
             'economic'                           AS domain,
-            'release'                            AS subtype,
+            COALESCE(NULLIF(event_type, ''), 'release') AS subtype,
             provider                             AS provider,
             provider_event_id                    AS provider_event_id,
             event_time_utc                       AS event_time_utc,
@@ -1987,3 +1998,264 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_item_subjects_subject "
         "ON item_subjects(subject_id)"
     )
+
+    # ── X (Twitter) sentiment lane (issue #76) ─────────────────
+    # Independent storage for unstructured opinion / commentary —
+    # the document + news_articles models don't fit (no URL content,
+    # engagement metrics have no slot). x_post_event_links bridges
+    # to cal_econ_event via the composite (provider, provider_event_id)
+    # convention used by calendar_event_vintages — no strict FK so
+    # social_breakout rows synthesised by the detector and legacy
+    # calendar_events ids both resolve.
+    # ``handle`` is the PK because it is the only stable identifier
+    # known at seed time — X's numeric ``user_id`` requires an API
+    # resolution step that the P1 ingestion client performs on first
+    # bootstrap. Issue #76 P0 seeds rows with empty ``user_id``; the
+    # P1 client UPDATEs it to the resolved numeric value, then uses
+    # ``user_id`` for ``GET /2/users/:id/tweets`` polling.
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS x_tracked_accounts (
+            handle           TEXT PRIMARY KEY,
+            user_id          TEXT NOT NULL DEFAULT '',
+            category         TEXT NOT NULL DEFAULT ''
+                CHECK (category IN ('','central_bank','economist','buyside','sellside')),
+            priority         INTEGER NOT NULL DEFAULT 50,
+            since_id         TEXT NOT NULL DEFAULT '',
+            last_fetched_at  TEXT NOT NULL DEFAULT '',
+            is_active        INTEGER NOT NULL DEFAULT 1,
+            created_at       TEXT NOT NULL,
+            updated_at       TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_x_tracked_accounts_user_id "
+        "ON x_tracked_accounts(user_id)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_x_tracked_accounts_priority "
+        "ON x_tracked_accounts(is_active, priority DESC, last_fetched_at)"
+    )
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS x_keyword_pool (
+            keyword          TEXT PRIMARY KEY,
+            category         TEXT NOT NULL DEFAULT ''
+                CHECK (category IN ('','macro','ticker','geopolitical','tech','derived')),
+            priority         INTEGER NOT NULL DEFAULT 50,
+            since_id         TEXT NOT NULL DEFAULT '',
+            last_fetched_at  TEXT NOT NULL DEFAULT '',
+            is_active        INTEGER NOT NULL DEFAULT 1,
+            created_at       TEXT NOT NULL,
+            updated_at       TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_x_keyword_pool_priority "
+        "ON x_keyword_pool(is_active, priority DESC, last_fetched_at)"
+    )
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS x_posts (
+            post_id          TEXT PRIMARY KEY,
+            author_id        TEXT NOT NULL,
+            author_handle    TEXT NOT NULL DEFAULT '',
+            text             TEXT NOT NULL DEFAULT '',
+            created_at       TEXT NOT NULL,
+            lang             TEXT NOT NULL DEFAULT '',
+            retweet_count    INTEGER NOT NULL DEFAULT 0,
+            like_count       INTEGER NOT NULL DEFAULT 0,
+            reply_count      INTEGER NOT NULL DEFAULT 0,
+            quote_count      INTEGER NOT NULL DEFAULT 0,
+            query_context    TEXT NOT NULL DEFAULT '',
+            fetched_at       TEXT NOT NULL,
+            is_available     INTEGER NOT NULL DEFAULT 1,
+            availability_checked_at TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_x_posts_author_time "
+        "ON x_posts(author_id, created_at DESC)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_x_posts_created_at "
+        "ON x_posts(created_at DESC)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_x_posts_query_context_time "
+        "ON x_posts(query_context, created_at DESC)"
+    )
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS x_post_keywords (
+            post_id          TEXT NOT NULL,
+            keyword          TEXT NOT NULL,
+            first_seen_at    TEXT NOT NULL,
+            PRIMARY KEY (post_id, keyword),
+            FOREIGN KEY (post_id) REFERENCES x_posts(post_id)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_x_post_keywords_keyword "
+        "ON x_post_keywords(keyword, first_seen_at DESC)"
+    )
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS x_post_event_links (
+            post_id               TEXT NOT NULL,
+            cal_provider          TEXT NOT NULL,
+            cal_provider_event_id TEXT NOT NULL,
+            link_type             TEXT NOT NULL
+                CHECK (link_type IN (
+                    'pre_release','post_release','keyword_match','social_breakout'
+                )),
+            created_at            TEXT NOT NULL,
+            PRIMARY KEY (post_id, cal_provider, cal_provider_event_id),
+            FOREIGN KEY (post_id) REFERENCES x_posts(post_id)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_x_post_event_links_event "
+        "ON x_post_event_links(cal_provider, cal_provider_event_id, link_type)"
+    )
+
+    # Seed initial keyword pool — ~50 macro / ticker / geopolitical / tech
+    # terms. INSERT OR IGNORE so re-running init_schema is a no-op once
+    # operators have tuned priority / since_id in place.
+    connection.executemany(
+        """
+        INSERT OR IGNORE INTO x_keyword_pool (
+            keyword, category, priority, since_id, last_fetched_at,
+            is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, '', '', 1, ?, ?)
+        """,
+        [
+            (kw, cat, prio, _now_iso, _now_iso)
+            for (kw, cat, prio) in _X_KEYWORD_POOL_SEEDS
+        ],
+    )
+
+    # Seed tracked accounts. user_id is left empty — the P1 ingestion
+    # client resolves handles via the X API on first bootstrap and
+    # UPDATEs ``user_id``. INSERT OR IGNORE keeps re-runs idempotent
+    # and preserves any operator-tuned priority / is_active on existing
+    # rows.
+    connection.executemany(
+        """
+        INSERT OR IGNORE INTO x_tracked_accounts (
+            handle, user_id, category, priority, since_id,
+            last_fetched_at, is_active, created_at, updated_at
+        ) VALUES (?, '', ?, ?, '', '', 1, ?, ?)
+        """,
+        [
+            (handle, category, priority, _now_iso, _now_iso)
+            for (handle, category, priority) in X_TRACKED_ACCOUNT_SEEDS
+        ],
+    )
+
+
+# ── X (Twitter) sentiment lane: seed lists ─────────────────────
+# Issue #76 P0. Keywords seeded directly into x_keyword_pool.
+# Tracked-account handles seeded as a Python constant for the P1
+# ingestion client to resolve to numeric user_ids on bootstrap —
+# x_tracked_accounts.user_id is the table PK and the API's stable
+# identifier, so we don't fabricate IDs at schema time.
+_X_KEYWORD_POOL_SEEDS: tuple[tuple[str, str, int], ...] = (
+    # macro — central-bank policy + headline data prints
+    ("fed", "macro", 90),
+    ("fomc", "macro", 90),
+    ("rate hike", "macro", 80),
+    ("rate cut", "macro", 80),
+    ("powell", "macro", 80),
+    ("ecb", "macro", 80),
+    ("lagarde", "macro", 70),
+    ("boe", "macro", 70),
+    ("boj", "macro", 70),
+    ("inflation", "macro", 80),
+    ("cpi", "macro", 85),
+    ("ppi", "macro", 70),
+    ("pce", "macro", 75),
+    ("nonfarm payrolls", "macro", 80),
+    ("nfp", "macro", 80),
+    ("unemployment", "macro", 70),
+    ("jobless claims", "macro", 70),
+    ("retail sales", "macro", 65),
+    ("ism", "macro", 70),
+    ("pmi", "macro", 70),
+    ("gdp", "macro", 75),
+    ("recession", "macro", 75),
+    ("yield curve", "macro", 70),
+    ("treasury", "macro", 65),
+    ("dollar", "macro", 60),
+    # ticker — high-impact equity / commodity tickers
+    ("$spx", "ticker", 70),
+    ("$spy", "ticker", 70),
+    ("$qqq", "ticker", 65),
+    ("$tlt", "ticker", 60),
+    ("$dxy", "ticker", 65),
+    ("$vix", "ticker", 70),
+    ("$gld", "ticker", 60),
+    ("$uso", "ticker", 55),
+    ("$btc", "ticker", 60),
+    ("$eth", "ticker", 55),
+    # geopolitical — risk-on/risk-off catalysts
+    ("ukraine", "geopolitical", 70),
+    ("russia sanctions", "geopolitical", 70),
+    ("china tariffs", "geopolitical", 75),
+    ("taiwan", "geopolitical", 65),
+    ("middle east", "geopolitical", 65),
+    ("opec", "geopolitical", 70),
+    ("oil supply", "geopolitical", 60),
+    # tech — sector-leader earnings + AI capex narratives
+    ("nvidia earnings", "tech", 70),
+    ("apple earnings", "tech", 65),
+    ("microsoft earnings", "tech", 65),
+    ("google earnings", "tech", 60),
+    ("ai capex", "tech", 65),
+    ("semiconductor", "tech", 60),
+    ("data center", "tech", 55),
+    ("chip ban", "tech", 65),
+)
+
+# Tracked accounts the P1 client should resolve+upsert on bootstrap.
+# (handle, category, priority). user_id is left to the resolver —
+# we don't hardcode unverified IDs.
+X_TRACKED_ACCOUNT_SEEDS: tuple[tuple[str, str, int], ...] = (
+    # central banks — official handles
+    ("federalreserve",     "central_bank", 100),
+    ("ecb",                "central_bank", 100),
+    ("bankofengland",      "central_bank",  95),
+    ("bankofjapan",        "central_bank",  90),
+    ("bank_of_canada",     "central_bank",  85),
+    ("rba_chiefecon",      "central_bank",  80),
+    # economists / official researchers
+    ("stlouisfed",         "economist",     80),
+    ("nyfedresearch",      "economist",     80),
+    ("sffedresearch",      "economist",     75),
+    ("paulkrugman",        "economist",     70),
+    ("nouriel",            "economist",     70),
+    ("lhsummers",          "economist",     75),
+    ("biancoresearch",     "economist",     75),
+    ("mohamedaelerian",    "economist",     80),
+    ("davidbeckworth",     "economist",     65),
+    ("jasonfurman",        "economist",     70),
+    ("robin_brooks",       "economist",     70),
+    ("samuelgregg",        "economist",     60),
+    # buyside / sellside commentary
+    ("dougkass",           "buyside",       65),
+    ("morganstanley",      "sellside",      75),
+    ("goldmansachs",       "sellside",      80),
+    ("jpmorgan",           "sellside",      75),
+    ("bofa_business",      "sellside",      65),
+    ("citi",               "sellside",      65),
+    ("wsbcommentary",      "buyside",       55),
+)

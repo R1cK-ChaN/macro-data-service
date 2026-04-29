@@ -1,0 +1,546 @@
+"""Sentiment-domain query helpers for SQLiteEngineStore.
+
+Covers ``x_tracked_accounts`` + ``x_posts``. Issue #76 P1 ships the
+timeline-polling write-path:
+
+* ``upsert_x_post`` — INSERT-or-update on engagement counters; the
+  textual columns are immutable from first write so a re-fetch through
+  the same ``query_context`` doesn't overwrite a richer earlier copy.
+* ``update_x_tracked_account_user_id`` — bootstrap fill after the
+  handle resolver runs.
+* ``update_x_tracked_account_since_id`` — persist ``newest_id`` after
+  every successful timeline call.
+* ``list_x_tracked_accounts_due_for_polling`` — priority-tiered
+  scheduler query (``priority>=80`` every 15min, ``>=50`` every 30min,
+  rest hourly).
+
+Methods rely on the ``self._connection`` context manager defined on
+``SQLiteEngineStore`` — composition wires them together via multiple
+inheritance, matching the layout shipped in issue #71 Tier 2.1B.
+"""
+
+from __future__ import annotations
+
+from datetime import timedelta
+
+from contracts import utc_now
+from storage.models.sentiment import XPostRecord
+
+
+class _SentimentQueriesMixin:
+    # Tier-to-cooldown mapping used by both the scheduler query and the
+    # write-path's ``last_fetched_at`` stamp. Constants live on the
+    # mixin so a future fast/slow-tier shift is one edit, not five.
+    _PRIORITY_TIER_COOLDOWN_SECONDS: tuple[tuple[int, int], ...] = (
+        (80, 15 * 60),  # priority >= 80 → every 15 min
+        (50, 30 * 60),  # priority >= 50 → every 30 min
+        (0,  60 * 60),  # rest → hourly
+    )
+
+    def upsert_x_post(self, post: XPostRecord) -> None:
+        """Insert a new ``x_posts`` row, or update only the engagement
+        counters + ``fetched_at`` on an existing row.
+
+        Engagement metrics drift over the first hours after a post —
+        re-polling refreshes them. Text / author / created_at are
+        treated as immutable; preserving them on conflict means a
+        keyword-search-then-timeline re-fetch (different
+        ``query_context``) doesn't blow away the original context.
+
+        ON CONFLICT also restores ``is_available = 1`` and stamps
+        ``availability_checked_at`` to the fresh ``fetched_at`` (Codex
+        P4 round 2). Without this a post that was briefly marked
+        unavailable by the patrol but resurfaces in a later
+        timeline/search fetch stays filtered out of spike SQL —
+        the new fetch IS a confirmation that the post is publicly
+        visible again, so the patrol's earlier judgement is
+        superseded."""
+        now = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO x_posts (
+                    post_id, author_id, author_handle, text, created_at,
+                    lang, retweet_count, like_count, reply_count,
+                    quote_count, query_context, fetched_at, is_available,
+                    availability_checked_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, '')
+                ON CONFLICT(post_id) DO UPDATE SET
+                    retweet_count           = excluded.retweet_count,
+                    like_count              = excluded.like_count,
+                    reply_count             = excluded.reply_count,
+                    quote_count             = excluded.quote_count,
+                    fetched_at              = excluded.fetched_at,
+                    is_available            = 1,
+                    availability_checked_at = excluded.fetched_at
+                """,
+                (
+                    post.post_id,
+                    post.author_id,
+                    post.author_handle,
+                    post.text,
+                    post.created_at,
+                    post.lang,
+                    int(post.retweet_count),
+                    int(post.like_count),
+                    int(post.reply_count),
+                    int(post.quote_count),
+                    post.query_context,
+                    post.fetched_at or now,
+                ),
+            )
+
+    def update_x_tracked_account_user_id(
+        self, *, handle: str, user_id: str,
+    ) -> None:
+        """Set ``user_id`` after the bootstrap resolver succeeds.
+
+        ``handle`` is the PK so this update is unambiguous; the row's
+        ``updated_at`` advances so operators can audit when bootstrap
+        ran."""
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "UPDATE x_tracked_accounts "
+                "SET user_id = ?, updated_at = ? "
+                "WHERE handle = ?",
+                (user_id, utc_now().isoformat(), handle),
+            )
+
+    def update_x_tracked_account_since_id(
+        self, *, handle: str, since_id: str, fetched_at: str | None = None,
+    ) -> None:
+        """Persist the timeline cursor after a successful poll.
+
+        ``fetched_at`` defaults to ``utc_now()`` — callers may pass
+        a stamp captured before the HTTP call to align with the
+        ``x_posts.fetched_at`` rows from the same batch."""
+        stamp = fetched_at or utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "UPDATE x_tracked_accounts "
+                "SET since_id = ?, last_fetched_at = ?, updated_at = ? "
+                "WHERE handle = ?",
+                (since_id, stamp, stamp, handle),
+            )
+
+    def list_x_tracked_accounts_due_for_polling(
+        self, *, now_iso: str | None = None, limit: int | None = None,
+    ) -> list[dict[str, object]]:
+        """Return active accounts whose ``last_fetched_at`` is older
+        than the cooldown for their priority tier.
+
+        Accounts without a resolved ``user_id`` (the fresh-seed state)
+        are returned as well — the orchestrator runs the handle
+        resolver on those before the timeline call."""
+        now = now_iso or utc_now().isoformat()
+        # Build a CASE expression mapping priority → cooldown_seconds
+        # with a SQL datetime() comparison against last_fetched_at.
+        case_branches = " ".join(
+            f"WHEN priority >= {threshold} THEN {seconds}"
+            for (threshold, seconds) in self._PRIORITY_TIER_COOLDOWN_SECONDS
+            if threshold > 0
+        )
+        # Trailing ELSE matches the priority=0 row (rest tier — hourly).
+        rest_seconds = self._PRIORITY_TIER_COOLDOWN_SECONDS[-1][1]
+        case_sql = f"CASE {case_branches} ELSE {rest_seconds} END"
+        sql = f"""
+            SELECT handle, user_id, category, priority, since_id,
+                   last_fetched_at
+            FROM x_tracked_accounts
+            WHERE is_active = 1
+              AND (
+                last_fetched_at = ''
+                OR (CAST((julianday(?) - julianday(last_fetched_at)) * 86400 AS INTEGER))
+                   >= ({case_sql})
+              )
+            ORDER BY priority DESC, last_fetched_at ASC
+        """
+        if limit is not None:
+            sql += f" LIMIT {int(limit)}"
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(sql, (now,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_x_tracked_account_by_handle(
+        self, handle: str,
+    ) -> dict[str, object] | None:
+        with self._connection(commit=False) as connection:
+            row = connection.execute(
+                "SELECT * FROM x_tracked_accounts WHERE handle = ?",
+                (handle,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    # ── Keyword-search write path (issue #76 P2) ─────────────────
+
+    def update_x_keyword_since_id(
+        self, *, keyword: str, since_id: str, fetched_at: str | None = None,
+    ) -> None:
+        """Persist the search-cursor + last-fetched stamp.
+
+        Same shape as the tracked-account variant — operators see one
+        cooldown semantic across both polling lanes."""
+        stamp = fetched_at or utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "UPDATE x_keyword_pool "
+                "SET since_id = ?, last_fetched_at = ?, updated_at = ? "
+                "WHERE keyword = ?",
+                (since_id, stamp, stamp, keyword),
+            )
+
+    def list_x_keywords_due_for_polling(
+        self, *, now_iso: str | None = None, limit: int | None = None,
+    ) -> list[dict[str, object]]:
+        """Active keywords whose tier cooldown has elapsed.
+
+        Tier mapping is the same one the tracked-account scheduler
+        uses — issue #76 keeps the ``priority`` field semantics
+        consistent across both polling paths."""
+        now = now_iso or utc_now().isoformat()
+        case_branches = " ".join(
+            f"WHEN priority >= {threshold} THEN {seconds}"
+            for (threshold, seconds) in self._PRIORITY_TIER_COOLDOWN_SECONDS
+            if threshold > 0
+        )
+        rest_seconds = self._PRIORITY_TIER_COOLDOWN_SECONDS[-1][1]
+        case_sql = f"CASE {case_branches} ELSE {rest_seconds} END"
+        sql = f"""
+            SELECT keyword, category, priority, since_id, last_fetched_at
+            FROM x_keyword_pool
+            WHERE is_active = 1
+              AND (
+                last_fetched_at = ''
+                OR (CAST((julianday(?) - julianday(last_fetched_at)) * 86400 AS INTEGER))
+                   >= ({case_sql})
+              )
+            ORDER BY priority DESC, last_fetched_at ASC
+        """
+        if limit is not None:
+            sql += f" LIMIT {int(limit)}"
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(sql, (now,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def link_x_post_to_keyword(
+        self, *, post_id: str, keyword: str, first_seen_at: str | None = None,
+    ) -> None:
+        """Append-only fan-out into ``x_post_keywords``.
+
+        First write per (post_id, keyword) wins on the
+        ``first_seen_at`` stamp; subsequent calls for the same pair
+        are no-ops via INSERT OR IGNORE — the keyword that surfaced
+        the post first stays as the discovery context, even if the
+        same post turns up under a related keyword later."""
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO x_post_keywords ("
+                "  post_id, keyword, first_seen_at"
+                ") VALUES (?, ?, ?)",
+                (post_id, keyword, first_seen_at or utc_now().isoformat()),
+            )
+
+    # ── Hot-topic discovery + event injection (issue #76 P3) ─────
+
+    def upsert_x_keyword(
+        self, *, keyword: str, category: str = "derived", priority: int = 50,
+    ) -> bool:
+        """Add a derived keyword to ``x_keyword_pool``.
+
+        Returns True if a new row was inserted, False if the keyword
+        was already present (typical for keywords seeded at P0). The
+        ``category='derived'`` default matches the issue body's
+        auto-discovery convention."""
+        now = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            cur = connection.execute(
+                """
+                INSERT OR IGNORE INTO x_keyword_pool (
+                    keyword, category, priority, since_id,
+                    last_fetched_at, is_active, created_at, updated_at
+                ) VALUES (?, ?, ?, '', '', 1, ?, ?)
+                """,
+                (keyword.lower().strip(), category, int(priority), now, now),
+            )
+            return cur.rowcount > 0
+
+    def detect_x_volume_spikes(
+        self,
+        *,
+        now_iso: str | None = None,
+        window_hours: int = 1,
+        baseline_hours: int = 24,
+        threshold: float = 3.0,
+        min_baseline_count: int = 12,
+    ) -> list[dict[str, object]]:
+        """Per-keyword volume spike candidates.
+
+        Compares the rolling ``window_hours`` count against the
+        per-hour average over ``baseline_hours``. A keyword spikes
+        when the recent window count exceeds ``threshold`` × the
+        baseline rate.
+
+        ``min_baseline_count`` floors the baseline to avoid noise:
+        a keyword with 1 post in the last 24h and 1 post in the last
+        hour technically passes ``1 >= threshold * (1/24)`` but isn't
+        meaningful. The default 12 (1 post / 2h on average) keeps
+        the detector responsive without firing on long-tail terms."""
+        now = now_iso or utc_now().isoformat()
+        # Spike condition compares per-hour rates:
+        #   (count_window / window_hours) > threshold * (count_baseline / baseline_hours)
+        # Re-arranged for integer SQL (avoid float division):
+        #   count_window * baseline_hours > threshold * count_baseline * window_hours
+        # Without the right-hand ``window_hours`` factor (Codex P3 round 1)
+        # a multi-hour window matched against a per-hour baseline rate
+        # mis-fires on steady traffic.
+        # Both counts also bound above by ``now_iso`` (Codex P3 round
+        # 2) — without this, replay / backfill rows with
+        # ``created_at > now_iso`` inflate the spike counts even
+        # though the evidence-link query already filters them out,
+        # causing false social_breakout events.
+        sql = """
+            WITH per_keyword AS (
+                SELECT
+                    pk.keyword,
+                    SUM(CASE WHEN datetime(xp.created_at) >= datetime(?, ?)
+                             THEN 1 ELSE 0 END) AS count_window,
+                    COUNT(*)                     AS count_baseline
+                FROM x_post_keywords pk
+                JOIN x_posts xp ON pk.post_id = xp.post_id
+                WHERE datetime(xp.created_at) >= datetime(?, ?)
+                  AND datetime(xp.created_at) <= datetime(?)
+                  AND xp.is_available = 1
+                GROUP BY pk.keyword
+            )
+            SELECT keyword, count_window, count_baseline
+            FROM per_keyword
+            WHERE count_baseline >= ?
+              AND count_window * ? > ? * count_baseline * ?
+            ORDER BY count_window DESC
+        """
+        params = (
+            now, f"-{int(window_hours)} hours",
+            now, f"-{int(baseline_hours)} hours",
+            now,                  # CTE upper bound — inclusive
+            int(min_baseline_count),
+            int(baseline_hours),  # left side: count_window * baseline_hours
+            float(threshold),     # right side: threshold * count_baseline * window_hours
+            int(window_hours),
+        )
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_x_post_ids_for_keyword_window(
+        self, *, keyword: str, window_start_iso: str, window_end_iso: str,
+    ) -> list[str]:
+        """Posts that would back a social_breakout event for one
+        (keyword, window) pair — used to backfill the
+        ``x_post_event_links`` table after the calendar event is
+        injected.
+
+        Mirrors the ``is_available = 1`` filter the spike detector
+        uses (Codex P3 round 1) so the evidence linked to an
+        injected event matches the post population that caused the
+        spike — soft-deleted posts don't get linked as evidence."""
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(
+                """
+                SELECT pk.post_id
+                FROM x_post_keywords pk
+                JOIN x_posts xp ON pk.post_id = xp.post_id
+                WHERE pk.keyword = ?
+                  AND datetime(xp.created_at) >= datetime(?)
+                  AND datetime(xp.created_at) <= datetime(?)
+                  AND xp.is_available = 1
+                ORDER BY xp.created_at DESC
+                """,
+                (keyword, window_start_iso, window_end_iso),
+            ).fetchall()
+        return [str(r["post_id"]) for r in rows]
+
+    def link_x_post_to_event(
+        self,
+        *,
+        post_id: str,
+        cal_provider: str,
+        cal_provider_event_id: str,
+        link_type: str,
+        created_at: str | None = None,
+    ) -> None:
+        """Bridge a post to a cal_econ_event row.
+
+        ``link_type`` is one of ``'pre_release'`` / ``'post_release'``
+        / ``'keyword_match'`` / ``'social_breakout'`` (CHECK on the
+        column). INSERT OR IGNORE — the (post_id, cal_provider,
+        cal_provider_event_id) PK keeps re-runs idempotent."""
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO x_post_event_links (
+                    post_id, cal_provider, cal_provider_event_id,
+                    link_type, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    post_id,
+                    cal_provider,
+                    cal_provider_event_id,
+                    link_type,
+                    created_at or utc_now().isoformat(),
+                ),
+            )
+
+    # ── Soft-deletion availability patrol (issue #76 P4) ────────
+
+    def list_x_posts_for_availability_check(
+        self,
+        *,
+        now_iso: str | None = None,
+        min_engagement: int = 50,
+        fetched_within_hours: int = 72,
+        limit: int | None = None,
+    ) -> list[str]:
+        """Post IDs the patrol should re-verify with the X API.
+
+        Filters to posts whose ``like_count + retweet_count`` exceeds
+        ``min_engagement`` and were fetched within
+        ``fetched_within_hours`` (default 72h) — the issue body's
+        coverage spec. Already-unavailable rows are excluded so the
+        patrol doesn't burn budget rechecking known-deleted posts.
+        """
+        now = now_iso or utc_now().isoformat()
+        sql = """
+            SELECT post_id
+            FROM x_posts
+            WHERE is_available = 1
+              AND (like_count + retweet_count) > ?
+              AND datetime(fetched_at) >= datetime(?, ?)
+            ORDER BY availability_checked_at ASC, fetched_at DESC
+        """
+        params: list[object] = [
+            int(min_engagement), now, f"-{int(fetched_within_hours)} hours",
+        ]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [str(r["post_id"]) for r in rows]
+
+    def mark_x_post_unavailable(
+        self, *, post_id: str, checked_at: str | None = None,
+    ) -> None:
+        stamp = checked_at or utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "UPDATE x_posts "
+                "SET is_available = 0, availability_checked_at = ? "
+                "WHERE post_id = ?",
+                (stamp, post_id),
+            )
+
+    def stamp_x_post_availability_checked(
+        self, *, post_id: str, checked_at: str | None = None,
+    ) -> None:
+        """Confirms a post is still alive — advances
+        ``availability_checked_at`` so the patrol's
+        ORDER BY availability_checked_at ASC rotates the row to the
+        back of the queue, without flipping ``is_available``."""
+        stamp = checked_at or utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "UPDATE x_posts SET availability_checked_at = ? "
+                "WHERE post_id = ?",
+                (stamp, post_id),
+            )
+
+    def inject_social_breakout_event(
+        self,
+        *,
+        keyword: str,
+        event_time_utc: str,
+        title: str,
+        triggering_post_ids: list[str],
+        observed_at_epoch_ms: int,
+    ) -> str:
+        """Insert (or update on conflict) a synthetic ``cal_econ_event``
+        with ``source='x_derived'`` and ``event_type='social_breakout'``,
+        and backfill ``x_post_event_links`` for every triggering post.
+
+        ``provider_event_id`` is composed from the keyword + the
+        event-time date so re-running the detector for the same
+        spike window is idempotent (the (provider, provider_event_id)
+        PK + INSERT OR IGNORE collapses retries onto the same row).
+        Returns the synthesized ``provider_event_id`` so the caller
+        can correlate it with downstream calendar reads."""
+        provider = "x_derived"
+        # Include time-of-day in the id (Codex P3 round 2) so a
+        # keyword that spikes more than once on the same date routes
+        # to separate cal_econ_event rows. ``YYYY-MM-DDTHH:MM`` keeps
+        # the id readable and stable for ON CONFLICT idempotency
+        # within a one-minute detector cycle while letting subsequent
+        # spikes land cleanly.
+        time_slug = (
+            event_time_utc[:16]
+            .replace(":", "-")
+            .replace("T", "-")
+        )
+        slug = "".join(
+            ch if ch.isalnum() else "-"
+            for ch in keyword.lower().strip()
+        ).strip("-")
+        provider_event_id = f"breakout-{slug}-{time_slug}"
+        # Content hash captures the spike-defining inputs so a re-run
+        # with identical kw + window + posts dedupes via PK; if the
+        # spike re-fires under different post coverage the row updates
+        # rather than inserting a duplicate (different content_hash).
+        import hashlib
+        digest_input = (
+            keyword + "|" + event_time_utc + "|"
+            + ",".join(sorted(triggering_post_ids))
+        ).encode("utf-8")
+        content_hash = hashlib.sha256(digest_input).hexdigest()
+        now_iso = utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO cal_econ_event (
+                    provider, provider_event_id, event_time_utc,
+                    event_time_precision, reference_date,
+                    reference_label, country_code, indicator_id,
+                    category, title, importance, currency, unit,
+                    actual, previous, revised, forecast,
+                    consensus_forecast, ticker, source, source_url,
+                    content_hash, last_update_epoch_ms,
+                    observed_at_epoch_ms, created_at, updated_at,
+                    event_type
+                ) VALUES (
+                    ?, ?, ?, 'datetime', NULL, '', '', NULL,
+                    'sentiment', ?, NULL, '', '', NULL, NULL,
+                    NULL, NULL, NULL, '', 'x_derived', '',
+                    ?, NULL, ?, ?, ?, 'social_breakout'
+                )
+                ON CONFLICT(provider, provider_event_id) DO UPDATE SET
+                    title                = excluded.title,
+                    content_hash         = excluded.content_hash,
+                    observed_at_epoch_ms = excluded.observed_at_epoch_ms,
+                    updated_at           = excluded.updated_at
+                """,
+                (
+                    provider, provider_event_id, event_time_utc,
+                    title, content_hash, int(observed_at_epoch_ms),
+                    now_iso, now_iso,
+                ),
+            )
+            for post_id in triggering_post_ids:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO x_post_event_links (
+                        post_id, cal_provider, cal_provider_event_id,
+                        link_type, created_at
+                    ) VALUES (?, ?, ?, 'social_breakout', ?)
+                    """,
+                    (post_id, provider, provider_event_id, now_iso),
+                )
+        return provider_event_id

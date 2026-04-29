@@ -460,6 +460,11 @@ capability/catalog state describes what a source *can* expose, while
 | `group_profiles` / `group_members` / `group_messages` | Group chat |
 | `portfolio_holdings` / `portfolio_vol_snapshots` / `portfolio_alerts` | Portfolio management |
 | `subagent_runs` | Sub-agent task tracking |
+| `x_tracked_accounts` | Issue #76 P0 — handles polled by the X (Twitter) timeline lane; PK is handle, user_id resolved by P1 client |
+| `x_keyword_pool` | Issue #76 P0 — keyword list driving `search/recent` polling; seeded with ~50 macro/ticker/geopolitical/tech terms |
+| `x_posts` | Issue #76 P0 — captured X posts with engagement counters and per-row availability flag for soft-deletion patrol |
+| `x_post_keywords` | Issue #76 P0 — append-only post↔keyword fan-out for keyword-search dedup |
+| `x_post_event_links` | Issue #76 P0 — composite link from `x_posts` to `cal_econ_event` (cal_provider, cal_provider_event_id) with link_type discriminator |
 
 ---
 

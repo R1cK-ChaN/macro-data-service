@@ -305,6 +305,7 @@ src/
       market.py             market_prices/instruments/symbol_history/price_bars + portfolio_*
       messaging.py          client_profiles, conversations, delivery_queue, group_*
       news.py               news_articles, trend_topics, article_fingerprint, news_context scoring
+      sentiment.py          x_tracked_accounts, x_posts, x_keyword_pool — X (Twitter) lane (issue #76)
       trading.py            trade_signals, decision_log, position_state, performance, trading_artifacts
     STORAGE.md              Table-by-table narrative (kept in sync with schema.py)
     subjects.py             Subject vocabulary loader + tagger
@@ -315,7 +316,7 @@ src/
     release_schedule.py     Date-math resolvers + availability state machine
     validation/             Data quality + cross-source checks
     sdmx/                   Unified SDMX engine (base client, parsing, providers/)
-    timeseries/, news/, documents/, trends/, market/, calendar/  One dir per domain
+    timeseries/, news/, documents/, trends/, market/, calendar/, sentiment/  One dir per domain
     _shared/                http_transport, url_canon, selector versioning
   macro_data/
     service/                LocalMacroDataService — the one interface downstream reads
@@ -338,6 +339,7 @@ src/
 | Issue | Branch | Slice |
 |---|---|---|
 | #8 | `fix/issue-8-retire-legacy-calendar` | Final retirement slice: legacy HTML calendar source is inert, old read helpers point at `cal_econ_event`, and `/v1/calendar` is the downstream contract. |
+| #76 | `feat/issue-76-x-twitter-ingestion` | Sentiment lane bootstrap (P0–P4 shipped). P0 (schema): five `x_*` tables, `cal_econ_event.event_type` extension, `v_calendar_item` projects `event_type` as `subtype`, ~50-keyword + ~25-account seeds. P1 (timeline polling): `XV2Client` paginated with `pagination_token`; `XTimelineIngestor`; priority-tiered scheduler (15min/30min/1h). P2 (keyword search): `search_recent_tweets` with `-is:retweet lang:en` appended; truncated drains return `truncated=True` to skip the cooldown stamp. P3 (discovery + event injection): `XSpikeDetector` (per-hour rate comparison, 3× threshold, `min_baseline_count=12`, replay-safe `now_iso` upper bound) materialises `cal_econ_event` rows with `source='x_derived'` / `event_type='social_breakout'` (window-specific `provider_event_id` so same-day double-spikes don't collapse) + `x_post_event_links` evidence (matched `is_available=1` filter); `XHashtagDiscoveryRunner` extracts `entities.hashtags` and upserts novel terms as `category='derived'`. P4 (availability): `XAvailabilityPatrol` runs every 6h on posts with `like_count + retweet_count > 50` fetched in last 72h, batched 100/call via `GET /2/tweets?ids=...`; only `Not Found Error` results flip `is_available=0`; resurfaced posts auto-restore via `upsert_x_post` ON CONFLICT setting `is_available=1`. **Awaiting merge.** |
 
 Closed recently (context only — the code is the source of truth):
 

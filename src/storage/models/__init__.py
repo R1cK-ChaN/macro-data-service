@@ -46,6 +46,9 @@ from .news import (
     NewsArticleRecord,
     TrendTopicRecord,
 )
+from .sentiment import (
+    XPostRecord,
+)
 from .analytical import (
     RegimeSnapshotRecord,
     GeneratedNoteRecord,
@@ -124,4 +127,5 @@ __all__ = [
     "TradeSignalRecord",
     "TradingArtifactRecord",
     "TrendTopicRecord",
+    "XPostRecord",
 ]

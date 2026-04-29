@@ -76,6 +76,7 @@ from storage.models import (
     TradeSignalRecord,
     TradingArtifactRecord,
     TrendTopicRecord,
+    XPostRecord,
 )
 from storage.queries.analytical import _AnalyticalQueriesMixin
 from storage.queries.calendar import (
@@ -88,6 +89,7 @@ from storage.queries.indicator import _IndicatorQueriesMixin
 from storage.queries.market import _MarketQueriesMixin
 from storage.queries.messaging import _MessagingQueriesMixin
 from storage.queries.news import _NewsQueriesMixin
+from storage.queries.sentiment import _SentimentQueriesMixin
 from storage.queries.trading import _TradingQueriesMixin
 from storage.schema import apply_schema
 
@@ -106,6 +108,7 @@ class SQLiteEngineStore(
     _MarketQueriesMixin,
     _MessagingQueriesMixin,
     _NewsQueriesMixin,
+    _SentimentQueriesMixin,
     _TradingQueriesMixin,
 ):
     def __init__(self, db_path: Path | None = None) -> None:
