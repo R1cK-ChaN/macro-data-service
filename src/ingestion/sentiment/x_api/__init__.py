@@ -11,15 +11,19 @@ from ingestion.sentiment.x_api._types import (
     XUser,
 )
 from ingestion.sentiment.x_api.client import (
+    KeywordPollResult,
     TimelinePollResult,
+    XKeywordSearchIngestor,
     XTimelineIngestor,
 )
 from ingestion.sentiment.x_api.scrapers import XV2Client
 
 __all__ = [
+    "KeywordPollResult",
     "TimelinePollResult",
     "XAPIError",
     "XAuthError",
+    "XKeywordSearchIngestor",
     "XNotFoundError",
     "XPost",
     "XRateLimitError",

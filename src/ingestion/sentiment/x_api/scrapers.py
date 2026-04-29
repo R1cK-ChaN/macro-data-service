@@ -37,6 +37,13 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_TWEET_FIELDS = "created_at,public_metrics,lang,author_id"
 _DEFAULT_USER_FIELDS = "id,username"
+# Operators appended to every keyword search per issue #76 P2 — drop
+# retweets to avoid double-counting and constrain to English so the
+# downstream sentiment pipeline doesn't multiplex languages.
+_DEFAULT_SEARCH_OPERATORS = "-is:retweet lang:en"
+# Search expansions populate ``includes.users`` so we can stitch back
+# the handle for each post (the ``data`` array only ships ``author_id``).
+_DEFAULT_SEARCH_EXPANSIONS = "author_id"
 
 
 def _raise_for_status(response: requests.Response, *, context: str) -> None:
@@ -203,3 +210,83 @@ class XV2Client:
         # is safe.
         cursor_id = since_id if next_token else first_page_newest_id
         return posts, cursor_id
+
+    def search_recent_tweets(
+        self,
+        keyword: str,
+        *,
+        since_id: str = "",
+        max_results: int = 100,
+        max_pages: int = 5,
+    ) -> tuple[list[XPost], str, bool]:
+        """Run ``GET /2/tweets/search/recent`` for one keyword.
+
+        Issue #76 P2. The keyword goes into the ``query`` parameter
+        with ``-is:retweet lang:en`` appended so the downstream
+        sentiment pipeline only sees original English posts.
+        ``includes.users`` is expanded so each result row carries the
+        author handle (the search payload only ships ``author_id`` on
+        the data side; expansions hydrate the handle).
+
+        Returns ``(posts, cursor_id, truncated)``:
+
+        * ``cursor_id`` is the first page's ``newest_id`` on a complete
+          drain, or the OLD ``since_id`` on a truncated one — caller
+          shouldn't blindly advance the cursor when truncated.
+        * ``truncated`` is True iff the loop exited at ``max_pages``
+          with ``next_token`` still set. The orchestrator uses this to
+          skip the cooldown stamp (Codex review P2 round 1) — the
+          ``/search/recent`` 7-day rolling window means deferring the
+          retry into cooldown can let older unreached pages age out.
+        """
+        if not keyword.strip():
+            raise ValueError("keyword must be non-empty")
+        url = f"{self.BASE_URL}/tweets/search/recent"
+        base_params: dict[str, str | int] = {
+            "query": f"{keyword.strip()} {_DEFAULT_SEARCH_OPERATORS}",
+            "tweet.fields": _DEFAULT_TWEET_FIELDS,
+            "expansions": _DEFAULT_SEARCH_EXPANSIONS,
+            "user.fields": _DEFAULT_USER_FIELDS,
+            "max_results": max(10, min(max_results, 100)),
+        }
+        if since_id:
+            base_params["since_id"] = since_id
+
+        fetched_at = utc_now().isoformat()
+        posts: list[XPost] = []
+        first_page_newest_id = since_id
+        next_token = ""
+        for _ in range(max(1, max_pages)):
+            params = dict(base_params)
+            if next_token:
+                params["next_token"] = next_token
+            response = self.session.get(
+                url, params=params, headers=self._headers(), timeout=30,
+            )
+            _raise_for_status(response, context=f"search/recent[{keyword}]")
+            body = response.json()
+            meta = body.get("meta") or {}
+            if not next_token:
+                first_page_newest_id = str(meta.get("newest_id") or since_id)
+            includes = body.get("includes") or {}
+            users_by_id = {
+                str(u.get("id")): str(u.get("username") or "")
+                for u in (includes.get("users") or [])
+                if u.get("id")
+            }
+            for item in body.get("data") or []:
+                handle = users_by_id.get(str(item.get("author_id") or ""), "")
+                parsed = _parse_post(
+                    item,
+                    author_handle=handle,
+                    query_context=keyword,
+                    fetched_at=fetched_at,
+                )
+                if parsed is not None:
+                    posts.append(parsed)
+            next_token = str(meta.get("next_token") or "")
+            if not next_token:
+                break
+        truncated = bool(next_token)
+        cursor_id = since_id if truncated else first_page_newest_id
+        return posts, cursor_id, truncated

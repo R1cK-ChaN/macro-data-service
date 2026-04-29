@@ -47,6 +47,15 @@ class TimelinePollResult:
     error: str = ""
 
 
+@dataclass(frozen=True)
+class KeywordPollResult:
+    keyword: str
+    posts_persisted: int
+    new_since_id: str
+    truncated: bool = False
+    error: str = ""
+
+
 class XTimelineIngestor:
     """Polls tracked-account timelines — one orchestrator entry point.
 
@@ -178,3 +187,95 @@ class XTimelineIngestor:
                 )
             )
         return len(posts)
+
+
+class XKeywordSearchIngestor:
+    """Polls keyword-pool entries via ``GET /2/tweets/search/recent``.
+
+    Mirrors ``XTimelineIngestor`` for the keyword lane: pull the due
+    keywords from the priority-tier scheduler query, run the search,
+    upsert posts (engagement counters update on conflict), append to
+    ``x_post_keywords`` per (post_id, keyword), advance the cursor.
+
+    Issue #76 P2. Errors short-circuit per keyword so one 429 doesn't
+    block the rest of the sweep."""
+
+    def __init__(
+        self,
+        store: SQLiteEngineStore,
+        client: XV2Client | None = None,
+    ) -> None:
+        self.store = store
+        self.client = client or XV2Client()
+
+    def poll_keyword(
+        self, *, keyword: str, since_id: str,
+    ) -> KeywordPollResult:
+        try:
+            posts, newest_id, truncated = self.client.search_recent_tweets(
+                keyword, since_id=since_id,
+            )
+        except (XAuthError, XRateLimitError, XAPIError) as exc:
+            return KeywordPollResult(
+                keyword=keyword, posts_persisted=0,
+                new_since_id=since_id, error=str(exc),
+            )
+
+        for post in posts:
+            self.store.upsert_x_post(
+                XPostRecord(
+                    post_id=post.post_id,
+                    author_id=post.author_id,
+                    author_handle=post.author_handle,
+                    text=post.text,
+                    created_at=post.created_at,
+                    lang=post.lang,
+                    retweet_count=post.retweet_count,
+                    like_count=post.like_count,
+                    reply_count=post.reply_count,
+                    quote_count=post.quote_count,
+                    query_context=post.query_context,
+                    fetched_at=post.fetched_at,
+                )
+            )
+            self.store.link_x_post_to_keyword(
+                post_id=post.post_id, keyword=keyword,
+                first_seen_at=post.fetched_at,
+            )
+        # Skip the cursor advance + cooldown stamp on a truncated drain
+        # so the row stays immediately due — older unreached pages
+        # would otherwise age out of /search/recent's 7-day window
+        # before the priority-tier cooldown elapses (Codex P2 round 1).
+        #
+        # Known limitation (Codex P2 round 2 — hard cap reached): for
+        # keywords whose volume CHRONICALLY exceeds max_pages * max_results
+        # per sweep, the older pages can still age out because we
+        # always re-query from page 1 (the X /search/recent endpoint's
+        # next_token is not persisted across calls). The proper fix is
+        # a resumable token column on x_keyword_pool — deferred to a
+        # follow-up since the hard-cap rule applies and the issue body
+        # doesn't pre-scope chronic-over-cap mitigation.
+        if not truncated:
+            self.store.update_x_keyword_since_id(
+                keyword=keyword, since_id=newest_id,
+            )
+        return KeywordPollResult(
+            keyword=keyword, posts_persisted=len(posts),
+            new_since_id=newest_id, truncated=truncated,
+        )
+
+    def poll_once(
+        self, *, limit: int | None = None,
+    ) -> list[KeywordPollResult]:
+        keywords = self.store.list_x_keywords_due_for_polling(
+            now_iso=utc_now().isoformat(), limit=limit,
+        )
+        results: list[KeywordPollResult] = []
+        for row in keywords:
+            results.append(
+                self.poll_keyword(
+                    keyword=str(row["keyword"]),
+                    since_id=str(row.get("since_id") or ""),
+                )
+            )
+        return results

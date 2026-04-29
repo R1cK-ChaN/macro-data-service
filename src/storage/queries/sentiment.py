@@ -159,3 +159,72 @@ class _SentimentQueriesMixin:
                 (handle,),
             ).fetchone()
         return dict(row) if row is not None else None
+
+    # ── Keyword-search write path (issue #76 P2) ─────────────────
+
+    def update_x_keyword_since_id(
+        self, *, keyword: str, since_id: str, fetched_at: str | None = None,
+    ) -> None:
+        """Persist the search-cursor + last-fetched stamp.
+
+        Same shape as the tracked-account variant — operators see one
+        cooldown semantic across both polling lanes."""
+        stamp = fetched_at or utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "UPDATE x_keyword_pool "
+                "SET since_id = ?, last_fetched_at = ?, updated_at = ? "
+                "WHERE keyword = ?",
+                (since_id, stamp, stamp, keyword),
+            )
+
+    def list_x_keywords_due_for_polling(
+        self, *, now_iso: str | None = None, limit: int | None = None,
+    ) -> list[dict[str, object]]:
+        """Active keywords whose tier cooldown has elapsed.
+
+        Tier mapping is the same one the tracked-account scheduler
+        uses — issue #76 keeps the ``priority`` field semantics
+        consistent across both polling paths."""
+        now = now_iso or utc_now().isoformat()
+        case_branches = " ".join(
+            f"WHEN priority >= {threshold} THEN {seconds}"
+            for (threshold, seconds) in self._PRIORITY_TIER_COOLDOWN_SECONDS
+            if threshold > 0
+        )
+        rest_seconds = self._PRIORITY_TIER_COOLDOWN_SECONDS[-1][1]
+        case_sql = f"CASE {case_branches} ELSE {rest_seconds} END"
+        sql = f"""
+            SELECT keyword, category, priority, since_id, last_fetched_at
+            FROM x_keyword_pool
+            WHERE is_active = 1
+              AND (
+                last_fetched_at = ''
+                OR (CAST((julianday(?) - julianday(last_fetched_at)) * 86400 AS INTEGER))
+                   >= ({case_sql})
+              )
+            ORDER BY priority DESC, last_fetched_at ASC
+        """
+        if limit is not None:
+            sql += f" LIMIT {int(limit)}"
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(sql, (now,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def link_x_post_to_keyword(
+        self, *, post_id: str, keyword: str, first_seen_at: str | None = None,
+    ) -> None:
+        """Append-only fan-out into ``x_post_keywords``.
+
+        First write per (post_id, keyword) wins on the
+        ``first_seen_at`` stamp; subsequent calls for the same pair
+        are no-ops via INSERT OR IGNORE — the keyword that surfaced
+        the post first stays as the discovery context, even if the
+        same post turns up under a related keyword later."""
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO x_post_keywords ("
+                "  post_id, keyword, first_seen_at"
+                ") VALUES (?, ?, ?)",
+                (post_id, keyword, first_seen_at or utc_now().isoformat()),
+            )
