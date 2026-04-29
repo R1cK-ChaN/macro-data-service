@@ -306,3 +306,48 @@ class XV2Client:
         truncated = bool(next_token)
         cursor_id = since_id if truncated else first_page_newest_id
         return posts, cursor_id, truncated
+
+    def lookup_tweets(
+        self, post_ids: list[str],
+    ) -> tuple[set[str], set[str]]:
+        """Batch-check post existence via ``GET /2/tweets?ids=...``.
+
+        Issue #76 P4. Returns ``(found, not_found)`` post-id sets.
+        ``not_found`` covers only ``Not Found`` resource errors —
+        other error types (e.g. transient lookup failures) are not
+        counted as deletions, so the soft-delete patrol doesn't flip
+        ``is_available`` on shaky data.
+
+        Caller is responsible for chunking into 100-id batches; this
+        method asserts the cap and raises on overrun rather than
+        silently truncating.
+        """
+        if not post_ids:
+            return set(), set()
+        if len(post_ids) > 100:
+            raise ValueError(
+                f"lookup_tweets accepts up to 100 ids per call; got {len(post_ids)}"
+            )
+        url = f"{self.BASE_URL}/tweets"
+        params = {"ids": ",".join(post_ids)}
+        response = self.session.get(
+            url, params=params, headers=self._headers(), timeout=30,
+        )
+        _raise_for_status(response, context=f"tweets?ids ({len(post_ids)})")
+        body = response.json()
+        found = {
+            str(item.get("id"))
+            for item in (body.get("data") or [])
+            if item.get("id")
+        }
+        not_found: set[str] = set()
+        for err in body.get("errors") or []:
+            value = str(err.get("value") or "")
+            err_type = str(err.get("type") or "")
+            err_title = str(err.get("title") or "")
+            if value and (
+                "resource-not-found" in err_type
+                or err_title == "Not Found Error"
+            ):
+                not_found.add(value)
+        return found, not_found

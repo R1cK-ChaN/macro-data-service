@@ -61,6 +61,13 @@ class HashtagDiscoveryResult:
     error: str = ""
 
 
+@dataclass(frozen=True)
+class AvailabilityPatrolResult:
+    checked: int
+    marked_unavailable: tuple[str, ...]
+    error: str = ""
+
+
 def _hashtag_co_occurrences(posts: list[XPost]) -> Counter[str]:
     """Tally hashtag frequency across a batch of posts.
 
@@ -204,4 +211,86 @@ class XHashtagDiscoveryRunner:
         return HashtagDiscoveryResult(
             posts_seen=len(posts),
             novel_keywords_added=tuple(added),
+        )
+
+
+# ── Availability patrol (issue #76 P4) ────────────────────────────────
+
+
+_LOOKUP_BATCH_SIZE = 100
+
+
+class XAvailabilityPatrol:
+    """Re-verify high-engagement posts via ``GET /2/tweets?ids=...``.
+
+    Issue #76 P4. Every 6h the operator runs ``run()``; the orchestrator
+    pulls all posts with ``is_available=1`` whose ``like_count +
+    retweet_count > min_engagement`` (default 50) and were
+    ``fetched_at`` within ``fetched_within_hours`` (default 72h),
+    chunks them into 100-id batches, calls the X batch endpoint, and
+    flips ``is_available`` to 0 for any id that comes back with a
+    ``Not Found`` error. Posts that are still alive get their
+    ``availability_checked_at`` stamped so the patrol's queue rotates
+    them to the back."""
+
+    def __init__(
+        self,
+        store: SQLiteEngineStore,
+        client: XV2Client | None = None,
+    ) -> None:
+        self.store = store
+        self.client = client or XV2Client()
+
+    def run(
+        self,
+        *,
+        min_engagement: int = 50,
+        fetched_within_hours: int = 72,
+        max_posts: int | None = None,
+    ) -> AvailabilityPatrolResult:
+        post_ids = self.store.list_x_posts_for_availability_check(
+            min_engagement=min_engagement,
+            fetched_within_hours=fetched_within_hours,
+            limit=max_posts,
+        )
+        if not post_ids:
+            return AvailabilityPatrolResult(
+                checked=0, marked_unavailable=(),
+            )
+
+        unavailable: list[str] = []
+        # ``checked`` counts only IDs the patrol actually classified
+        # as found OR not-found (Codex P4 round 1). A non-404 per-id
+        # error or a mid-sweep XAPIError leaves IDs unstamped for the
+        # next sweep — they don't count as completed checks.
+        classified = 0
+        try:
+            for start in range(0, len(post_ids), _LOOKUP_BATCH_SIZE):
+                chunk = post_ids[start:start + _LOOKUP_BATCH_SIZE]
+                found, not_found = self.client.lookup_tweets(chunk)
+                stamp = utc_now().isoformat()
+                for post_id in chunk:
+                    if post_id in not_found:
+                        self.store.mark_x_post_unavailable(
+                            post_id=post_id, checked_at=stamp,
+                        )
+                        unavailable.append(post_id)
+                        classified += 1
+                    elif post_id in found:
+                        self.store.stamp_x_post_availability_checked(
+                            post_id=post_id, checked_at=stamp,
+                        )
+                        classified += 1
+                    # ``post_id`` neither in ``found`` nor ``not_found``
+                    # means a non-404 error came back for it — leave
+                    # ``is_available`` alone and let the next sweep retry.
+        except (XAuthError, XRateLimitError, XAPIError) as exc:
+            return AvailabilityPatrolResult(
+                checked=classified,
+                marked_unavailable=tuple(unavailable),
+                error=str(exc),
+            )
+        return AvailabilityPatrolResult(
+            checked=classified,
+            marked_unavailable=tuple(unavailable),
         )

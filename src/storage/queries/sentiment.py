@@ -45,7 +45,16 @@ class _SentimentQueriesMixin:
         re-polling refreshes them. Text / author / created_at are
         treated as immutable; preserving them on conflict means a
         keyword-search-then-timeline re-fetch (different
-        ``query_context``) doesn't blow away the original context."""
+        ``query_context``) doesn't blow away the original context.
+
+        ON CONFLICT also restores ``is_available = 1`` and stamps
+        ``availability_checked_at`` to the fresh ``fetched_at`` (Codex
+        P4 round 2). Without this a post that was briefly marked
+        unavailable by the patrol but resurfaces in a later
+        timeline/search fetch stays filtered out of spike SQL —
+        the new fetch IS a confirmation that the post is publicly
+        visible again, so the patrol's earlier judgement is
+        superseded."""
         now = utc_now().isoformat()
         with self._connection(commit=True) as connection:
             connection.execute(
@@ -57,11 +66,13 @@ class _SentimentQueriesMixin:
                     availability_checked_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, '')
                 ON CONFLICT(post_id) DO UPDATE SET
-                    retweet_count = excluded.retweet_count,
-                    like_count    = excluded.like_count,
-                    reply_count   = excluded.reply_count,
-                    quote_count   = excluded.quote_count,
-                    fetched_at    = excluded.fetched_at
+                    retweet_count           = excluded.retweet_count,
+                    like_count              = excluded.like_count,
+                    reply_count             = excluded.reply_count,
+                    quote_count             = excluded.quote_count,
+                    fetched_at              = excluded.fetched_at,
+                    is_available            = 1,
+                    availability_checked_at = excluded.fetched_at
                 """,
                 (
                     post.post_id,
@@ -378,6 +389,70 @@ class _SentimentQueriesMixin:
                     link_type,
                     created_at or utc_now().isoformat(),
                 ),
+            )
+
+    # ── Soft-deletion availability patrol (issue #76 P4) ────────
+
+    def list_x_posts_for_availability_check(
+        self,
+        *,
+        now_iso: str | None = None,
+        min_engagement: int = 50,
+        fetched_within_hours: int = 72,
+        limit: int | None = None,
+    ) -> list[str]:
+        """Post IDs the patrol should re-verify with the X API.
+
+        Filters to posts whose ``like_count + retweet_count`` exceeds
+        ``min_engagement`` and were fetched within
+        ``fetched_within_hours`` (default 72h) — the issue body's
+        coverage spec. Already-unavailable rows are excluded so the
+        patrol doesn't burn budget rechecking known-deleted posts.
+        """
+        now = now_iso or utc_now().isoformat()
+        sql = """
+            SELECT post_id
+            FROM x_posts
+            WHERE is_available = 1
+              AND (like_count + retweet_count) > ?
+              AND datetime(fetched_at) >= datetime(?, ?)
+            ORDER BY availability_checked_at ASC, fetched_at DESC
+        """
+        params: list[object] = [
+            int(min_engagement), now, f"-{int(fetched_within_hours)} hours",
+        ]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        with self._connection(commit=False) as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [str(r["post_id"]) for r in rows]
+
+    def mark_x_post_unavailable(
+        self, *, post_id: str, checked_at: str | None = None,
+    ) -> None:
+        stamp = checked_at or utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "UPDATE x_posts "
+                "SET is_available = 0, availability_checked_at = ? "
+                "WHERE post_id = ?",
+                (stamp, post_id),
+            )
+
+    def stamp_x_post_availability_checked(
+        self, *, post_id: str, checked_at: str | None = None,
+    ) -> None:
+        """Confirms a post is still alive — advances
+        ``availability_checked_at`` so the patrol's
+        ORDER BY availability_checked_at ASC rotates the row to the
+        back of the queue, without flipping ``is_available``."""
+        stamp = checked_at or utc_now().isoformat()
+        with self._connection(commit=True) as connection:
+            connection.execute(
+                "UPDATE x_posts SET availability_checked_at = ? "
+                "WHERE post_id = ?",
+                (stamp, post_id),
             )
 
     def inject_social_breakout_event(
