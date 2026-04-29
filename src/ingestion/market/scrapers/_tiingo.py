@@ -114,52 +114,88 @@ class TiingoClient:
         Uses Tiingo's /tiingo/daily/<ticker>/prices endpoint. Returns an empty
         list when no API key is set so the caller can decide how to handle it.
         """
+        bars, _payload, _params = self.get_daily_bars_with_raw(
+            ticker, start_date=start_date, end_date=end_date,
+        )
+        return bars
+
+    def get_daily_bars_with_raw(
+        self,
+        ticker: str,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> tuple[list[TiingoDailyBar], list, dict[str, str]]:
+        """Fetch daily bars and return parsed bars + raw payload + request params.
+
+        Used by the issue #69 ``market_price_bars_raw`` write path. Same
+        idempotency contract as the EODHD lane: re-fetching unchanged
+        data produces the same canonicalized hash, INSERT OR IGNORE
+        dedupes.
+        """
+        request_params: dict[str, str] = {"format": "json", "resampleFreq": "daily"}
+        if start_date:
+            request_params["startDate"] = start_date
+        if end_date:
+            request_params["endDate"] = end_date
         if not self.api_key:
             logger.warning("TIINGO_API_KEY not set; skipping bars for %s", ticker)
-            return []
-        params: dict[str, str] = {"format": "json", "resampleFreq": "daily"}
-        if start_date:
-            params["startDate"] = start_date
-        if end_date:
-            params["endDate"] = end_date
+            return [], [], request_params
         response = self.session.get(
             f"{self.BASE_URL}/daily/{ticker.lower()}/prices",
-            params=params,
+            params=request_params,
             headers=self._headers(),
             timeout=60,
         )
         _raise_for_status(response)
         rows = response.json() or []
-        bars: list[TiingoDailyBar] = []
-        ticker_upper = ticker.upper()
-        for row in rows:
-            date_str = str(row.get("date", ""))[:10]
-            if not date_str:
-                continue
-            try:
-                bars.append(
-                    TiingoDailyBar(
-                        ticker=ticker_upper,
-                        date=date_str,
-                        open=_as_float(row.get("open")),
-                        high=_as_float(row.get("high")),
-                        low=_as_float(row.get("low")),
-                        close=_as_float(row.get("close")),
-                        volume=_as_float(row.get("volume"), default=0.0),
-                        adj_open=_as_optional_float(row.get("adjOpen")),
-                        adj_high=_as_optional_float(row.get("adjHigh")),
-                        adj_low=_as_optional_float(row.get("adjLow")),
-                        adj_close=_as_optional_float(row.get("adjClose")),
-                        adj_volume=_as_optional_float(row.get("adjVolume")),
-                        div_cash=_as_float(row.get("divCash"), default=0.0),
-                        split_factor=_as_float(row.get("splitFactor"), default=1.0),
-                    )
+        if not isinstance(rows, list):
+            return [], [], request_params
+        bars = _parse_tiingo_bars(rows, ticker=ticker.upper())
+        return bars, rows, request_params
+
+
+def _parse_tiingo_bars(
+    payload: list, *, ticker: str,
+) -> list["TiingoDailyBar"]:
+    """Parse a ``/tiingo/daily/{t}/prices`` array into typed bar rows.
+
+    Standalone helper so the issue #69 re-projection path can replay a
+    stored ``market_price_bars_raw`` payload through the same parser the
+    live HTTP path uses — no behavior drift between live ingest and
+    audit replay.
+    """
+    bars: list[TiingoDailyBar] = []
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        date_str = str(row.get("date", ""))[:10]
+        if not date_str:
+            continue
+        try:
+            bars.append(
+                TiingoDailyBar(
+                    ticker=ticker,
+                    date=date_str,
+                    open=_as_float(row.get("open")),
+                    high=_as_float(row.get("high")),
+                    low=_as_float(row.get("low")),
+                    close=_as_float(row.get("close")),
+                    volume=_as_float(row.get("volume"), default=0.0),
+                    adj_open=_as_optional_float(row.get("adjOpen")),
+                    adj_high=_as_optional_float(row.get("adjHigh")),
+                    adj_low=_as_optional_float(row.get("adjLow")),
+                    adj_close=_as_optional_float(row.get("adjClose")),
+                    adj_volume=_as_optional_float(row.get("adjVolume")),
+                    div_cash=_as_float(row.get("divCash"), default=0.0),
+                    split_factor=_as_float(row.get("splitFactor"), default=1.0),
                 )
-            except (TypeError, ValueError):
-                logger.debug("Tiingo row skipped for %s: %s", ticker_upper, row)
-                continue
-        bars.sort(key=lambda b: b.date)
-        return bars
+            )
+        except (TypeError, ValueError):
+            logger.debug("Tiingo row skipped for %s: %s", ticker, row)
+            continue
+    bars.sort(key=lambda b: b.date)
+    return bars
 
 
 def _as_float(value: object, *, default: float | None = None) -> float:

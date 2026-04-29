@@ -105,3 +105,29 @@ class MarketCorpActionsRawRecord:
     content_hash: str       # sha256 over normalized mutable fields
     payload_json: str       # raw response row, verbatim
     fetched_at: str         # ISO-8601 UTC
+
+
+@dataclass(frozen=True)
+class MarketPriceBarsRawRecord:
+    """Audit-lane raw row for the market price-bars table (issue #69 slice 2).
+
+    Mirrors ``MarketCorpActionsRawRecord`` in shape but at the per-fetch
+    granularity rather than per-event: one row per HTTP response per
+    ``(provider, ticker)``. ``payload_json`` holds the full
+    ``/api/eod/{ticker}`` (EODHD) or ``/tiingo/daily/{ticker}/prices``
+    (Tiingo) body verbatim; ``content_hash`` is sha256 over the
+    canonicalized bar array (sorted by date with envelope timestamps
+    dropped) so an unchanged daily refresh dedupes via INSERT OR IGNORE.
+
+    Same payoff as the calendar/corp-actions lanes: every value in
+    ``market_price_bars`` is reproducible from raw, so projection logic
+    can be re-run after a fix without re-spending Tiingo / EODHD quota.
+    """
+
+    provider: str           # "eodhd" | "tiingo"
+    ticker: str             # full provider ticker, e.g. "AAPL.US" (eodhd) | "AAPL" (tiingo)
+    snapshot_epoch_ms: int  # when WE fetched this snapshot, UTC ms
+    content_hash: str       # sha256 over canonicalized bar array
+    payload_json: str       # full HTTP response body, verbatim
+    fetched_at: str         # ISO-8601 UTC convenience column
+    request_params_json: str = "{}"  # from/to/etc — needed to interpret partial responses

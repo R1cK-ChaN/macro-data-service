@@ -98,6 +98,50 @@ class EODHDDailyBar:
     split_factor: float
 
 
+def _parse_eodhd_bars(
+    payload: list, *, ticker: str,
+) -> list["EODHDDailyBar"]:
+    """Parse an ``/api/eod`` array into typed ``EODHDDailyBar`` rows.
+
+    Standalone helper so the issue #69 re-projection path can replay a
+    stored ``market_price_bars_raw`` payload through the same parser the
+    live HTTP path uses — no behavior drift between live ingest and
+    audit replay.
+    """
+    bars: list[EODHDDailyBar] = []
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        date_str = str(row.get("date", ""))[:10]
+        if not date_str:
+            continue
+        try:
+            adj_close = _as_optional_float(row.get("adjusted_close"))
+            bars.append(
+                EODHDDailyBar(
+                    ticker=ticker,
+                    date=date_str,
+                    open=_as_float(row.get("open")),
+                    high=_as_float(row.get("high")),
+                    low=_as_float(row.get("low")),
+                    close=_as_float(row.get("close")),
+                    volume=_as_float(row.get("volume"), default=0.0),
+                    adj_open=None,
+                    adj_high=None,
+                    adj_low=None,
+                    adj_close=adj_close,
+                    adj_volume=None,
+                    div_cash=0.0,
+                    split_factor=1.0,
+                )
+            )
+        except (TypeError, ValueError):
+            logger.debug("EODHD row skipped for %s: %s", ticker, row)
+            continue
+    bars.sort(key=lambda b: b.date)
+    return bars
+
+
 @dataclass(frozen=True)
 class EODHDDividend:
     """Normalized row from ``/api/div/{TICKER}.{EXCHANGE}``.
@@ -164,14 +208,36 @@ class EODHDClient:
         endpoint yields an ``"Ticker Not Found."`` string. HTTP-level errors
         surface as ``EODHDAPIError`` subclasses.
         """
+        bars, _payload, _params = self.get_daily_bars_with_raw(
+            ticker, start_date=start_date, end_date=end_date,
+        )
+        return bars
+
+    def get_daily_bars_with_raw(
+        self,
+        ticker: str,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> tuple[list[EODHDDailyBar], list, dict[str, str]]:
+        """Fetch daily bars and return parsed bars + raw payload + request params.
+
+        Used by the issue #69 ``market_price_bars_raw`` write path. The
+        raw payload is the ``/api/eod`` JSON array verbatim — the audit
+        lane stores it so a parser bug or schema rename is recoverable
+        without re-fetching from EODHD (zero quota cost). A ticker-not-
+        found response yields ``([], [], params)`` so the caller can
+        skip the audit write naturally.
+        """
+        request_params: dict[str, str] = {"fmt": "json"}
+        if start_date:
+            request_params["from"] = start_date
+        if end_date:
+            request_params["to"] = end_date
         if not self.api_key:
             logger.warning("EODHD_API_KEY not set; skipping bars for %s", ticker)
-            return []
-        params: dict[str, str] = {"api_token": self.api_key, "fmt": "json"}
-        if start_date:
-            params["from"] = start_date
-        if end_date:
-            params["to"] = end_date
+            return [], [], request_params
+        params = {"api_token": self.api_key, **request_params}
         response = self.session.get(
             f"{self.BASE_URL}/eod/{ticker}",
             params=params,
@@ -185,50 +251,22 @@ class EODHDClient:
         text_body = response.text if response.content else ""
         stripped = text_body.strip()
         if not stripped:
-            return []
+            return [], [], request_params
         if not stripped.startswith(("[", "{")):
             logger.info("EODHD reported %r for ticker %s", stripped[:120], ticker)
-            return []
+            return [], [], request_params
         try:
             payload = response.json()
         except ValueError:
             logger.warning(
                 "EODHD returned non-JSON body for %s: %r", ticker, stripped[:120]
             )
-            return []
+            return [], [], request_params
         if not isinstance(payload, list):
-            return []
+            return [], [], request_params
 
-        bars: list[EODHDDailyBar] = []
-        for row in payload:
-            date_str = str(row.get("date", ""))[:10]
-            if not date_str:
-                continue
-            try:
-                adj_close = _as_optional_float(row.get("adjusted_close"))
-                bars.append(
-                    EODHDDailyBar(
-                        ticker=ticker,
-                        date=date_str,
-                        open=_as_float(row.get("open")),
-                        high=_as_float(row.get("high")),
-                        low=_as_float(row.get("low")),
-                        close=_as_float(row.get("close")),
-                        volume=_as_float(row.get("volume"), default=0.0),
-                        adj_open=None,
-                        adj_high=None,
-                        adj_low=None,
-                        adj_close=adj_close,
-                        adj_volume=None,
-                        div_cash=0.0,
-                        split_factor=1.0,
-                    )
-                )
-            except (TypeError, ValueError):
-                logger.debug("EODHD row skipped for %s: %s", ticker, row)
-                continue
-        bars.sort(key=lambda b: b.date)
-        return bars
+        bars = _parse_eodhd_bars(payload, ticker=ticker)
+        return bars, payload, request_params
 
     def get_bulk_last_day(
         self,

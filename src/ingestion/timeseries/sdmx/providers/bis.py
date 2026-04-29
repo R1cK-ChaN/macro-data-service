@@ -60,6 +60,25 @@ class BISClient(SDMXClient):
         response = self._get(url, params)
         return self._parse_csv(response.text, series_id=series_id, dataflow=dataflow_id, limit=limit)
 
+    def get_data_with_raw(self, dataflow_id, key=".", *, series_id="",
+                          start_period=None, end_period=None, limit=100, **kwargs):
+        """BIS uses CSV — no SDMX-JSON canonicalization.
+
+        Skipping raw capture here is deliberate: the issue #69 ``obs_raw``
+        canonicalizer is JSON-shape-aware. Adding CSV-shape canonicalization
+        is a separate slice; until then BIS continues writing typed rows
+        only and the audit lane skips it (returns empty payload).
+        """
+        observations = self.get_data(
+            dataflow_id, key,
+            series_id=series_id,
+            start_period=start_period,
+            end_period=end_period,
+            limit=limit,
+            **kwargs,
+        )
+        return observations, {}, {}
+
     @staticmethod
     def _parse_csv(text, *, series_id, dataflow, limit):
         reader = csv.DictReader(io.StringIO(text))

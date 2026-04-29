@@ -208,6 +208,36 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_market_corp_actions_raw_latest "
         "ON market_corp_actions_raw(provider, ticker, action_type, event_date, snapshot_epoch_ms DESC)"
     )
+    # ── Market price-bars audit lane (issue #69 slice 2) ─────────────────
+    # Mirrors cal_corp_raw / market_corp_actions_raw — same content-hash +
+    # raw-payload + snapshot pattern. One row per HTTP response (per
+    # provider × ticker × bar window): the ``payload_json`` holds the full
+    # EODHD ``/api/eod`` or Tiingo ``/tiingo/daily/{t}/prices`` body.
+    # ``content_hash`` is sha256 over the canonicalized bar array (sorted
+    # by date, volatile envelope fields dropped) so re-fetching unchanged
+    # data dedupes.
+    #
+    # Audit floor — historical bars already in market_price_bars cannot be
+    # replayed into raw because providers only return their current-best
+    # version. This table captures from "first write after #69 ships".
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_price_bars_raw (
+            provider            TEXT NOT NULL,
+            ticker              TEXT NOT NULL,
+            snapshot_epoch_ms   INTEGER NOT NULL,
+            content_hash        TEXT NOT NULL,
+            payload_json        TEXT NOT NULL,
+            fetched_at          TEXT NOT NULL,
+            request_params_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (provider, ticker, content_hash)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_price_bars_raw_latest "
+        "ON market_price_bars_raw(provider, ticker, snapshot_epoch_ms DESC)"
+    )
     # ── EODHD fundamentals (issue #68 slice 1) ───────────────────────────
     # One raw audit lane + four typed projections. Same content-hash +
     # observed-at PIT discipline as cal_corp_*: raw is append-only on
@@ -382,6 +412,37 @@ def apply_schema(connection: sqlite3.Connection) -> None:
             UNIQUE(series_id, source, observation_date, vintage_date)
         )
         """
+    )
+    # ── Macro time-series audit lane (issue #69 slice 1) ─────────────────
+    # Mirrors cal_econ_raw — same content-hash + raw-payload + snapshot
+    # pattern, ticker-shaped at the source/series_id grain. One row per
+    # HTTP response (per source × series_id × snapshot): ``payload_json``
+    # holds the FRED / BLS / SDMX response verbatim, ``content_hash`` is
+    # sha256 over the canonicalized observations (sorted by date with
+    # query-time echo fields dropped) so re-fetching unchanged data
+    # dedupes via the INSERT OR IGNORE PK.
+    #
+    # ``indicator_vintages`` already stores typed values + vintage history
+    # but discards the upstream byte stream — this table closes that gap:
+    # parser bug or schema change → fix code, re-project from raw, zero
+    # FRED/BLS quota consumed. Audit floor is "first write after #69".
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS obs_raw (
+            source              TEXT NOT NULL,
+            series_id           TEXT NOT NULL,
+            snapshot_epoch_ms   INTEGER NOT NULL,
+            content_hash        TEXT NOT NULL,
+            payload_json        TEXT NOT NULL,
+            fetched_at          TEXT NOT NULL,
+            request_params_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (source, series_id, content_hash)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_obs_raw_latest "
+        "ON obs_raw(source, series_id, snapshot_epoch_ms DESC)"
     )
     connection.execute(
         """

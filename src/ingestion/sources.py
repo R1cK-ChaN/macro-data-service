@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import dataclasses
 import hashlib
+import json
 import math
 import re
 import threading
@@ -53,6 +54,7 @@ from storage import (
     IndicatorVintageRecord,
     MarketPriceRecord,
     NewsArticleRecord,
+    ObsRawRecord,
     ReleaseStatusRecord,
     SQLiteEngineStore,
     StoredEventRecord,
@@ -616,11 +618,62 @@ class IngestionOrchestrator:
             name=name,
             interval_seconds=interval_seconds,
             prepare=self._ensure_obs_seed,
-            fetch=lambda: fetcher.fetch(lookback_days=lookback_days),
+            fetch=lambda: self._fetch_with_obs_raw(fetcher, lookback_days=lookback_days),
             normalize=self._raw_series_to_records,
             deduplicate=self._deduplicate_observations,
             store=self._store_indicator_observations,
         )
+
+    def _fetch_with_obs_raw(
+        self, fetcher: Any, *, lookback_days: int,
+    ) -> list[Any]:
+        """Run a fetcher and side-write ``obs_raw`` rows for each RawSeries.
+
+        Mirrors the calendar-lane projector pattern: typed rows go through
+        the existing normalize → store pipeline; the upstream HTTP body is
+        captured to the ``obs_raw`` audit lane on the way past. Fetchers
+        that haven't been wired up to populate ``raw_payload`` /
+        ``content_hash`` skip the audit write transparently — additive,
+        not breaking.
+        """
+        raw_series_list = fetcher.fetch(lookback_days=lookback_days)
+        self._capture_obs_raw(raw_series_list)
+        return raw_series_list
+
+    def _capture_obs_raw(self, raw_series_list: list[Any]) -> int:
+        """Convert RawSeries with populated raw fields → obs_raw rows.
+
+        Returns the number of new rows inserted (excludes content-hash
+        duplicates suppressed by INSERT OR IGNORE). Issue #69 slice 1.
+        """
+        records: list[ObsRawRecord] = []
+        snapshot_epoch_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        for rs in raw_series_list:
+            payload = getattr(rs, "raw_payload", None)
+            content_hash = getattr(rs, "content_hash", None)
+            if payload is None or content_hash is None:
+                continue
+            try:
+                payload_json = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+            except (TypeError, ValueError):
+                continue
+            request_params_json = getattr(rs, "request_params_json", None) or "{}"
+            records.append(ObsRawRecord(
+                source=rs.source,
+                series_id=rs.series_id,
+                snapshot_epoch_ms=snapshot_epoch_ms,
+                content_hash=content_hash,
+                payload_json=payload_json,
+                fetched_at=rs.fetched_at,
+                request_params_json=request_params_json,
+            ))
+        if not records:
+            return 0
+        try:
+            return self.store.insert_obs_raw(records)
+        except Exception:
+            logger.warning("obs_raw write failed", exc_info=True)
+            return 0
 
     # ── Per-domain source builders ────────────────────────────────────
     def _build_calendar_source(self) -> IngestionSourceDefinition:
@@ -1166,6 +1219,9 @@ class IngestionOrchestrator:
                     errors.append(f"{m.source_id}/{m.provider_series_id}: no data returned")
             except Exception as exc:
                 errors.append(f"{m.source_id}/{m.provider_series_id}: {exc}")
+        # Side-write obs_raw before normalize/store — same audit pattern as
+        # the standard fetcher pipeline (issue #69 slice 1).
+        self._capture_obs_raw(all_raw)
 
         if not all_raw:
             return IngestionRunReport(
