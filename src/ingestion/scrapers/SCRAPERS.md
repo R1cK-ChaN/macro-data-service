@@ -1106,6 +1106,9 @@ JP, CN, and GB.
 | `BIS_EER_EU` | WS_EER | M.R.B.XM | EU Real Effective Exchange Rate |
 | `BIS_CREDIT_GAP_US` | WS_CREDIT_GAP | Q.US.P | US Credit-to-GDP Gap |
 | `BIS_CREDIT_GAP_CN` | WS_CREDIT_GAP | Q.CN.P | CN Credit-to-GDP Gap |
+| `BIS_TC_GOV_US` | WS_TC v2.0 | Q.US.G.A.N.770.A | US General Government Leverage |
+| `BIS_TC_HH_US` | WS_TC v2.0 | Q.US.H.A.M.770.A | US Household Leverage |
+| `BIS_TC_NFC_US` | WS_TC v2.0 | Q.US.N.A.M.770.A | US Non-Financial Corporation Leverage |
 | `BIS_PROPERTY_US` | WS_SPP | Q.R.US | US Real Property Prices |
 | `BIS_PROPERTY_CN` | WS_SPP | Q.R.CN | CN Real Property Prices |
 

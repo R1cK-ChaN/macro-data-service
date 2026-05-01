@@ -22,9 +22,9 @@ Wind/workbook label,日本:国债利率:30年,日本国债!R3C19,missing,,"Germa
 Wind/workbook label,日本:国债利率:3年,日本国债!R3C15,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
 Wind/workbook label,日本:国债利率:5年,日本国债!R3C16,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
 Wind/workbook label,日本:国债利率:7年,日本国债!R3C17,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
-Wind/workbook label,杠杆率(按名义价值计):政府部门:美国,季度数据!R5C21,missing,,Sector leverage fields are absent from configured BIS/OECD/World Bank mappings.
-Wind/workbook label,杠杆率:居民部门:美国,季度数据!R5C20,missing,,Sector leverage fields are absent from configured BIS/OECD/World Bank mappings.
-Wind/workbook label,杠杆率:非金融企业部门:美国,季度数据!R5C19,missing,,Sector leverage fields are absent from configured BIS/OECD/World Bank mappings.
+Wind/workbook label,杠杆率(按名义价值计):政府部门:美国,季度数据!R5C21,connected,bis:BIS_TC_GOV_US,BIS Total Credit WS_TC `Q.US.G.A.N.770.A` general government nominal value as percent of GDP is configured.
+Wind/workbook label,杠杆率:居民部门:美国,季度数据!R5C20,connected,bis:BIS_TC_HH_US,BIS Total Credit WS_TC `Q.US.H.A.M.770.A` household credit as percent of GDP is configured.
+Wind/workbook label,杠杆率:非金融企业部门:美国,季度数据!R5C19,connected,bis:BIS_TC_NFC_US,BIS Total Credit WS_TC `Q.US.N.A.M.770.A` non-financial corporation credit as percent of GDP is configured.
 Wind/workbook label,标准普尔500波动率指数(VIX):周,MOVE 和VIX!R2C10,connected,fred:VIXCLS; market:^VIX,VIX is configured in both FRED indicators and the market watchlist.
 Wind/workbook label,欧元兑美元:倒数:周,汇率!R28C18,connected,ecb:ECB_EURUSD/ECB_EURUSD_D,EUR/USD path is configured through ECB SDMX.
 Wind/workbook label,澳元兑美元:倒数:周,汇率!R28C21,partial,market adapter available,Market adapter exists; this FX pair is absent from the configured watchlist.

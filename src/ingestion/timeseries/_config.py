@@ -652,6 +652,9 @@ BIS_SERIES = {
     "eer_eu":    {"dataflow": "WS_EER",    "key": "M.R.B.XM", "series_id": "BIS_EER_EU", "category": "fx"},
     "credit_gap_us": {"dataflow": "WS_CREDIT_GAP", "key": "Q.US.P", "series_id": "BIS_CREDIT_GAP_US", "category": "credit"},
     "credit_gap_cn": {"dataflow": "WS_CREDIT_GAP", "key": "Q.CN.P", "series_id": "BIS_CREDIT_GAP_CN", "category": "credit"},
+    "tc_gov_us":     {"dataflow": "WS_TC", "version": "2.0", "key": "Q.US.G.A.N.770.A", "series_id": "BIS_TC_GOV_US", "category": "credit"},
+    "tc_hh_us":      {"dataflow": "WS_TC", "version": "2.0", "key": "Q.US.H.A.M.770.A", "series_id": "BIS_TC_HH_US", "category": "credit"},
+    "tc_nfc_us":     {"dataflow": "WS_TC", "version": "2.0", "key": "Q.US.N.A.M.770.A", "series_id": "BIS_TC_NFC_US", "category": "credit"},
     "property_us":   {"dataflow": "WS_SPP",  "key": "Q.US.R", "series_id": "BIS_PROPERTY_US", "category": "property"},
     "property_cn":   {"dataflow": "WS_SPP",  "key": "Q.CN.R", "series_id": "BIS_PROPERTY_CN", "category": "property"},
 }

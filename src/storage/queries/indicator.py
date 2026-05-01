@@ -142,6 +142,9 @@ _BIS_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "BIS_EER_EU":    ("eu.fx.eer_real",          "EU Real Effective Exchange Rate",  "index", "monthly",    "none"),
     "BIS_CREDIT_GAP_US": ("us.credit.gap",       "US Credit-to-GDP Gap",           "percent", "quarterly", "none"),
     "BIS_CREDIT_GAP_CN": ("cn.credit.gap",       "CN Credit-to-GDP Gap",           "percent", "quarterly", "none"),
+    "BIS_TC_GOV_US":     ("us.credit.gov_leverage", "US General Government Leverage", "percent", "quarterly", "none"),
+    "BIS_TC_HH_US":      ("us.credit.household_leverage", "US Household Leverage",   "percent", "quarterly", "none"),
+    "BIS_TC_NFC_US":     ("us.credit.nfc_leverage", "US NFC Leverage",              "percent", "quarterly", "none"),
     "BIS_PROPERTY_US":   ("us.property.real",     "US Real Property Prices",        "index",   "quarterly", "none"),
     "BIS_PROPERTY_CN":   ("cn.property.real",     "CN Real Property Prices",        "index",   "quarterly", "none"),
 }
@@ -938,6 +941,9 @@ class _IndicatorQueriesMixin:
         ("HY_OAS_US",           "fred",           "BAMLH0A0HYM2",  "us.credit.hy_oas",              1, "primary",     "ICE BofA HY OAS"),
         ("VIX_US",              "fred",           "VIXCLS",         "us.markets.vix",                1, "primary",     "CBOE VIX close, regime-classified via obs_enrichment"),
         ("CREDIT_GAP_US",       "bis",            "BIS_CREDIT_GAP_US","us.credit.gap",               1, "primary",     "Credit-to-GDP gap"),
+        ("GOV_LEVERAGE_US",     "bis",            "BIS_TC_GOV_US",  "us.credit.gov_leverage",        1, "primary",     "BIS Total Credit, general government debt/GDP"),
+        ("HOUSEHOLD_LEVERAGE_US","bis",           "BIS_TC_HH_US",   "us.credit.household_leverage",  1, "primary",     "BIS Total Credit, household debt/GDP"),
+        ("NFC_LEVERAGE_US",     "bis",            "BIS_TC_NFC_US",  "us.credit.nfc_leverage",        1, "primary",     "BIS Total Credit, NFC debt/GDP"),
         #
         # ── US Property ──────────────────────────────────────────────
         ("PROPERTY_US",         "bis",            "BIS_PROPERTY_US","us.property.real",              1, "primary",     "Real property prices"),

@@ -2,7 +2,7 @@
 
 Date: 2026-05-01
 Issue: #112
-Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings
+Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings
 
 ## Implemented Rows
 
@@ -42,7 +42,17 @@ percent-formatted rate summaries.
 Focused tests cover FRED config presence, obs-family seeding, concept-map
 seeding, and FRED source discovery for the workbook HVS and WEI rows.
 
-Remaining source families for later slices: BIS Total Credit leverage ratios,
-NY Fed GSCPI, Bundesbank official yields, Japan MOF official yields, AISI
-weekly steel, ISM subcomponents, Redbook, Sentix US, SOFR-OIS, and exact
-Wind/Bloomberg parity.
+## BIS Total Credit Rows
+
+| Workbook family | BIS dataflow | BIS key | Series id | Concept id | Obs family |
+| --- | --- | --- | --- | --- | --- |
+| General government leverage | `WS_TC` v2.0 | `Q.US.G.A.N.770.A` | `BIS_TC_GOV_US` | `GOV_LEVERAGE_US` | `us.credit.gov_leverage` |
+| Household leverage | `WS_TC` v2.0 | `Q.US.H.A.M.770.A` | `BIS_TC_HH_US` | `HOUSEHOLD_LEVERAGE_US` | `us.credit.household_leverage` |
+| Non-financial corporation leverage | `WS_TC` v2.0 | `Q.US.N.A.M.770.A` | `BIS_TC_NFC_US` | `NFC_LEVERAGE_US` | `us.credit.nfc_leverage` |
+
+Focused tests cover BIS config presence, obs-family seeding, concept-map
+seeding, and release-schedule seeding for the workbook sector leverage rows.
+
+Remaining source families for later slices: NY Fed GSCPI, Bundesbank official
+yields, Japan MOF official yields, AISI weekly steel, ISM subcomponents,
+Redbook, Sentix US, SOFR-OIS, and exact Wind/Bloomberg parity.

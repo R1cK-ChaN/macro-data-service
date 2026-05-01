@@ -1781,6 +1781,9 @@ class _CalendarQueriesMixin:
         # ── US Credit ─────────────────────────────────────────────────
         ("HY_OAS_US",           "daily",            {},                                     "daily",    "",      "",                 "pattern", "ICE BofA daily"),
         ("CREDIT_GAP_US",       "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
+        ("GOV_LEVERAGE_US",     "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS Total Credit quarterly lag"),
+        ("HOUSEHOLD_LEVERAGE_US","approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",   "",                 "approximate", "BIS Total Credit quarterly lag"),
+        ("NFC_LEVERAGE_US",     "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS Total Credit quarterly lag"),
         # ── US Property ───────────────────────────────────────────────
         ("PROPERTY_US",         "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
         ("HOMEOWNERSHIP_RATE_US","quarter_lag",      {"lag_days": 28},                       "quarterly","10:00", "America/New_York", "pattern", "Census HVS quarterly"),

@@ -288,21 +288,27 @@ class BISIngestionClient:
         count = 0
         for key, cfg in BIS_SERIES.items():
             try:
+                version = cfg.get("version")
+                version_kwargs = {"version": version} if version else {}
                 observations = self.client.get_data(
                     cfg["dataflow"],
                     cfg["key"],
                     series_id=cfg["series_id"],
                     limit=30,
+                    **version_kwargs,
                 )
                 fam_id = family_lookup.get(("bis", cfg["series_id"])) if family_lookup else None
                 for obs in observations:
+                    metadata = {"category": cfg["category"], "dataflow": obs.dataflow}
+                    if version:
+                        metadata["version"] = version
                     store.upsert_indicator_observation(
                         IndicatorObservationRecord(
                             series_id=obs.series_id,
                             source="bis",
                             date=obs.date,
                             value=obs.value,
-                            metadata={"category": cfg["category"], "dataflow": obs.dataflow},
+                            metadata=metadata,
                             obs_family_id=fam_id,
                         )
                     )
@@ -461,4 +467,3 @@ class ECBIngestionClient:
                 logger.warning("ECB catalog refresh failed for %s", dataflow.id, exc_info=True)
             time.sleep(sleep_seconds)
         return RefreshStats(source="ecb", count=count)
-
