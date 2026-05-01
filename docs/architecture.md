@@ -242,6 +242,7 @@ Issue #36 — Wayback evidence-archive URL per vintage row:
 - `release_schedule` (rules) + `release_status` (per-release tracking). Date-math resolvers in `ingestion/release_schedule.py` compute `next_expected` per concept.
 - State machine: `PENDING → WAITING → FETCHED → CONFIRMED / STALE / FAILED`. Retry ladder 1m / 5m / 15m / 1h / 4h.
 - Three alert types: `DELAY` (missed expected release by 30m), `FAILED` (retries exhausted), `MISMATCH` (cross-source divergence over threshold).
+- **Data-quality auto-filer (issue #102):** `src/ingestion/quality/data_quality_filer.py` is the macro-data sibling to the calendar-side `parity_filer`. It rolls concept-validation hard failures, shadow-digest coverage drops, and persisted-log secret leaks into one `data-quality` GitHub issue (label distinct from `parity-drift`), comments on the open issue while findings persist, and auto-closes after `CLEAN_STREAK_TO_CLOSE` consecutive clean runs. State lives at `.macro-data/data_quality_state.json`. `scripts/data_quality_daily.py` is the entry-point — runs `validate_all_concepts`, computes `compute_digest`, scans the tail of `shadow.log` / `daily_digest.jsonl` for any unredacted `api_key=…`, and appends a structured JSON line to `.macro-data/logs/data_quality.log`. Bare `macro-data-service validate` (no `--source`) now delegates to concept validation and exits 1 on failures; `validate --source X` exits 1 with a `--json`-safe `ok=false` payload when zero checks ran. `ingestion/_shared/redaction.py` (`redact_secrets` + `SecretRedactingFilter`) is the shared scrubber both this filer and `shadow_runner` use to keep provider keys out of logs, digest payloads, issue bodies, and traceback text.
 
 ### 7. Source capabilities + catalog sync
 
@@ -317,7 +318,8 @@ src/
     validation/             Data quality + cross-source checks
     sdmx/                   Unified SDMX engine (base client, parsing, providers/)
     timeseries/, news/, documents/, trends/, market/, calendar/, sentiment/  One dir per domain
-    _shared/                http_transport, url_canon, selector versioning
+    quality/                data_quality_filer — macro data-quality auto-filer (issue #102)
+    _shared/                http_transport, url_canon, selector versioning, redaction
   macro_data/
     service/                LocalMacroDataService — the one interface downstream reads
       base.py               __init__, invoke router, _ensure_* one-shot seeders
