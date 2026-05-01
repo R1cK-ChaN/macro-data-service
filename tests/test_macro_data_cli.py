@@ -252,6 +252,131 @@ class MacroDataCLITest(unittest.TestCase):
         self.assertEqual(db_path.name, "engine.db")
         self.assertEqual(db_path.parent.name, ".macro-data")
 
+    def test_validate_no_source_delegates_to_concept_validation(self) -> None:
+        """Issue #102 P2: bare ``validate`` must run concept reports rather
+        than the legacy zero-check ``validate_full('all')`` path."""
+
+        from ingestion.validation._types import (
+            CheckResult,
+            ValidationLayer,
+            ValidationReport,
+            ValidationSeverity,
+        )
+
+        failing_check = CheckResult(
+            check_name="concept_source_coverage",
+            layer=ValidationLayer.CONCEPT,
+            passed=False,
+            severity=ValidationSeverity.ERROR,
+            message="FEDWATCH_US: 0/1 sources have data",
+            source="FEDWATCH_US",
+            timestamp="2026-05-01T00:00:00+00:00",
+        )
+        report = ValidationReport(
+            source="concept:FEDWATCH_US",
+            run_id="abc",
+            timestamp="2026-05-01T00:00:00+00:00",
+            checks=(failing_check,),
+        )
+
+        engine = Mock()
+        engine.validate_all_concepts.return_value = [report]
+
+        store = Mock()
+        store.seed_concept_map.return_value = None
+
+        output = io.StringIO()
+        with patch("ingestion.validation.ValidationEngine", return_value=engine), \
+             patch("ingestion.validation.ValidationStore"), \
+             patch("storage.SQLiteEngineStore", return_value=store):
+            with redirect_stdout(output):
+                rc = main(["validate"])
+
+        self.assertEqual(rc, 1)
+        engine.validate_all_concepts.assert_called_once()
+        engine.validate_full.assert_not_called()
+        text = output.getvalue()
+        self.assertIn("FEDWATCH_US", text)
+
+    def test_validate_no_source_passes_when_all_concepts_pass(self) -> None:
+        from ingestion.validation._types import ValidationReport
+
+        passing = ValidationReport(
+            source="concept:CPI_US",
+            run_id="r1",
+            timestamp="2026-05-01T00:00:00+00:00",
+            checks=(),
+        )
+
+        engine = Mock()
+        engine.validate_all_concepts.return_value = [passing]
+
+        store = Mock()
+
+        with patch("ingestion.validation.ValidationEngine", return_value=engine), \
+             patch("ingestion.validation.ValidationStore"), \
+             patch("storage.SQLiteEngineStore", return_value=store):
+            with redirect_stdout(io.StringIO()):
+                rc = main(["validate"])
+
+        self.assertEqual(rc, 0)
+
+    def test_validate_with_source_zero_checks_returns_error(self) -> None:
+        """Issue #102 P2: ``validate --source X`` that produces zero checks
+        must exit non-zero, not silently report PASS."""
+
+        from ingestion.validation._types import ValidationReport
+
+        empty_report = ValidationReport(
+            source="fred",
+            run_id="r1",
+            timestamp="2026-05-01T00:00:00+00:00",
+            checks=(),
+        )
+
+        engine = Mock()
+        engine.validate_full.return_value = empty_report
+
+        stdout_buf = io.StringIO()
+        stderr_buf = io.StringIO()
+        with patch("ingestion.validation.ValidationEngine", return_value=engine), \
+             patch("ingestion.validation.ValidationStore"):
+            with redirect_stdout(stdout_buf), \
+                 patch("sys.stderr", stderr_buf):
+                rc = main(["validate", "--source", "fred"])
+
+        self.assertEqual(rc, 1)
+        # Human-readable failure message goes to stderr, not stdout.
+        self.assertIn("0 checks", stderr_buf.getvalue())
+
+    def test_validate_with_source_zero_checks_json_keeps_payload_parseable(self) -> None:
+        """Issue #102 P2: ``--json`` output must remain valid JSON even
+        when zero checks ran. The failure signal goes into the payload
+        as ``ok=false`` + ``error`` rather than as a trailing text line."""
+
+        from ingestion.validation._types import ValidationReport
+
+        empty_report = ValidationReport(
+            source="fred",
+            run_id="r1",
+            timestamp="2026-05-01T00:00:00+00:00",
+            checks=(),
+        )
+
+        engine = Mock()
+        engine.validate_full.return_value = empty_report
+
+        stdout_buf = io.StringIO()
+        with patch("ingestion.validation.ValidationEngine", return_value=engine), \
+             patch("ingestion.validation.ValidationStore"):
+            with redirect_stdout(stdout_buf):
+                rc = main(["validate", "--source", "fred", "--json"])
+
+        self.assertEqual(rc, 1)
+        payload = json.loads(stdout_buf.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertIn("0 checks", payload["error"])
+
 
 if __name__ == "__main__":
     unittest.main()
