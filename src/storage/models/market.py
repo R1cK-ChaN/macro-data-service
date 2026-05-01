@@ -28,7 +28,7 @@ class MarketInstrumentRecord:
     instrument_id: str                      # e.g. "US_SPY"
     primary_ticker: str                     # current trading ticker
     name: str                               # "SPDR S&P 500 ETF"
-    asset_class: str                        # equity_etf, equity, bond_etf, commodity_etf
+    asset_class: str                        # equity_etf, equity, bond_etf, commodity_etf, rate
     market: str                             # "United States equity market"
     exchange_code: str = ""                 # e.g. "NYSEARCA", "NASDAQ"
     currency: str = "USD"

@@ -50,7 +50,9 @@ def _document_family(doc: Any) -> str:
 _DOCUMENT_FAMILIES: frozenset[str] = frozenset(
     {"news", "note", "calendar", "release_report"}
 )
-_VALID_MARKET_ASSET_CLASSES = {"index", "commodity", "fx", "bond", "stock", "crypto"}
+_VALID_MARKET_ASSET_CLASSES = {
+    "index", "commodity", "fx", "bond", "stock", "crypto", "rate",
+}
 _VALID_RATE_TYPES = {"sofr", "effr", "obfr", "all"}
 _ARTICLE_DOMAIN_MAP: dict[str, str] = {
     "bloomberg.com": "bloomberg",

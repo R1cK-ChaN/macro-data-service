@@ -1,10 +1,11 @@
-"""EODHD EOD API client — global equities/ETFs/indices/FX/crypto/spot metals.
+"""EODHD EOD API client — global equities/ETFs/indices/rates/FX/crypto/spot metals.
 
 Endpoints wired here:
 
 * ``/api/eod/{TICKER}.{EXCHANGE}`` — daily bars (open/high/low/close/volume +
-  adjusted_close). Same endpoint covers equities, ETFs, indices, FX
-  (``.FOREX``), crypto (``.CC``), and spot metals (``.FOREX``). Dividend
+  adjusted_close). Same endpoint covers equities, ETFs, indices, government
+  bond yields (``.GBOND``), FX (``.FOREX``), crypto (``.CC``), and spot metals
+  (``.FOREX``). Dividend
   / split fields are not on this endpoint — they live on the per-ticker
   endpoints below and are projected into ``market_price_bars`` by the
   market-corp-actions lane (issue #67 slice 2).
