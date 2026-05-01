@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import json
+import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from ingestion.sdmx.providers.oecd import OECDClient
@@ -447,6 +448,7 @@ def _run_schedule_command(args: argparse.Namespace) -> int:
 
 def _run_validate(args: argparse.Namespace) -> int:
     from ingestion.validation import ValidationEngine, ValidationStore
+    from storage import SQLiteEngineStore
 
     db_path = args.db_path or ".macro-data/engine.db"
     validation_store = ValidationStore(db_path)
@@ -482,12 +484,63 @@ def _run_validate(args: argparse.Namespace) -> int:
         return 0
 
     engine = ValidationEngine(validation_store)
-    report = engine.validate_full(args.source or "all")
+
+    # When no --source is given the legacy ``validate_full("all")`` path
+    # produces zero checks (every layer needs raw/stored inputs we don't
+    # have here) and reports PASS, which masks real data-quality
+    # failures. Delegate to concept-level validation so the CLI
+    # surfaces FEDWATCH_US / VIX_US / CPI_EU style issues instead.
+    if args.source is None:
+        store = SQLiteEngineStore(db_path=Path(db_path))
+        store.seed_concept_map()
+        reports = engine.validate_all_concepts(store)
+        if args.json_output:
+            payload = {
+                "reports": [r.to_dict() for r in reports],
+                "report_count": len(reports),
+                "failed_count": sum(1 for r in reports if not r.passed),
+                "ok": bool(reports) and all(r.passed for r in reports),
+            }
+            if not reports:
+                payload["error"] = "validate ran 0 concept reports; concept_map may be empty."
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            for r in reports:
+                print(r.format_text())
+                print()
+            if not reports:
+                print(
+                    "ERROR: validate ran 0 concept reports; "
+                    "concept_map may be empty.",
+                    file=sys.stderr,
+                )
+        if not reports:
+            return 1
+        failed = sum(1 for r in reports if not r.passed)
+        return 1 if failed > 0 else 0
+
+    report = engine.validate_full(args.source)
 
     if args.json_output:
-        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+        payload = report.to_dict()
+        if not report.checks:
+            payload["ok"] = False
+            payload["error"] = (
+                f"validate produced 0 checks for source='{args.source}'. "
+                "Run `validate-concept --all` or supply raw/stored inputs."
+            )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print(report.format_text())
+        if not report.checks:
+            print(
+                f"ERROR: validate produced 0 checks for source='{args.source}'. "
+                "Run `validate-concept --all` or supply raw/stored inputs.",
+                file=sys.stderr,
+            )
+
+    if not report.checks:
+        return 1
     return 0 if report.passed else 1
 
 
@@ -659,6 +712,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "health":
         return _run_health(args)
 
+    # Validation (no service needed; building the factory before
+    # dispatching here would force every test to stub out the live
+    # SQLiteEngineStore and the ingestion client constructors).
+    if args.command == "validate":
+        return _run_validate(args)
+
     # Release schedule (no service needed for --show/--due/--status/--run)
     if args.command == "schedule":
         if args.show or args.due or args.status or args.run:
@@ -746,8 +805,6 @@ def main(argv: list[str] | None = None) -> int:
         return _run_oecd_refresh_catalog(args)
     if args.command == "rag":
         return _run_rag(args)
-    if args.command == "validate":
-        return _run_validate(args)
     parser.error("unknown command")
     return 2
 

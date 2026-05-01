@@ -15,6 +15,10 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+from ingestion._shared.redaction import SecretRedactingFilter, redact_secrets  # noqa: E402
+
 # ── Logging setup ──────────────────────────────────────────────────────────
 
 LOG_DIR = Path(__file__).parent / ".macro-data" / "logs"
@@ -50,10 +54,12 @@ def setup_logging() -> None:
     ch.setFormatter(fmt)
     root.addHandler(ch)
 
-    # File — rotates daily via name, append mode
+    # File — rotates daily via name, append mode. The redacting filter
+    # scrubs api_key=… style secrets before they hit disk.
     fh = logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8")
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(fmt)
+    fh.addFilter(SecretRedactingFilter())
     root.addHandler(fh)
 
 
@@ -161,17 +167,40 @@ def compute_digest(db_path: str) -> dict:
     }
 
 
+def _redact_digest_payload(digest: dict) -> dict:
+    """Redact provider secrets from any error strings inside the digest.
+
+    We only walk the well-known string fields that carry upstream error
+    text (per-source ``error`` and the digest-level ``error`` from the
+    runner). Any future free-text field added here should be added to
+    this list rather than dumped raw.
+    """
+    redacted = dict(digest)
+    sources = redacted.get("source_results")
+    if isinstance(sources, dict):
+        redacted["source_results"] = {
+            name: {**entry, "error": redact_secrets(entry.get("error", ""))}
+            if isinstance(entry, dict)
+            else entry
+            for name, entry in sources.items()
+        }
+    if isinstance(redacted.get("error"), str):
+        redacted["error"] = redact_secrets(redacted["error"])
+    return redacted
+
+
 def write_digest(digest: dict) -> None:
     """Append digest to JSONL file for time-series tracking."""
+    safe_digest = _redact_digest_payload(digest)
     with open(DIGEST_FILE, "a", encoding="utf-8") as f:
-        f.write(json.dumps(digest, ensure_ascii=False) + "\n")
+        f.write(json.dumps(safe_digest, ensure_ascii=False) + "\n")
     logger.info(
         "DIGEST: coverage=%d/%d (%.0f%%), confirmed_24h=%d, total_obs=%d",
-        digest["concepts_covered"],
-        digest["concepts_total"],
-        digest["coverage_pct"],
-        digest.get("confirmed_24h", 0),
-        digest["total_obs"],
+        safe_digest["concepts_covered"],
+        safe_digest["concepts_total"],
+        safe_digest["coverage_pct"],
+        safe_digest.get("confirmed_24h", 0),
+        safe_digest["total_obs"],
     )
 
 

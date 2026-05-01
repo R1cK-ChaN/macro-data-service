@@ -4,3 +4,7 @@ from ingestion._shared.http_transport import *  # noqa: F401,F403
 from ingestion._shared.url_canon import *  # noqa: F401,F403
 from ingestion._shared.common import *  # noqa: F401,F403
 from ingestion._shared.selector_versioning import *  # noqa: F401,F403
+from ingestion._shared.redaction import (  # noqa: F401
+    SecretRedactingFilter,
+    redact_secrets,
+)
