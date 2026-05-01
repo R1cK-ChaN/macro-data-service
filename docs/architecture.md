@@ -10,7 +10,7 @@ from ~25 free/licensed upstreams instead of BBG's paid feed.
 resolves macro + market + calendar + document data from ~25 upstreams into a
 single SQLite store that downstream services (analyst UI, RAG, agents) read
 through one service interface.
-**Last updated:** 2026-04-28 (branch `feat/issue-68-eodhd-fundamentals`, EODHD fundamentals subsystem shipped end-to-end — five new tables (`fundamentals_{raw,company,financials,highlights,estimates}`), per-section parsers / projectors / fetcher in `src/ingestion/market/fundamentals/eodhd_fundamentals/`, two service ops (`fundamentals_fetch`, `get_fundamentals`) on `_timeseries.py`, `GET /v1/fundamentals/{ticker}` HTTP route with ISO-8601 `as_of` PIT, universe-bounded backfill script + systemd timer at 23:00 ET, sibling live-validation script — see § 4a)
+**Last updated:** 2026-05-01 (branch `feat/issue-104-public-read-allowlist`, public-read allowlist for `POST /v1/ops/<op>` — `PUBLIC_READ_OPS` frozenset in `macro_data/server.py` gates the dispatcher to six read ops (`resolve_indicator`, `resolve_indicator_history`, `list_items`, `get_document`, `get_release_schedule`, `get_release_status`); all other ops return HTTP 403 even with a valid bearer token; admin / write ops stay reachable via CLI / systemd over the same in-process service — see § Service boundary)
 
 ### Bloomberg-capability coverage (current → 1.0)
 
@@ -277,6 +277,16 @@ defeats the whole aggregation-layer premise.
 
 - **HTTP API** (`macro-data-api`) — the contract. Routes are a thin mapping
   over `LocalMacroDataService` ops; schema is the `contracts.py` DTOs.
+  `POST /v1/ops/<op>` is locked to a read-only allowlist
+  (`PUBLIC_READ_OPS` in `macro_data/server.py`, issue #104):
+  `resolve_indicator`, `resolve_indicator_history`, `list_items`,
+  `get_document`, `get_release_schedule`, `get_release_status`. Anything
+  else returns HTTP 403, even with a valid bearer token. Existing
+  `GET` routes (`/healthz`, `/health`, `/v1/calendar`,
+  `/v1/calendar/revisions`, `/v1/fundamentals/{ticker}`) stay public.
+  Admin / write ops (`refresh_*`, `run_schedule`, `fundamentals_fetch`,
+  `sync_catalog_*`, …) reach the same in-process service through the CLI
+  and systemd jobs but are not exposed over HTTP.
 - **CLI** (`macro-data-service`) — operational only. Subcommands like
   `refresh`, `refresh-source`, `schedule --run`, `health`, plus the new
   `list_items` op (issue #5). Used for bootstrap, backfills, and debugging

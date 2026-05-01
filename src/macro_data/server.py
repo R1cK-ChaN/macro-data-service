@@ -17,6 +17,22 @@ from .service import LocalMacroDataService
 logger = logging.getLogger(__name__)
 
 
+# Public-read allowlist for ``POST /v1/ops/<operation>`` (issue #104).
+# Anything not in this set is rejected with HTTP 403 by the public server,
+# even if the underlying ``LocalMacroDataService`` op exists. Admin / write
+# ops (refresh_*, run_schedule, fundamentals_fetch, …) stay reachable
+# through the CLI / SSH / systemd jobs that share the same in-process
+# service.
+PUBLIC_READ_OPS: frozenset[str] = frozenset({
+    "resolve_indicator",
+    "resolve_indicator_history",
+    "list_items",
+    "get_document",
+    "get_release_schedule",
+    "get_release_status",
+})
+
+
 class MacroDataRequestHandler(BaseHTTPRequestHandler):
     server_version = "AnalystMacroData/0.1"
 
@@ -209,6 +225,13 @@ class MacroDataRequestHandler(BaseHTTPRequestHandler):
             if auth_header != f"Bearer {token}":
                 self._write_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
+        operation = self.path.rsplit("/", 1)[-1]
+        if operation not in PUBLIC_READ_OPS:
+            self._write_json(
+                HTTPStatus.FORBIDDEN,
+                {"error": "operation not permitted on public API"},
+            )
+            return
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
@@ -219,7 +242,6 @@ class MacroDataRequestHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._write_json(HTTPStatus.BAD_REQUEST, {"error": "invalid json"})
             return
-        operation = self.path.rsplit("/", 1)[-1]
         arguments = payload.get("arguments") if isinstance(payload, dict) else {}
         if not isinstance(arguments, dict):
             self._write_json(HTTPStatus.BAD_REQUEST, {"error": "arguments must be an object"})
