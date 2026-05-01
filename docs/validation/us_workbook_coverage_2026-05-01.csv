@@ -1,0 +1,402 @@
+source_in_workbook,field,locations,coverage_status,repo_fetch_path,note
+Bloomberg security,FARBDTRS Index,美联储金融流动性（负债规模-TGA-逆回购）!R2C3,connected,fred:WTREGEN; treasury_fiscal:TREAS_TGA_BALANCE,Equivalent TGA paths are configured through FRED and Treasury Fiscal Data.
+Bloomberg security,FARBLIAB Index,美联储金融流动性（负债规模-TGA-逆回购）!R2C2,connected,fred:WALCL,Equivalent Fed total assets series is configured in FRED.
+Bloomberg security,FARWRRA Index,美联储金融流动性（负债规模-TGA-逆回购）!R2C4,connected,fred:RRPONTSYD,Equivalent reverse repo series is configured in FRED.
+Bloomberg security,SOFRRATE Index,流动性SOFR-OIS!R1C2,connected,nyfed_rates:NYFED_SOFR,Equivalent SOFR path is configured through the NY Fed rate fetcher.
+Bloomberg security,USSOC BGN Curncy,流动性SOFR-OIS!R1C3,missing,,USD OIS Bloomberg security has no equivalent configured source.
+Wind/workbook label,MOVE指数,MOVE 和VIX!R2C1,missing,,MOVE is absent from market/FRED/Bloomberg-equivalent configs.
+Wind/workbook label,中国:中债国债到期收益率:10年,主要国家国债收益率利差!R2C12,missing,,No matching configured source path found in repo scan.
+Wind/workbook label,名义美元指数:对国外发达经济体:周,汇率!R28C16,partial,fred source available,Broad dollar and DXY paths are configured; the advanced-economy dollar sub-index needs its own configured series.
+Wind/workbook label,名义美元指数:对新兴市场经济体:周,汇率!R28C17,partial,fred source available,Broad dollar and DXY paths are configured; the emerging-market dollar sub-index needs its own configured series.
+Wind/workbook label,名义美元指数:广义:周,汇率!R28C15,connected,fred:DTWEXBGS; market:DX-Y.NYB,Dollar index paths are configured through FRED and market watchlist.
+Wind/workbook label,德国:国债收益率:10年期,德国国债!R3C16;主要国家国债收益率利差!R2C10,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
+Wind/workbook label,德国:国债收益率:15年期,德国国债!R3C17,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
+Wind/workbook label,德国:国债收益率:2年期,德国国债!R3C13,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
+Wind/workbook label,德国:国债收益率:30年期,德国国债!R3C18,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
+Wind/workbook label,德国:国债收益率:5年期,德国国债!R3C14,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
+Wind/workbook label,德国:国债收益率:7年期,德国国债!R3C15,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
+Wind/workbook label,日本:国债利率:10年,日本国债!R3C18;主要国家国债收益率利差!R2C11,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
+Wind/workbook label,日本:国债利率:1年,日本国债!R3C13,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
+Wind/workbook label,日本:国债利率:2年,日本国债!R3C14,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
+Wind/workbook label,日本:国债利率:30年,日本国债!R3C19,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
+Wind/workbook label,日本:国债利率:3年,日本国债!R3C15,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
+Wind/workbook label,日本:国债利率:5年,日本国债!R3C16,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
+Wind/workbook label,日本:国债利率:7年,日本国债!R3C17,missing,,"German, Japanese, and China sovereign yield paths are absent from configured data sources."
+Wind/workbook label,杠杆率(按名义价值计):政府部门:美国,季度数据!R5C21,missing,,Sector leverage fields are absent from configured BIS/OECD/World Bank mappings.
+Wind/workbook label,杠杆率:居民部门:美国,季度数据!R5C20,missing,,Sector leverage fields are absent from configured BIS/OECD/World Bank mappings.
+Wind/workbook label,杠杆率:非金融企业部门:美国,季度数据!R5C19,missing,,Sector leverage fields are absent from configured BIS/OECD/World Bank mappings.
+Wind/workbook label,标准普尔500波动率指数(VIX):周,MOVE 和VIX!R2C10,connected,fred:VIXCLS; market:^VIX,VIX is configured in both FRED indicators and the market watchlist.
+Wind/workbook label,欧元兑美元:倒数:周,汇率!R28C18,connected,ecb:ECB_EURUSD/ECB_EURUSD_D,EUR/USD path is configured through ECB SDMX.
+Wind/workbook label,澳元兑美元:倒数:周,汇率!R28C21,partial,market adapter available,Market adapter exists; this FX pair is absent from the configured watchlist.
+Wind/workbook label,美元兑丹麦克朗:周,汇率!R28C24,partial,market adapter available,Market adapter exists; this FX pair is absent from the configured watchlist.
+Wind/workbook label,美元兑人民币元:周,汇率!R28C22,connected,fred:DEXCHUS; market:USDCNY=X,USD/CNY paths are configured through FRED and market watchlist.
+Wind/workbook label,美元兑加元:周,汇率!R28C23,partial,market adapter available,Market adapter exists; this FX pair is absent from the configured watchlist.
+Wind/workbook label,美元兑印度卢比:周,汇率!R28C25,partial,market adapter available,Market adapter exists; this FX pair is absent from the configured watchlist.
+Wind/workbook label,美元兑墨西哥比索:周,汇率!R28C26,partial,market adapter available,Market adapter exists; this FX pair is absent from the configured watchlist.
+Wind/workbook label,美元兑日元:周,汇率!R28C20,connected,market:USDJPY=X,USD/JPY is configured in the market watchlist.
+Wind/workbook label,美元兑泰铢:周,汇率!R28C28,partial,market adapter available,Market adapter exists; this FX pair is absent from the configured watchlist.
+Wind/workbook label,美元兑瑞典克朗:周,汇率!R28C30,partial,market adapter available,Market adapter exists; this FX pair is absent from the configured watchlist.
+Wind/workbook label,美元兑瑞士法郎:周,汇率!R28C29,partial,market adapter available,Market adapter exists; this FX pair is absent from the configured watchlist.
+Wind/workbook label,美元兑韩元:周,汇率!R28C27,partial,market adapter available,Market adapter exists; this FX pair is absent from the configured watchlist.
+Wind/workbook label,美元指数:周,汇率!R28C14,connected,fred:DTWEXBGS; market:DX-Y.NYB,Dollar index paths are configured through FRED and market watchlist.
+Wind/workbook label,美国:10年国债-2年期国债:周,美债!R26C21,connected,fred:T10Y2Y,10Y-2Y spread is configured in FRED; weekly workbook frequency can use downsampled observations.
+Wind/workbook label,美国:30年期抵押贷款固定利率:周,周度数据!R4C14,partial,fred source available,FRED source exists; 30-year mortgage-rate series is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:CPI:业主等价租金:同比:季调,通胀（月度指标）!R39C72,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:业主等价租金:环比:季调,通胀（月度指标）!R39C43,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:主要居所租金:同比:季调,通胀（月度指标）!R39C71,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:主要居所租金:环比:季调,通胀（月度指标）!R39C42,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:二手汽车和卡车:同比:季调,通胀（月度指标）!R39C66,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:二手汽车和卡车:环比:季调,通胀（月度指标）!R39C37,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:住房租金:同比:季调,通胀（月度指标）!R39C70,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:住房租金:环比:季调,通胀（月度指标）!R39C41,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:公共事业(管道)燃气服务:同比:季调,通胀（月度指标）!R39C59,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:公共事业(管道)燃气服务:环比:季调,通胀（月度指标）!R39C30,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:医疗护理商品:同比:季调,通胀（月度指标）!R39C68,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:医疗护理商品:环比:季调,通胀（月度指标）!R39C39,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:医疗护理服务:同比:季调,通胀（月度指标）!R39C74,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:医疗护理服务:环比:季调,通胀（月度指标）!R39C45,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,"美国:CPI:商品,不含食品和能源类商品:同比:季调",通胀（月度指标）!R39C64,partial,bls source available,BLS CPI connector exists; this detailed goods component needs an explicit BLS_SERIES mapping.
+Wind/workbook label,"美国:CPI:商品,不含食品和能源类商品:环比:季调",通胀（月度指标）!R39C35,partial,bls source available,BLS CPI connector exists; this detailed goods component needs an explicit BLS_SERIES mapping.
+Wind/workbook label,美国:CPI:季调:当月同比,通胀（月度指标）!R39C49,connected,bls:CUUR0000SA0; fred:CPIAUCSL,Headline CPI base series is configured; MoM/YoY transforms can be computed downstream.
+Wind/workbook label,美国:CPI:季调:环比,通胀（月度指标）!R39C20,connected,bls:CUUR0000SA0; fred:CPIAUCSL,Headline CPI base series is configured; MoM/YoY transforms can be computed downstream.
+Wind/workbook label,美国:CPI:家庭食品:同比:季调,通胀（月度指标）!R39C51,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:家庭食品:环比:季调,通胀（月度指标）!R39C22,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:当月同比,月度数据!R4C34,connected,bls:CUUR0000SA0; fred:CPIAUCSL,Headline CPI base series is configured; MoM/YoY transforms can be computed downstream.
+Wind/workbook label,美国:CPI:新交通工具:同比:季调,通胀（月度指标）!R39C65,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:新交通工具:环比:季调,通胀（月度指标）!R39C36,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,"美国:CPI:服务,不含能源服务:同比:季调",通胀（月度指标）!R39C69,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,"美国:CPI:服务,不含能源服务:环比:季调",通胀（月度指标）!R39C40,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:服装:季调:当月同比,通胀（月度指标）!R39C67,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:服装:季调:环比,通胀（月度指标）!R39C38,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:汽油(所有种类):同比:季调,通胀（月度指标）!R39C55,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:汽油(所有种类):环比:季调,通胀（月度指标）!R39C26,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:燃油:同比:季调,通胀（月度指标）!R39C56,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:燃油:环比:季调,通胀（月度指标）!R39C27,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:电力:同比:季调,通胀（月度指标）!R39C58,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:电力:环比:季调,通胀（月度指标）!R39C29,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:能源:季调:当月同比,通胀（月度指标）!R39C53,partial,bls source available,BLS CPI connector exists; seasonally adjusted energy CPI needs an explicit configured series.
+Wind/workbook label,美国:CPI:能源:季调:环比,通胀（月度指标）!R39C24,partial,bls source available,BLS CPI connector exists; seasonally adjusted energy CPI needs an explicit configured series.
+Wind/workbook label,美国:CPI:能源服务:同比:季调,通胀（月度指标）!R39C57,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:能源服务:环比:季调,通胀（月度指标）!R39C28,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:能源类商品:同比:季调,通胀（月度指标）!R39C54,partial,bls source available,BLS CPI connector exists; energy-commodities CPI needs an explicit BLS_SERIES mapping.
+Wind/workbook label,美国:CPI:能源类商品:环比:季调,通胀（月度指标）!R39C25,partial,bls source available,BLS CPI connector exists; energy-commodities CPI needs an explicit BLS_SERIES mapping.
+Wind/workbook label,美国:CPI:运输服务:同比:季调,通胀（月度指标）!R39C73,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:运输服务:环比:季调,通胀（月度指标）!R39C44,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:非家用食品:同比:季调,通胀（月度指标）!R39C52,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:非家用食品:环比:季调,通胀（月度指标）!R39C23,partial,bls source available,BLS CPI connector exists; this detailed component series is absent from BLS_SERIES.
+Wind/workbook label,美国:CPI:食品:季调:当月同比,通胀（月度指标）!R39C50,partial,bls source available,BLS CPI connector exists; seasonally adjusted food CPI needs an explicit configured series.
+Wind/workbook label,美国:CPI:食品:季调:环比,通胀（月度指标）!R39C21,partial,bls source available,BLS CPI connector exists; seasonally adjusted food CPI needs an explicit configured series.
+Wind/workbook label,美国:CPI权重:业主主要居所等价基金,通胀（月度指标）!R39C99,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:主要居所租金,通胀（月度指标）!R39C98,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:二手汽车和卡车,通胀（月度指标）!R39C93,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:住房租金,通胀（月度指标）!R39C97,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:公共事业(管道)燃气服务,通胀（月度指标）!R39C87,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:医疗护理商品,通胀（月度指标）!R39C95,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:医疗护理服务,通胀（月度指标）!R39C101,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:商品，不含食品和能源类商品,通胀（月度指标）!R39C91,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:家庭食品,通胀（月度指标）!R39C79,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:新交通工具,通胀（月度指标）!R39C92,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:服务，不含能源服务,通胀（月度指标）!R39C96,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:服装,通胀（月度指标）!R39C94,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:汽油(所有种类),通胀（月度指标）!R39C83,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:燃油,通胀（月度指标）!R39C84,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:电力,通胀（月度指标）!R39C86,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:能源,通胀（月度指标）!R39C81,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:能源服务,通胀（月度指标）!R39C85,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:能源类商品,通胀（月度指标）!R39C82,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:运输服务,通胀（月度指标）!R39C100,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:非家用食品,通胀（月度指标）!R39C80,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:CPI权重:食品,通胀（月度指标）!R39C78,partial,bls source available,BLS source exists; CPI relative-importance/weight tables are absent from configured series.
+Wind/workbook label,美国:GDP:不变价:折年数:个人消费支出:商品:季调:同比,美国GDP分稿!R4C47,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:个人消费支出:季调:同比,美国GDP分稿!R4C46,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:个人消费支出:服务:季调:同比,美国GDP分稿!R4C50,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:个人消费支出:耐用品:季调:同比,美国GDP分稿!R4C48,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:个人消费支出:非耐用品:季调:同比,美国GDP分稿!R4C49,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:同比,美国GDP分稿!R4C42,connected,fred:GDPC1,Real GDP base series is configured in FRED; YoY transform can be computed downstream.
+Wind/workbook label,美国:GDP:不变价:折年数:商品出口:季调:同比,美国GDP分稿!R4C74,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:商品和服务出口:季调:同比,美国GDP分稿!R4C73,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:商品和服务进口:季调:同比,美国GDP分稿!R4C76,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:商品进口:季调:同比,美国GDP分稿!R4C77,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:国内私人投资总额:住宅:季调:同比,美国GDP分稿!R4C60,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:国内私人投资总额:固定投资:季调:同比,美国GDP分稿!R4C55,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:国内私人投资总额:季调:同比,美国GDP分稿!R4C54,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:国内私人投资总额:建筑:季调:同比,美国GDP分稿!R4C57,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:国内私人投资总额:知识产权产品:季调:同比,美国GDP分稿!R4C59,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:国内私人投资总额:私人存货变化:季调,美国GDP分稿!R4C61,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:国内私人投资总额:设备:季调:同比,美国GDP分稿!R4C58,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:国内私人投资总额:非住宅:季调:同比,美国GDP分稿!R4C56,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:政府消费支出和投资总额:国防:季调:同比,美国GDP分稿!R4C68,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:政府消费支出和投资总额:季调:同比,美国GDP分稿!R4C65,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:政府消费支出和投资总额:州和地方政府:季调:同比,美国GDP分稿!R4C67,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:政府消费支出和投资总额:联邦政府:季调:同比,美国GDP分稿!R4C66,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:政府消费支出和投资总额:非国防:季调:同比,美国GDP分稿!R4C69,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:服务出口:季调:同比,美国GDP分稿!R4C75,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:折年数:服务进口:季调:同比,美国GDP分稿!R4C78,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:个人消费支出:商品:季调,美国GDP分稿!R4C7,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:个人消费支出:季调,美国GDP分稿!R4C6,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:个人消费支出:服务:季调,美国GDP分稿!R4C10,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:个人消费支出:耐用品:季调,美国GDP分稿!R4C8,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:个人消费支出:非耐用品:季调,美国GDP分稿!R4C9,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:商品出口:季调,美国GDP分稿!R4C34,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:商品和服务出口:季调,美国GDP分稿!R4C33,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:商品和服务进口:季调,美国GDP分稿!R4C36,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:商品进口:季调,美国GDP分稿!R4C37,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:国内私人投资总额:住宅:季调,美国GDP分稿!R4C20,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:国内私人投资总额:固定投资:季调,美国GDP分稿!R4C15,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:国内私人投资总额:季调,美国GDP分稿!R4C14,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:国内私人投资总额:建筑:季调,美国GDP分稿!R4C17,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:国内私人投资总额:知识产权产品:季调,美国GDP分稿!R4C19,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:国内私人投资总额:设备:季调,美国GDP分稿!R4C18,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:国内私人投资总额:非住宅:季调,美国GDP分稿!R4C16,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:季调,美国GDP分稿!R4C2,connected,fred:GDPC1,Real GDP base series is configured in FRED; QoQ annualized transform can be computed downstream.
+Wind/workbook label,美国:GDP:不变价:环比折年率:政府消费支出和投资总额:国防:季调,美国GDP分稿!R4C28,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:政府消费支出和投资总额:季调,美国GDP分稿!R4C25,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:政府消费支出和投资总额:州和地方政府:季调,美国GDP分稿!R4C27,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:政府消费支出和投资总额:联邦政府:季调,美国GDP分稿!R4C26,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:政府消费支出和投资总额:非国防:季调,美国GDP分稿!R4C29,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:服务出口:季调,美国GDP分稿!R4C35,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP:不变价:环比折年率:服务进口:季调,美国GDP分稿!R4C38,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:个人消费支出:商品:季调,美国GDP分稿!R4C83,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:个人消费支出:季调,美国GDP分稿!R4C82,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:个人消费支出:服务:季调,美国GDP分稿!R4C86,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:个人消费支出:耐用品:季调,美国GDP分稿!R4C84,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:个人消费支出:非耐用品:季调,美国GDP分稿!R4C85,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:商品出口:季调,美国GDP分稿!R4C111,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:商品和服务净出口:季调,美国GDP分稿!R4C109,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:商品和服务出口:季调,美国GDP分稿!R4C110,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:商品和服务进口:季调,美国GDP分稿!R4C113,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:商品进口:季调,美国GDP分稿!R4C114,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:国内私人投资总额:住宅:季调,美国GDP分稿!R4C96,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:国内私人投资总额:固定投资:季调,美国GDP分稿!R4C91,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:国内私人投资总额:季调,美国GDP分稿!R4C90,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:国内私人投资总额:建筑:季调,美国GDP分稿!R4C93,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:国内私人投资总额:知识产权产品:季调,美国GDP分稿!R4C95,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:国内私人投资总额:私人存货变化:季调,美国GDP分稿!R4C97,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:国内私人投资总额:设备:季调,美国GDP分稿!R4C94,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:国内私人投资总额:非住宅:季调,美国GDP分稿!R4C92,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:政府消费支出和投资总额:国防:季调,美国GDP分稿!R4C104,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:政府消费支出和投资总额:季调,美国GDP分稿!R4C101,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:政府消费支出和投资总额:州和地方政府:季调,美国GDP分稿!R4C103,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:政府消费支出和投资总额:联邦政府:季调,美国GDP分稿!R4C102,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:政府消费支出和投资总额:非国防:季调,美国GDP分稿!R4C105,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:服务出口:季调,美国GDP分稿!R4C112,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:GDP环比拉动率:服务进口:季调,美国GDP分稿!R4C115,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
+Wind/workbook label,美国:ISM:制造业PMI:产出,美国ISM制造业PMI（月度指标）!R22C22,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:产出:环比增加,美国ISM制造业PMI（月度指标）!R22C35,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:供应商交付,美国ISM制造业PMI（月度指标）!R22C24,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:供应商交付:环比增加,美国ISM制造业PMI（月度指标）!R22C37,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:客户库存,美国ISM制造业PMI（月度指标）!R22C26,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:客户库存:环比增加,美国ISM制造业PMI（月度指标）!R22C39,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:就业,美国ISM制造业PMI（月度指标）!R22C23,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:就业:环比增加,美国ISM制造业PMI（月度指标）!R22C36,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:新出口订单,美国ISM制造业PMI（月度指标）!R22C29,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:新出口订单:环比增加,美国ISM制造业PMI（月度指标）!R22C42,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:新订单,美国ISM制造业PMI（月度指标）!R22C21,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:新订单:环比增加,美国ISM制造业PMI（月度指标）!R22C34,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:物价,美国ISM制造业PMI（月度指标）!R22C27,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:物价:环比增加,美国ISM制造业PMI（月度指标）!R22C40,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:自有库存,美国ISM制造业PMI（月度指标）!R22C25,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:自有库存:环比增加,美国ISM制造业PMI（月度指标）!R22C38,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:订单库存,美国ISM制造业PMI（月度指标）!R22C28,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:订单库存:环比增加,美国ISM制造业PMI（月度指标）!R22C41,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:进口,美国ISM制造业PMI（月度指标）!R22C30,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:进口:环比增加,美国ISM制造业PMI（月度指标）!R22C43,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI,美国ISM制造业PMI（月度指标）!R22C47,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:供应商交付,美国ISM制造业PMI（月度指标）!R22C51,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:供应商交付:环比增加,美国ISM制造业PMI（月度指标）!R22C65,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:商业活动,美国ISM制造业PMI（月度指标）!R22C48,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:商业活动:环比增加,美国ISM制造业PMI（月度指标）!R22C62,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:就业,美国ISM制造业PMI（月度指标）!R22C50,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:就业:环比增加,美国ISM制造业PMI（月度指标）!R22C64,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:库存,美国ISM制造业PMI（月度指标）!R22C52,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:库存:环比增加,美国ISM制造业PMI（月度指标）!R22C66,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:库存景气,美国ISM制造业PMI（月度指标）!R22C57,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:库存景气:环比增加,美国ISM制造业PMI（月度指标）!R22C71,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:新出口订单,美国ISM制造业PMI（月度指标）!R22C55,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:新出口订单:环比增加,美国ISM制造业PMI（月度指标）!R22C69,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:新订单,美国ISM制造业PMI（月度指标）!R22C49,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:新订单:环比增加,美国ISM制造业PMI（月度指标）!R22C63,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:物价,美国ISM制造业PMI（月度指标）!R22C53,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:物价:环比增加,美国ISM制造业PMI（月度指标）!R22C67,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:环比增加,美国ISM制造业PMI（月度指标）!R22C61,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:订单库存,美国ISM制造业PMI（月度指标）!R22C54,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:订单库存:环比增加,美国ISM制造业PMI（月度指标）!R22C68,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:进口,美国ISM制造业PMI（月度指标）!R22C56,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:非制造业PMI:进口:环比增加,美国ISM制造业PMI（月度指标）!R22C70,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:M2:季调:同比,月度数据!R4C78,connected,fred:M2SL,M2 base series is configured; growth transforms can be computed downstream.
+Wind/workbook label,美国:M2:季调:环比,月度数据!R4C77,connected,fred:M2SL,M2 base series is configured; growth transforms can be computed downstream.
+Wind/workbook label,美国:PCE:当月同比,月度数据!R4C37,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
+Wind/workbook label,美国:Sentix投资信心指数,月度数据!R4C66,missing,,Sentix source connector is absent.
+Wind/workbook label,美国:Sentix投资信心指数:核心现状指数,月度数据!R4C67,missing,,Sentix source connector is absent.
+Wind/workbook label,美国:Sentix投资信心指数:核心预期指数,月度数据!R4C68,missing,,Sentix source connector is absent.
+Wind/workbook label,美国:个人总支出:个人消费支出:季调:折年数:环比,月度数据!R4C4,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
+Wind/workbook label,美国:个人总收入:季调:折年数:环比,月度数据!R4C2,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
+Wind/workbook label,美国:中小企业乐观指数:季调,月度数据!R4C74,partial,fred source available,FRED source exists; NFIB series is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:产能利用率:制造业(NAICS):季调,月度数据!R4C20,partial,fred source available,Industrial production is configured; capacity-utilization series is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:企业债收益率:美银美国AAA级企业债有效收益率:-美国:国债收益率:10年:周,美债!R26C22,partial,fred source available,High-yield OAS and Treasury yields are configured; exact AAA yield spread needs an explicit corporate-yield series and transform.
+Wind/workbook label,美国:企业债收益率:美银美国高收益BB级企业债有效收益率:-美国:国债收益率:10年:周,美债!R26C23,partial,fred source available,High-yield OAS and Treasury yields are configured; exact BB yield spread needs an explicit corporate-yield series and transform.
+Wind/workbook label,美国:住房自有率,季度数据!R5C13,missing,,No matching configured source path found in repo scan.
+Wind/workbook label,美国:供应管理协会(ISM):制造业PMI,美国ISM制造业PMI（月度指标）!R22C20,partial,ism calendar:ISM_MANUFACTURING_PMI,ISM Manufacturing headline current-value connector exists; historical timeseries and transform layer are absent.
+Wind/workbook label,美国:供应管理协会(ISM):制造业PMI:环比增加,美国ISM制造业PMI（月度指标）!R22C33,partial,ism calendar:ISM_MANUFACTURING_PMI,ISM Manufacturing headline current-value connector exists; historical timeseries and transform layer are absent.
+Wind/workbook label,美国:全球供应链压力指数(GSCPI),月度数据!R4C70,missing,,NY Fed GSCPI needs a configured source path.
+Wind/workbook label,美国:全部工业部门产能利用率,月度数据!R4C19,partial,fred source available,Industrial production is configured; capacity-utilization series is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:出口金额:季调:同比,月度数据!R4C26,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
+Wind/workbook label,美国:出租空置率,季度数据!R5C11,missing,,No matching configured source path found in repo scan.
+Wind/workbook label,美国:劳动力参与率:季调,劳动力市场（月度指标）!R35C48;劳动力市场（月度指标）!R35C170,connected,bls:LNS14000000/LNS11300000; fred:UNRATE,Headline unemployment and labor-force participation paths are configured.
+Wind/workbook label,美国:周度经济指数:周,周度数据!R4C19,missing,,Weekly Economic Index source is absent from configured fetch paths.
+Wind/workbook label,美国:国债实际收益率:10年期:周,美债!R26C20,connected,fred:DGS2/DGS10/DGS30/DFII10/T10Y2Y; market:^TNX/^TYX,Core US Treasury and 10Y real-yield paths are configured; weekly values can be downsampled.
+Wind/workbook label,美国:国债实际收益率:5年期:周,美债!R26C18,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:国债实际收益率:7年期:周,美债!R26C19,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:国债收益率:10年,美国国债!R2C27;主要国家国债收益率利差!R2C9,connected,fred:DGS2/DGS10/DGS30/DFII10/T10Y2Y; market:^TNX/^TYX,Core US Treasury and 10Y real-yield paths are configured; weekly values can be downsampled.
+Wind/workbook label,美国:国债收益率:10年:周,美债!R26C17,connected,fred:DGS2/DGS10/DGS30/DFII10/T10Y2Y; market:^TNX/^TYX,Core US Treasury and 10Y real-yield paths are configured; weekly values can be downsampled.
+Wind/workbook label,美国:国债收益率:1个月,美国国债!R2C18,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:国债收益率:1年,美国国债!R2C22,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:国债收益率:20年,美国国债!R2C28,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:国债收益率:2个月,美国国债!R2C19,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:国债收益率:2年,美国国债!R2C23,connected,fred:DGS2/DGS10/DGS30/DFII10/T10Y2Y; market:^TNX/^TYX,Core US Treasury and 10Y real-yield paths are configured; weekly values can be downsampled.
+Wind/workbook label,美国:国债收益率:2年:周,美债!R26C14,connected,fred:DGS2/DGS10/DGS30/DFII10/T10Y2Y; market:^TNX/^TYX,Core US Treasury and 10Y real-yield paths are configured; weekly values can be downsampled.
+Wind/workbook label,美国:国债收益率:30年,美国国债!R2C29,connected,fred:DGS2/DGS10/DGS30/DFII10/T10Y2Y; market:^TNX/^TYX,Core US Treasury and 10Y real-yield paths are configured; weekly values can be downsampled.
+Wind/workbook label,美国:国债收益率:3个月,美国国债!R2C20,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:国债收益率:3个月:周,美债!R26C13,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:国债收益率:3年,美国国债!R2C24,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:国债收益率:5年,美国国债!R2C25,connected,market:^FVX,5Y Treasury yield proxy is configured in the market watchlist.
+Wind/workbook label,美国:国债收益率:5年:周,美债!R26C15,connected,market:^FVX,5Y Treasury yield proxy is configured in the market watchlist; weekly values can be downsampled.
+Wind/workbook label,美国:国债收益率:6个月,美国国债!R2C21,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:国债收益率:7年,美国国债!R2C26,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:国债收益率:7年:周,美债!R26C16,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:国债收益率:通胀指数国债(TIPS):10年,美国国债!R2C32,connected,fred:DGS2/DGS10/DGS30/DFII10/T10Y2Y; market:^TNX/^TYX,Core US Treasury and 10Y real-yield paths are configured; weekly values can be downsampled.
+Wind/workbook label,美国:国债收益率:通胀指数国债(TIPS):20年,美国国债!R2C33,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:国债收益率:通胀指数国债(TIPS):30年,美国国债!R2C34,partial,fred source available,10Y real yield is configured; 30Y TIPS needs an explicit configured series.
+Wind/workbook label,美国:国债收益率:通胀指数国债(TIPS):5年,美国国债!R2C30,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:国债收益率:通胀指数国债(TIPS):7年,美国国债!R2C31,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:国债收益率:通胀指数国债(TIPS):长期,美国国债!R2C35,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:圣路易斯金融压力指数(周):周,周度数据!R4C17,partial,fred/nyfed source family available,Source family exists; this stress/activity/supply-chain series is absent from configured series.
+Wind/workbook label,美国:圣路易斯金融压力指数(月),月度数据!R4C71,partial,fred/nyfed source family available,Source family exists; this stress/activity/supply-chain series is absent from configured series.
+Wind/workbook label,美国:堪萨斯金融压力指数(月),月度数据!R4C73,partial,fred/nyfed source family available,Source family exists; this stress/activity/supply-chain series is absent from configured series.
+Wind/workbook label,美国:失业率:U1:季调,劳动力市场（月度指标）!R35C99,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:失业率:U2:季调,劳动力市场（月度指标）!R35C100,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:失业率:U3:季调,劳动力市场（月度指标）!R35C101,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:失业率:U4:季调,劳动力市场（月度指标）!R35C102,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:失业率:U5:季调,劳动力市场（月度指标）!R35C103,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:失业率:U6:季调,劳动力市场（月度指标）!R35C104,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:失业率:亚洲裔:季调,劳动力市场（月度指标）!R35C96,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:失业率:季调,月度数据!R4C44;劳动力市场（月度指标）!R35C47;劳动力市场（月度指标）!R35C92,connected,bls:LNS14000000/LNS11300000; fred:UNRATE,Headline unemployment and labor-force participation paths are configured.
+Wind/workbook label,美国:失业率:白人:季调,劳动力市场（月度指标）!R35C93,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:失业率:西班牙裔或拉丁美洲裔:季调,劳动力市场（月度指标）!R35C95,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:失业率:黑人或非洲裔美国人:季调,劳动力市场（月度指标）!R35C94,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:存款机构:资产:总资产,周度数据!R4C22,partial,fed calendar:H.8,Fed H.8 calendar/report source exists; numeric historical timeseries ingestion for this field is absent.
+Wind/workbook label,美国:密歇根大学:5年通胀预期,月度数据!R4C65,partial,umich/fred source family available,U Michigan source exists; this subindex or expectations series is absent from configured series.
+Wind/workbook label,美国:密歇根大学:通胀预期变化,月度数据!R4C64,partial,umich/fred source family available,U Michigan source exists; this subindex or expectations series is absent from configured series.
+Wind/workbook label,美国:密歇根大学消费者信心指数,月度数据!R4C61,partial,umich calendar:UMICH_CONSUMER_SENTIMENT,U Michigan current value connector exists; historical timeseries config is absent.
+Wind/workbook label,美国:密歇根大学消费者现状指数,月度数据!R4C63,partial,umich/fred source family available,U Michigan source exists; this subindex or expectations series is absent from configured series.
+Wind/workbook label,美国:密歇根大学消费者预期指数,月度数据!R4C62,partial,umich/fred source family available,U Michigan source exists; this subindex or expectations series is absent from configured series.
+Wind/workbook label,美国:就业率:季调,劳动力市场（月度指标）!R35C171,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:已开工的新建私人住宅:折年数:季调,月度数据!R4C56,partial,census calendar connector,Census event/value connector covers selected releases; historical timeseries config for this exact field is absent.
+Wind/workbook label,美国:已开工的新建私人住宅:折年数:季调:环比,月度数据!R4C57,partial,census calendar connector,Census event/value connector covers selected releases; historical timeseries config for this exact field is absent.
+Wind/workbook label,美国:建造支出:折年数:季调:环比,月度数据!R4C22,partial,census calendar connector,Census event/value connector covers selected releases; historical timeseries config for this exact field is absent.
+Wind/workbook label,美国:当周初次申请失业金人数:季调:周,周度数据!R4C10,connected,fred:ICSA; dol calendar:INITIAL_CLAIMS,Initial claims is configured in FRED and the DOL calendar connector.
+Wind/workbook label,美国:成屋销售:折年数:季调,月度数据!R4C53,partial,nar calendar:NAR_EXISTING_HOME_SALES,NAR current value connector exists; historical timeseries config for this exact field is absent.
+Wind/workbook label,美国:成屋销售:折年数:季调:环比,月度数据!R4C54,partial,nar calendar:NAR_EXISTING_HOME_SALES,NAR current value connector exists; historical timeseries config for this exact field is absent.
+Wind/workbook label,美国:房屋空置率,季度数据!R5C12,missing,,No matching configured source path found in repo scan.
+Wind/workbook label,美国:持续领取失业金人数:季调:周,周度数据!R4C11,connected,fred:CCSA; dol calendar:CONTINUING_CLAIMS,Continuing claims is configured in FRED and the DOL calendar connector.
+Wind/workbook label,美国:新增非农就业人数:总计:季调,月度数据!R4C42;劳动力市场（月度指标）!R35C57,connected,bls:CES0000000001; fred:PAYEMS,Total nonfarm payroll base series is configured; moving average and changes can be computed downstream.
+Wind/workbook label,美国:新增非农就业人数:总计:季调:3月移动平均,劳动力市场（月度指标）!R35C61,connected,bls:CES0000000001; fred:PAYEMS,Total nonfarm payroll base series is configured; moving average and changes can be computed downstream.
+Wind/workbook label,美国:新增非农就业人数:政府:当月值:季调,劳动力市场（月度指标）!R35C87,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:商品生产:制造业:合计:当月值:季调,劳动力市场（月度指标）!R35C72,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:商品生产:制造业:耐用品:当月值:季调,劳动力市场（月度指标）!R35C73,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:商品生产:制造业:非耐用品:当月值:季调,劳动力市场（月度指标）!R35C74,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:商品生产:建筑业:当月值:季调,劳动力市场（月度指标）!R35C71,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:商品生产:采矿业:当月值:季调,劳动力市场（月度指标）!R35C70,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:服务生产:专业和商业服务:临时支持服务:当月值:季调,劳动力市场（月度指标）!R35C82,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:服务生产:专业和商业服务:当月值:季调,劳动力市场（月度指标）!R35C81,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:服务生产:休闲和酒店业:当月值:季调,劳动力市场（月度指标）!R35C85,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:服务生产:信息业:当月值:季调,劳动力市场（月度指标）!R35C79,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:服务生产:公用事业:当月值:季调,劳动力市场（月度指标）!R35C78,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:服务生产:其他服务业:当月值:季调,劳动力市场（月度指标）!R35C86,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:服务生产:批发业:当月值:季调,劳动力市场（月度指标）!R35C75,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:服务生产:教育和保健服务:医疗保健和社会救助:当月值:季调,劳动力市场（月度指标）!R35C84,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:服务生产:教育和保健服务:当月值:季调,劳动力市场（月度指标）!R35C83,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:服务生产:运输仓储业:当月值:季调,劳动力市场（月度指标）!R35C77,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:服务生产:金融活动:当月值:季调,劳动力市场（月度指标）!R35C80,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:新增非农就业人数:私人:服务生产:零售业:当月值:季调,劳动力市场（月度指标）!R35C76,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:标准普尔/CS房价指数:20个大中城市:当月同比,月度数据!R4C51,partial,fred source available,FRED source exists; Case-Shiller series is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:核心CPI:季调:当月同比,通胀（月度指标）!R39C63,connected,bls:CUUR0000SA0L1E; fred:CPILFESL,Core CPI base series is configured; MoM/YoY transforms can be computed downstream.
+Wind/workbook label,美国:核心CPI:季调:环比,通胀（月度指标）!R39C34,connected,bls:CUUR0000SA0L1E; fred:CPILFESL,Core CPI base series is configured; MoM/YoY transforms can be computed downstream.
+Wind/workbook label,美国:核心CPI:当月同比,月度数据!R4C35,connected,bls:CUUR0000SA0L1E; fred:CPILFESL,Core CPI base series is configured; MoM/YoY transforms can be computed downstream.
+Wind/workbook label,美国:核心PCE:当月同比,月度数据!R4C38,connected,fred:PCEPILFE,Core PCE base index is configured; workbook YoY transform can be computed downstream.
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:商品生产:制造业:小计:季调:同比,劳动力市场（月度指标）!R35C134,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:商品生产:制造业:小计:季调:环比,劳动力市场（月度指标）!R35C111,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:商品生产:制造业:耐用品:季调:同比,劳动力市场（月度指标）!R35C135,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:商品生产:制造业:耐用品:季调:环比,劳动力市场（月度指标）!R35C112,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:商品生产:制造业:非耐用品:季调:同比,劳动力市场（月度指标）!R35C136,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:商品生产:制造业:非耐用品:季调:环比,劳动力市场（月度指标）!R35C113,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:商品生产:合计:季调:同比,劳动力市场（月度指标）!R35C131,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:商品生产:合计:季调:环比,劳动力市场（月度指标）!R35C108,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:商品生产:建筑业:季调:同比,劳动力市场（月度指标）!R35C133,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:商品生产:建筑业:季调:环比,劳动力市场（月度指标）!R35C110,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:商品生产:采矿业:季调:同比,劳动力市场（月度指标）!R35C132,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:商品生产:采矿业:季调:环比,劳动力市场（月度指标）!R35C109,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:总计:季调:同比,劳动力市场（月度指标）!R35C130,connected,bls:CES0500000003,Average hourly earnings base series is configured; MoM/YoY transforms can be computed downstream.
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:总计:季调:环比,月度数据!R4C46;劳动力市场（月度指标）!R35C107,connected,bls:CES0500000003,Average hourly earnings base series is configured; MoM/YoY transforms can be computed downstream.
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:专业和商业服务:季调:同比,劳动力市场（月度指标）!R35C145,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:专业和商业服务:季调:环比,劳动力市场（月度指标）!R35C122,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:休闲和酒店:季调:同比,劳动力市场（月度指标）!R35C147,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:休闲和酒店:季调:环比,劳动力市场（月度指标）!R35C124,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:信息业:季调:同比,劳动力市场（月度指标）!R35C143,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:信息业:季调:环比,劳动力市场（月度指标）!R35C120,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:其他服务业:季调:同比,劳动力市场（月度指标）!R35C148,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:其他服务业:季调:环比,劳动力市场（月度指标）!R35C125,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:合计:季调:同比,劳动力市场（月度指标）!R35C137,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:合计:季调:环比,劳动力市场（月度指标）!R35C114,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:教育和医疗服务:季调:同比,劳动力市场（月度指标）!R35C146,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:教育和医疗服务:季调:环比,劳动力市场（月度指标）!R35C123,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:贸易、运输及公用事业:公用事业:季调:同比,劳动力市场（月度指标）!R35C142,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:贸易、运输及公用事业:公用事业:季调:环比,劳动力市场（月度指标）!R35C119,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:贸易、运输及公用事业:季调:同比,劳动力市场（月度指标）!R35C138,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:贸易、运输及公用事业:季调:环比,劳动力市场（月度指标）!R35C115,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:贸易、运输及公用事业:批发业:季调:同比,劳动力市场（月度指标）!R35C139,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:贸易、运输及公用事业:批发业:季调:环比,劳动力市场（月度指标）!R35C116,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:贸易、运输及公用事业:运输仓储业:季调:同比,劳动力市场（月度指标）!R35C141,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:贸易、运输及公用事业:运输仓储业:季调:环比,劳动力市场（月度指标）!R35C118,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:贸易、运输及公用事业:零售业:季调:同比,劳动力市场（月度指标）!R35C140,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:贸易、运输及公用事业:零售业:季调:环比,劳动力市场（月度指标）!R35C117,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:金融业:季调:同比,劳动力市场（月度指标）!R35C144,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服务生产:金融业:季调:环比,劳动力市场（月度指标）!R35C121,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:粗钢产量:当周值:周,周度数据!R4C2,missing,,Steel production field has no configured equivalent source.
+Wind/workbook label,美国:粗钢产量:当周同比:周,周度数据!R4C4,missing,,Steel production field has no configured equivalent source.
+Wind/workbook label,美国:粗钢产量:环比:周,周度数据!R4C3,missing,,Steel production field has no configured equivalent source.
+Wind/workbook label,美国:红皮书商业零售销售:周同比:周,周度数据!R4C7,missing,,Redbook retail sales field has no configured equivalent source.
+Wind/workbook label,美国:经常项目差额:季调,季度数据!R5C6,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
+Wind/workbook label,美国:经常项目差额占GDP比重:季调,季度数据!R5C7,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
+Wind/workbook label,美国:耐用品:新增订单:季调:当月同比,月度数据!R4C13,partial,census calendar connector,Census event/value connector covers selected releases; historical timeseries config for this exact field is absent.
+Wind/workbook label,美国:耐用品:新增订单:季调:环比,月度数据!R4C11,partial,census calendar connector,Census event/value connector covers selected releases; historical timeseries config for this exact field is absent.
+Wind/workbook label,美国:耐用品除国防外:出货量:季调:-美国:耐用品除国防外:总存货量:季调,月度数据!R4C17,partial,census calendar connector,Census event/value connector covers selected releases; historical timeseries config for this exact field is absent.
+Wind/workbook label,美国:耐用品除国防外:新增订单:季调:当月同比,月度数据!R4C14,partial,census calendar connector,Census event/value connector covers selected releases; historical timeseries config for this exact field is absent.
+Wind/workbook label,美国:耐用品除运输外:新增订单:季调:当月同比,月度数据!R4C15,partial,census calendar connector,Census event/value connector covers selected releases; historical timeseries config for this exact field is absent.
+Wind/workbook label,美国:职位空缺数:非农:总计:季调,月度数据!R4C48,connected,bls:JTS000000000000000JOL,JOLTS headline openings series is configured; rate series needs derivation or an extra BLS id.
+Wind/workbook label,美国:职位空缺数:非农:政府:州和地方政府:季调,劳动力市场（月度指标）!R35C164,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:职位空缺数:非农:政府:总计:季调,劳动力市场（月度指标）!R35C163,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:职位空缺数:非农:私人:专业和商业服务:季调,劳动力市场（月度指标）!R35C157,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:职位空缺数:非农:私人:休闲住宿业:住宿餐饮业:季调,劳动力市场（月度指标）!R35C162,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:职位空缺数:非农:私人:休闲住宿业:季调,劳动力市场（月度指标）!R35C160,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:职位空缺数:非农:私人:休闲住宿业:艺术、娱乐和休闲:季调,劳动力市场（月度指标）!R35C161,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:职位空缺数:非农:私人:制造业:季调,劳动力市场（月度指标）!R35C154,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:职位空缺数:非农:私人:建筑业:季调,劳动力市场（月度指标）!R35C153,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:职位空缺数:非农:私人:总计:季调,劳动力市场（月度指标）!R35C65;劳动力市场（月度指标）!R35C152,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:职位空缺数:非农:私人:教育和保健服务:医疗保健和社会救助:季调,劳动力市场（月度指标）!R35C159,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:职位空缺数:非农:私人:教育和保健服务:季调,劳动力市场（月度指标）!R35C158,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:职位空缺数:非农:私人:贸易运输和公用事业:季调,劳动力市场（月度指标）!R35C155,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:职位空缺数:非农:私人:贸易运输和公用事业:零售业:季调,劳动力市场（月度指标）!R35C156,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:职位空缺率:非农:总计:季调,劳动力市场（月度指标）!R35C172,partial,bls source available,JOLTS openings level is configured; openings rate needs an explicit BLS series mapping.
+Wind/workbook label,美国:芝加哥联储全国活动指数,月度数据!R4C69,partial,fred/nyfed source family available,Source family exists; this stress/activity/supply-chain series is absent from configured series.
+Wind/workbook label,美国:芝加哥联储全国金融状况指数(周):周,周度数据!R4C18,partial,fred/nyfed source family available,Source family exists; this stress/activity/supply-chain series is absent from configured series.
+Wind/workbook label,美国:芝加哥联储全国金融状况指数(月),月度数据!R4C72,partial,fred/nyfed source family available,Source family exists; this stress/activity/supply-chain series is absent from configured series.
+Wind/workbook label,美国:货币流通速度:M2:季调,季度数据!R5C16,partial,fred source available,FRED source exists; M2 velocity series is absent from configured MACRO_SERIES.
+Wind/workbook label,美国:贸易差额:季调,月度数据!R4C30,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
+Wind/workbook label,美国:进口金额:季调:同比,月度数据!R4C28,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
+Wind/workbook label,美国:部门生产力和成本指数:企业:每小时产量:当季同比,季度数据!R5C2,connected,bls:PRS85006092,BLS productivity base series is configured; workbook growth transform can be computed downstream.
+Wind/workbook label,美国:部门生产力和成本指数:企业:每小时产量:环比折年率,季度数据!R5C3,connected,bls:PRS85006092,BLS productivity base series is configured; workbook growth transform can be computed downstream.
+Wind/workbook label,美国:雇佣率:非农:总计:季调,劳动力市场（月度指标）!R35C173,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."
+Wind/workbook label,美国:零售和食品服务销售额:总计:季调:环比,月度数据!R4C6,connected,fred:RSAFS; census calendar:CENSUS_EITS_MARTS_RETAIL_SALES_MOM,Retail sales is configured through FRED and the Census calendar connector.
+Wind/workbook label,美国国债收益率:10年-2年,美国国债!R2C36,connected,fred:DGS2/DGS10/DGS30/DFII10/T10Y2Y; market:^TNX/^TYX,Core US Treasury and 10Y real-yield paths are configured; weekly values can be downsampled.
+Wind/workbook label,英镑兑美元:倒数:周,汇率!R28C19,partial,market adapter available,Market adapter exists; this FX pair is absent from the configured watchlist.
