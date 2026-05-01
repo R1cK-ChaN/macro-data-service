@@ -235,15 +235,15 @@ Wind/workbook label,美国:中小企业乐观指数:季调,月度数据!R4C74,pa
 Wind/workbook label,美国:产能利用率:制造业(NAICS):季调,月度数据!R4C20,partial,fred source available,Industrial production is configured; capacity-utilization series is absent from configured MACRO_SERIES.
 Wind/workbook label,美国:企业债收益率:美银美国AAA级企业债有效收益率:-美国:国债收益率:10年:周,美债!R26C22,partial,fred source available,High-yield OAS and Treasury yields are configured; exact AAA yield spread needs an explicit corporate-yield series and transform.
 Wind/workbook label,美国:企业债收益率:美银美国高收益BB级企业债有效收益率:-美国:国债收益率:10年:周,美债!R26C23,partial,fred source available,High-yield OAS and Treasury yields are configured; exact BB yield spread needs an explicit corporate-yield series and transform.
-Wind/workbook label,美国:住房自有率,季度数据!R5C13,missing,,No matching configured source path found in repo scan.
+Wind/workbook label,美国:住房自有率,季度数据!R5C13,connected,fred:RHORUSQ156N,FRED Census-hosted HVS homeownership rate is configured in MACRO_SERIES and concept_map.
 Wind/workbook label,美国:供应管理协会(ISM):制造业PMI,美国ISM制造业PMI（月度指标）!R22C20,partial,ism calendar:ISM_MANUFACTURING_PMI,ISM Manufacturing headline current-value connector exists; historical timeseries and transform layer are absent.
 Wind/workbook label,美国:供应管理协会(ISM):制造业PMI:环比增加,美国ISM制造业PMI（月度指标）!R22C33,partial,ism calendar:ISM_MANUFACTURING_PMI,ISM Manufacturing headline current-value connector exists; historical timeseries and transform layer are absent.
 Wind/workbook label,美国:全球供应链压力指数(GSCPI),月度数据!R4C70,missing,,NY Fed GSCPI needs a configured source path.
 Wind/workbook label,美国:全部工业部门产能利用率,月度数据!R4C19,partial,fred source available,Industrial production is configured; capacity-utilization series is absent from configured MACRO_SERIES.
 Wind/workbook label,美国:出口金额:季调:同比,月度数据!R4C26,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
-Wind/workbook label,美国:出租空置率,季度数据!R5C11,missing,,No matching configured source path found in repo scan.
+Wind/workbook label,美国:出租空置率,季度数据!R5C11,connected,fred:RRVRUSQ156N,FRED Census-hosted HVS rental vacancy rate is configured in MACRO_SERIES and concept_map.
 Wind/workbook label,美国:劳动力参与率:季调,劳动力市场（月度指标）!R35C48;劳动力市场（月度指标）!R35C170,connected,bls:LNS14000000/LNS11300000; fred:UNRATE,Headline unemployment and labor-force participation paths are configured.
-Wind/workbook label,美国:周度经济指数:周,周度数据!R4C19,missing,,Weekly Economic Index source is absent from configured fetch paths.
+Wind/workbook label,美国:周度经济指数:周,周度数据!R4C19,connected,fred:WEI,Weekly Economic Index is configured in MACRO_SERIES and concept_map.
 Wind/workbook label,美国:国债实际收益率:10年期:周,美债!R26C20,connected,fred:DGS2/DGS10/DGS30/DFII10/T10Y2Y; market:^TNX/^TYX,Core US Treasury and 10Y real-yield paths are configured; weekly values can be downsampled.
 Wind/workbook label,美国:国债实际收益率:5年期:周,美债!R26C18,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
 Wind/workbook label,美国:国债实际收益率:7年期:周,美债!R26C19,partial,fred/market source available,US Treasury source family exists; this maturity or TIPS tenor is absent from configured MACRO_SERIES.
@@ -297,7 +297,7 @@ Wind/workbook label,美国:建造支出:折年数:季调:环比,月度数据!R4C
 Wind/workbook label,美国:当周初次申请失业金人数:季调:周,周度数据!R4C10,connected,fred:ICSA; dol calendar:INITIAL_CLAIMS,Initial claims is configured in FRED and the DOL calendar connector.
 Wind/workbook label,美国:成屋销售:折年数:季调,月度数据!R4C53,partial,nar calendar:NAR_EXISTING_HOME_SALES,NAR current value connector exists; historical timeseries config for this exact field is absent.
 Wind/workbook label,美国:成屋销售:折年数:季调:环比,月度数据!R4C54,partial,nar calendar:NAR_EXISTING_HOME_SALES,NAR current value connector exists; historical timeseries config for this exact field is absent.
-Wind/workbook label,美国:房屋空置率,季度数据!R5C12,missing,,No matching configured source path found in repo scan.
+Wind/workbook label,美国:房屋空置率,季度数据!R5C12,connected,fred:RHVRUSQ156N,FRED Census-hosted HVS homeowner vacancy rate is configured in MACRO_SERIES and concept_map.
 Wind/workbook label,美国:持续领取失业金人数:季调:周,周度数据!R4C11,connected,fred:CCSA; dol calendar:CONTINUING_CLAIMS,Continuing claims is configured in FRED and the DOL calendar connector.
 Wind/workbook label,美国:新增非农就业人数:总计:季调,月度数据!R4C42;劳动力市场（月度指标）!R35C57,connected,bls:CES0000000001; fred:PAYEMS,Total nonfarm payroll base series is configured; moving average and changes can be computed downstream.
 Wind/workbook label,美国:新增非农就业人数:总计:季调:3月移动平均,劳动力市场（月度指标）!R35C61,connected,bls:CES0000000001; fred:PAYEMS,Total nonfarm payroll base series is configured; moving average and changes can be computed downstream.

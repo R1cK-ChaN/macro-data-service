@@ -79,8 +79,8 @@ Current coverage status remains a repo-configuration finding. A field marked mis
 | China 10Y government yield | Market lane through EODHD `CN10Y.GBOND`; ChinaBond official path for official parity | Add EODHD GBOND market config and keep ChinaBond as the official-source parity path. |
 | Germany yields | Bundesbank daily federal securities yields; EODHD GBOND as market backup where available | Add Bundesbank mappings for 2Y/5Y/7Y/10Y/15Y/30Y and optional EODHD GBOND market rows. |
 | Japan yields | Japan MOF JGB interest-rate CSV; EODHD GBOND as market backup where available | Add Japan MOF mappings for 1Y/2Y/3Y/5Y/7Y/10Y/30Y and optional EODHD GBOND market rows. |
-| WEI | FRED/Dallas Fed `WEI` | Add FRED series config. |
-| Housing vacancy and homeownership | Census HVS official data or FRED Census-hosted mirrors `RHORUSQ156N`, `RRVRUSQ156N`, `RHVRUSQ156N` | Add FRED/Census HVS series config. |
+| WEI | FRED/Dallas Fed `WEI` | Connected in issue #112 slice 2 through FRED `MACRO_SERIES`, obs-family, concept-map, release-schedule, and subject aliases. |
+| Housing vacancy and homeownership | Census HVS official data or FRED Census-hosted mirrors `RHORUSQ156N`, `RRVRUSQ156N`, `RHVRUSQ156N` | Connected in issue #112 slice 2 through FRED Census-hosted HVS series, obs-families, concept-map, release-schedules, and subject aliases. |
 | Sector leverage ratios | BIS Total Credit Statistics | Add Total Credit mappings for government, households, and non-financial corporations. |
 | GSCPI | NY Fed GSCPI research-product data | Add NY Fed GSCPI fetch/config. |
 | Redbook weekly YoY | Redbook Research / Johnson Redbook official or authorized source | Decide authorized source and add connector/config. |
@@ -103,4 +103,4 @@ The workbook liquidity sheet is connected through existing FRED/Treasury paths:
 
 Full field-level map: `docs/validation/us_workbook_coverage_2026-05-01.csv`
 
-Recommended implementation sequence: add market-lane EODHD MOVE/GBOND rows, add FRED/Census official series for WEI and HVS fields, add BIS Total Credit mappings, then add NY Fed GSCPI, Bundesbank yields, Japan MOF yields, AISI weekly steel, and full ISM official report parsing. Licensed-source decisions remain for Redbook, Sentix US, SOFR-OIS, and exact Wind/Bloomberg parity.
+Recommended implementation sequence: add BIS Total Credit mappings, then add NY Fed GSCPI, Bundesbank yields, Japan MOF yields, AISI weekly steel, and full ISM official report parsing. Licensed-source decisions remain for Redbook, Sentix US, SOFR-OIS, and exact Wind/Bloomberg parity.

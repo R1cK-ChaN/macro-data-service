@@ -49,6 +49,7 @@ MACRO_SERIES = {
     "GDPC1": {"name": "Real GDP", "category": "growth", "freq": "quarterly"},
     "RSAFS": {"name": "Retail Sales", "category": "growth", "freq": "monthly"},
     "INDPRO": {"name": "Industrial Production", "category": "growth", "freq": "monthly"},
+    "WEI": {"name": "Weekly Economic Index", "category": "growth", "freq": "weekly"},
     "DFF": {"name": "Fed Funds Rate", "category": "rates", "freq": "daily"},
     "DGS2": {"name": "2Y Treasury Yield", "category": "rates", "freq": "daily"},
     "DGS10": {"name": "10Y Treasury Yield", "category": "rates", "freq": "daily"},
@@ -62,6 +63,9 @@ MACRO_SERIES = {
     "DTWEXBGS": {"name": "Broad Dollar Index", "category": "fx", "freq": "daily"},
     "DEXCHUS": {"name": "CNY/USD Exchange Rate", "category": "fx", "freq": "daily"},
     "BAMLH0A0HYM2": {"name": "High Yield OAS", "category": "credit", "freq": "daily"},
+    "RHORUSQ156N": {"name": "Homeownership Rate", "category": "housing", "freq": "quarterly"},
+    "RRVRUSQ156N": {"name": "Rental Vacancy Rate", "category": "housing", "freq": "quarterly"},
+    "RHVRUSQ156N": {"name": "Homeowner Vacancy Rate", "category": "housing", "freq": "quarterly"},
     # VIXCLS is required here (not just in _CONCEPT_MAP_DEFS) because
     # FredFetcher.fetch_series reads MACRO_SERIES directly — omitting it
     # would leave VIX_US empty after fred_daily / fred_full cycles, and

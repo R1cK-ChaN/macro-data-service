@@ -87,6 +87,35 @@ subjects:
       title_regex:
         - '\bretail sales\b'
 
+  - id: econ.us.wei
+    display: "US Weekly Economic Index"
+    aliases:
+      fred_series: [WEI]
+      title_regex:
+        - '\bweekly economic index\b'
+        - '(?-i:\bWEI\b)'
+
+  - id: housing.us.homeownership
+    display: "US Homeownership Rate"
+    aliases:
+      fred_series: [RHORUSQ156N]
+      title_regex:
+        - '\bhomeownership rate\b'
+
+  - id: housing.us.rental_vacancy
+    display: "US Rental Vacancy Rate"
+    aliases:
+      fred_series: [RRVRUSQ156N]
+      title_regex:
+        - '\brental vacancy rate\b'
+
+  - id: housing.us.homeowner_vacancy
+    display: "US Homeowner Vacancy Rate"
+    aliases:
+      fred_series: [RHVRUSQ156N]
+      title_regex:
+        - '\bhomeowner vacancy rate\b'
+
   # ----- Central bank rates -----
 
   - id: rate.us.fed_funds

@@ -79,6 +79,10 @@ def test_tagger_title_regex(store: SQLiteEngineStore) -> None:
     assert hits == [("econ.cpi", TITLE_CONFIDENCE)]
     hits = tagger.tag_text("Nonfarm payrolls beat forecasts")
     assert ("econ.us.nfp", TITLE_CONFIDENCE) in hits
+    hits = tagger.tag_text("WEI improves as weekly activity firms")
+    assert ("econ.us.wei", TITLE_CONFIDENCE) in hits
+    hits = tagger.tag_text("Wei says China demand remains soft")
+    assert ("econ.us.wei", TITLE_CONFIDENCE) not in hits
 
 
 def test_tagger_structured_alias(store: SQLiteEngineStore) -> None:
@@ -125,6 +129,10 @@ def test_tagger_structured_dedups_across_alias_types(
         ("UNEMP_US", "econ.unemployment"),
         ("GDP_REAL_US", "econ.gdp"),
         ("RETAIL_SALES_US", "econ.retail_sales"),
+        ("WEI_US", "econ.us.wei"),
+        ("HOMEOWNERSHIP_RATE_US", "housing.us.homeownership"),
+        ("RENTAL_VACANCY_RATE_US", "housing.us.rental_vacancy"),
+        ("HOMEOWNER_VACANCY_RATE_US", "housing.us.homeowner_vacancy"),
         ("TREASURY_2Y_US", "rate.us.2y"),
         ("TREASURY_10Y_US", "rate.us.10y"),
         ("DOLLAR_INDEX_US", "fx.dxy"),

@@ -53,6 +53,7 @@ _FRED_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "GDPC1":        ("us.growth.gdp_real",             "Real GDP",                    "billions_usd", "quarterly", "saar"),
     "RSAFS":        ("us.growth.retail_sales",         "Retail Sales",                "millions_usd", "monthly",   "sa"),
     "INDPRO":       ("us.growth.industrial_production","Industrial Production",       "index",        "monthly",   "sa"),
+    "WEI":          ("us.growth.weekly_economic_index","Weekly Economic Index",        "percent",      "weekly",    "nsa"),
     "DFF":          ("us.rates.fed_funds",             "Fed Funds Rate",              "percent",      "daily",     "none"),
     "DGS2":         ("us.rates.treasury_2y",           "2Y Treasury Yield",           "percent",      "daily",     "none"),
     "DGS10":        ("us.rates.treasury_10y",          "10Y Treasury Yield",          "percent",      "daily",     "none"),
@@ -66,6 +67,9 @@ _FRED_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "DTWEXBGS":     ("us.fx.dollar_index_broad",       "Broad Dollar Index",          "index",        "daily",     "none"),
     "DEXCHUS":      ("us.fx.cny_usd",                  "CNY/USD Exchange Rate",       "ratio",        "daily",     "none"),
     "BAMLH0A0HYM2": ("us.credit.hy_oas",              "High Yield OAS",              "percent",      "daily",     "none"),
+    "RHORUSQ156N":  ("us.housing.homeownership_rate",  "Homeownership Rate",          "percent",      "quarterly", "nsa"),
+    "RRVRUSQ156N":  ("us.housing.rental_vacancy_rate", "Rental Vacancy Rate",         "percent",      "quarterly", "nsa"),
+    "RHVRUSQ156N":  ("us.housing.homeowner_vacancy_rate", "Homeowner Vacancy Rate",    "percent",      "quarterly", "nsa"),
     "VIXCLS":       ("us.markets.vix",                 "CBOE VIX",                    "index",        "daily",     "none"),
 }
 
@@ -902,6 +906,7 @@ class _IndicatorQueriesMixin:
         ("GDP_REAL_US",         "fred",           "GDPC1",          "us.growth.gdp_real",            1, "primary",     "SAAR, chained 2017$"),
         ("RETAIL_SALES_US",     "fred",           "RSAFS",          "us.growth.retail_sales",        1, "primary",     "SA"),
         ("INDPRO_US",           "fred",           "INDPRO",         "us.growth.industrial_production",1,"primary",    "SA, index"),
+        ("WEI_US",              "fred",           "WEI",            "us.growth.weekly_economic_index",1,"primary",    "Weekly Economic Index, NSA"),
         ("GDP_GROWTH_WB_US",    "worldbank",      "WB_GDP_GROWTH_US","us.growth.gdp_growth_wb",      1, "primary",     "Annual % growth"),
         #
         # ── US Rates ─────────────────────────────────────────────────
@@ -936,6 +941,9 @@ class _IndicatorQueriesMixin:
         #
         # ── US Property ──────────────────────────────────────────────
         ("PROPERTY_US",         "bis",            "BIS_PROPERTY_US","us.property.real",              1, "primary",     "Real property prices"),
+        ("HOMEOWNERSHIP_RATE_US","fred",           "RHORUSQ156N",    "us.housing.homeownership_rate", 1, "primary",     "Census HVS, NSA"),
+        ("RENTAL_VACANCY_RATE_US","fred",          "RRVRUSQ156N",    "us.housing.rental_vacancy_rate",1, "primary",     "Census HVS, NSA"),
+        ("HOMEOWNER_VACANCY_RATE_US","fred",       "RHVRUSQ156N",    "us.housing.homeowner_vacancy_rate",1,"primary",   "Census HVS, NSA"),
         #
         # ── US Fiscal ────────────────────────────────────────────────
         ("DEBT_US",             "treasury_fiscal","TREAS_DEBT_TOTAL","us.fiscal.debt_outstanding",   1, "primary",     "Daily total debt"),

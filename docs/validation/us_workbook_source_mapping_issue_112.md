@@ -2,7 +2,7 @@
 
 Date: 2026-05-01
 Issue: #112
-Slice: EODHD market-lane MOVE and GBOND mappings
+Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings
 
 ## Implemented Rows
 
@@ -30,7 +30,19 @@ macro-lane instrument-id separation, clean quality flags for GBOND rate bars,
 quote-only MOVE handling, rate-aware zero/negative yield handling, and
 percent-formatted rate summaries.
 
-Remaining source families for later slices: FRED/Census WEI and HVS fields,
-BIS Total Credit leverage ratios, NY Fed GSCPI, Bundesbank official yields,
-Japan MOF official yields, AISI weekly steel, ISM subcomponents, Redbook,
-Sentix US, SOFR-OIS, and exact Wind/Bloomberg parity.
+## FRED WEI/HVS Rows
+
+| Workbook family | FRED series | Concept id | Obs family |
+| --- | --- | --- | --- |
+| Weekly Economic Index | `WEI` | `WEI_US` | `us.growth.weekly_economic_index` |
+| Homeownership rate | `RHORUSQ156N` | `HOMEOWNERSHIP_RATE_US` | `us.housing.homeownership_rate` |
+| Rental vacancy rate | `RRVRUSQ156N` | `RENTAL_VACANCY_RATE_US` | `us.housing.rental_vacancy_rate` |
+| Homeowner vacancy rate | `RHVRUSQ156N` | `HOMEOWNER_VACANCY_RATE_US` | `us.housing.homeowner_vacancy_rate` |
+
+Focused tests cover FRED config presence, obs-family seeding, concept-map
+seeding, and FRED source discovery for the workbook HVS and WEI rows.
+
+Remaining source families for later slices: BIS Total Credit leverage ratios,
+NY Fed GSCPI, Bundesbank official yields, Japan MOF official yields, AISI
+weekly steel, ISM subcomponents, Redbook, Sentix US, SOFR-OIS, and exact
+Wind/Bloomberg parity.

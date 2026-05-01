@@ -1759,6 +1759,7 @@ class _CalendarQueriesMixin:
         ("GDP_REAL_US",         "quarter_lag",      {"lag_days": 30},                       "quarterly","12:30", "America/New_York", "pattern", "BEA advance GDP ~T+30"),
         ("RETAIL_SALES_US",     "day_of_month",     {"day": 15, "tolerance_days": 3},       "monthly",  "12:30", "America/New_York", "pattern", "Census ~15th"),
         ("INDPRO_US",           "day_of_month",     {"day": 16, "tolerance_days": 3},       "monthly",  "13:15", "America/New_York", "pattern", "Fed ~16th"),
+        ("WEI_US",              "weekly",           {"weekday": 3},                         "weekly",   "",      "",                 "pattern", "FRED WEI weekly Thursday"),
         ("GDP_GROWTH_WB_US",    "approximate_window", {"month_offset": 6, "window_days": 60}, "annual",  "",     "",                 "approximate", "World Bank annual"),
         # ── US Rates ──────────────────────────────────────────────────
         ("POLICY_RATE_US",      "daily",            {},                                     "daily",    "",      "",                 "pattern", "NY Fed EFFR daily"),
@@ -1782,6 +1783,9 @@ class _CalendarQueriesMixin:
         ("CREDIT_GAP_US",       "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
         # ── US Property ───────────────────────────────────────────────
         ("PROPERTY_US",         "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
+        ("HOMEOWNERSHIP_RATE_US","quarter_lag",      {"lag_days": 28},                       "quarterly","10:00", "America/New_York", "pattern", "Census HVS quarterly"),
+        ("RENTAL_VACANCY_RATE_US","quarter_lag",     {"lag_days": 28},                       "quarterly","10:00", "America/New_York", "pattern", "Census HVS quarterly"),
+        ("HOMEOWNER_VACANCY_RATE_US","quarter_lag",  {"lag_days": 28},                       "quarterly","10:00", "America/New_York", "pattern", "Census HVS quarterly"),
         # ── US Fiscal ─────────────────────────────────────────────────
         ("DEBT_US",             "daily",            {},                                     "daily",    "",      "",                 "pattern", "Treasury daily"),
         ("AVG_INTEREST_RATE_US","day_of_month",     {"day": 1, "tolerance_days": 5},        "monthly",  "",      "",                 "pattern", "Treasury ~1st"),
