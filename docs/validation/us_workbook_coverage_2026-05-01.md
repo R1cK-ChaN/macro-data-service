@@ -69,8 +69,38 @@ Workbook source labels:
 | Market volatility | partial | VIX is configured; MOVE needs a configured source path. |
 | GSCPI | missing | NY Fed GSCPI needs a configured source path. |
 
+## Source Policy For Follow-Up Wiring
+
+Current coverage status remains a repo-configuration finding. A field marked missing can still have an available vendor or official source path outside the current configured universe.
+
+| Gap family | Canonical source path | Repo action |
+| --- | --- | --- |
+| MOVE index | Market lane through EODHD `MOVE.INDX`; official reference is ICE MOVE | Add `MOVE.INDX` to the EODHD market universe/config. |
+| China 10Y government yield | Market lane through EODHD `CN10Y.GBOND`; ChinaBond official path for official parity | Add EODHD GBOND market config and keep ChinaBond as the official-source parity path. |
+| Germany yields | Bundesbank daily federal securities yields; EODHD GBOND as market backup where available | Add Bundesbank mappings for 2Y/5Y/7Y/10Y/15Y/30Y and optional EODHD GBOND market rows. |
+| Japan yields | Japan MOF JGB interest-rate CSV; EODHD GBOND as market backup where available | Add Japan MOF mappings for 1Y/2Y/3Y/5Y/7Y/10Y/30Y and optional EODHD GBOND market rows. |
+| WEI | FRED/Dallas Fed `WEI` | Add FRED series config. |
+| Housing vacancy and homeownership | Census HVS official data or FRED Census-hosted mirrors `RHORUSQ156N`, `RRVRUSQ156N`, `RHVRUSQ156N` | Add FRED/Census HVS series config. |
+| Sector leverage ratios | BIS Total Credit Statistics | Add Total Credit mappings for government, households, and non-financial corporations. |
+| GSCPI | NY Fed GSCPI research-product data | Add NY Fed GSCPI fetch/config. |
+| Redbook weekly YoY | Redbook Research / Johnson Redbook official or authorized source | Decide authorized source and add connector/config. |
+| Weekly raw steel production | AISI weekly raw steel production page | Add AISI scraper for weekly value, WoW, and YoY fields. |
+| ISM manufacturing/services subcomponents | ISM official PMI report pages | Extend the ISM connector beyond Manufacturing PMI headline to full manufacturing/services subcomponents. |
+| Sentix US current/expectations/headline | Sentix official account or authorized data vendor | Decide authorized source and add connector/config. |
+| SOFR-OIS / `USSOC BGN Curncy` | Bloomberg BGN or licensed SOFR OIS curve vendor | Store as a rates-market quote/curve series with raw snapshots. |
+
+EODHD remains a market/quote source for exchange, FX, index, GBOND, and related quote-style observations. Canonical economic ingestion uses official sources with vintage/as-of support where available, or repo-owned raw snapshots from first ingestion onward.
+
+The workbook liquidity sheet is connected through existing FRED/Treasury paths:
+
+| Workbook field | Current repo source path | Status |
+| --- | --- | --- |
+| `FARBLIAB Index` / Fed balance sheet | FRED `WALCL` | connected |
+| `FARBDTRS Index` / TGA | FRED `WTREGEN`; Treasury Fiscal Data `TREAS_TGA_BALANCE` | connected |
+| `FARWRRA Index` / reverse repo | FRED `RRPONTSYD` | connected |
+
 ## Field-Level Map
 
 Full field-level map: `docs/validation/us_workbook_coverage_2026-05-01.csv`
 
-Recommended implementation sequence: add source mappings for the partial official-source families first, then decide whether exact Wind/Bloomberg parity requires licensed adapters.
+Recommended implementation sequence: add market-lane EODHD MOVE/GBOND rows, add FRED/Census official series for WEI and HVS fields, add BIS Total Credit mappings, then add NY Fed GSCPI, Bundesbank yields, Japan MOF yields, AISI weekly steel, and full ISM official report parsing. Licensed-source decisions remain for Redbook, Sentix US, SOFR-OIS, and exact Wind/Bloomberg parity.
