@@ -51,6 +51,12 @@ class _FakeNYFedRate:
 
 
 @dataclass(frozen=True)
+class _FakeNYFedGSCPI:
+    date: str = "2024-01-31"
+    value: float = 0.5
+
+
+@dataclass(frozen=True)
 class _FakeSDMXObs:
     series_id: str = "TEST"
     date: str = "2024-01-01"
@@ -210,10 +216,14 @@ class TestNYFedFetcher:
         mock_client.fetch_sofr.return_value = [_FakeNYFedRate(type="SOFR", rate=5.33)]
         mock_client.fetch_effr.return_value = [_FakeNYFedRate(type="EFFR", rate=5.33)]
         mock_client.fetch_obfr.return_value = [_FakeNYFedRate(type="OBFR", rate=5.32)]
+        mock_client.fetch_gscpi.return_value = [_FakeNYFedGSCPI()]
         fetcher = NYFedFetcher(client=mock_client)
         results = fetcher.fetch()
-        assert len(results) == 3
+        assert len(results) == 4
         assert all(r.source == "nyfed" for r in results)
+        assert {r.series_id for r in results} == {
+            "NYFED_SOFR", "NYFED_EFFR", "NYFED_OBFR", "NYFED_GSCPI",
+        }
 
 
 class TestSDMXFetcher:

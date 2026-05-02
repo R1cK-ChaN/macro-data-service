@@ -460,6 +460,7 @@ Markets API (`markets.newyorkfed.org`).
 | `fetch_effr(last_n=5)` | `list[NYFedRate]` | Last N EFFR observations |
 | `fetch_obfr(last_n=5)` | `list[NYFedRate]` | Last N OBFR observations |
 | `fetch_all_rates(last_n=5)` | `list[NYFedRate]` | All three rate types with 0.5 s delay between |
+| `fetch_gscpi(last_n=30)` | `list[NYFedGSCPI]` | NY Fed Global Supply Chain Pressure Index workbook observations |
 
 **`NYFedRate` fields:**
 
@@ -476,8 +477,17 @@ Markets API (`markets.newyorkfed.org`).
 | `target_rate_from` | `float \| None` | `4.25` (EFFR only) |
 | `target_rate_to` | `float \| None` | `4.50` (EFFR only) |
 
+**`NYFedGSCPI` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `date` | `str` | `"2026-03-31"` |
+| `value` | `float` | `0.6769936396` |
+
 **Storage:** Upserted into `indicators` table as `NYFED_SOFR`,
-`NYFED_EFFR`, `NYFED_OBFR` series (source `nyfed`), value = rate.
+`NYFED_EFFR`, `NYFED_OBFR`, and `NYFED_GSCPI` series (source `nyfed`).
+Rate-series values are percent rates; `NYFED_GSCPI` values are the NY Fed
+standard-deviation index levels from `gscpi_data.xlsx`.
 
 ---
 

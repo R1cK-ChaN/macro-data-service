@@ -83,6 +83,8 @@ def test_tagger_title_regex(store: SQLiteEngineStore) -> None:
     assert ("econ.us.wei", TITLE_CONFIDENCE) in hits
     hits = tagger.tag_text("Wei says China demand remains soft")
     assert ("econ.us.wei", TITLE_CONFIDENCE) not in hits
+    hits = tagger.tag_text("GSCPI points to firmer supply chain pressure")
+    assert ("econ.us.gscpi", TITLE_CONFIDENCE) in hits
 
 
 def test_tagger_structured_alias(store: SQLiteEngineStore) -> None:
@@ -97,6 +99,9 @@ def test_tagger_structured_alias(store: SQLiteEngineStore) -> None:
     # NY Fed series (information-layer addition)
     assert tagger.tag_alias("ny_fed_series", "SOFR") == [
         ("rate.us.sofr", STRUCTURED_CONFIDENCE)
+    ]
+    assert tagger.tag_alias("ny_fed_series", "NYFED_GSCPI") == [
+        ("econ.us.gscpi", STRUCTURED_CONFIDENCE)
     ]
     # Calendar indicator (case-insensitive)
     assert tagger.tag_alias("calendar_indicator", "core cpi") == [
@@ -130,6 +135,7 @@ def test_tagger_structured_dedups_across_alias_types(
         ("GDP_REAL_US", "econ.gdp"),
         ("RETAIL_SALES_US", "econ.retail_sales"),
         ("WEI_US", "econ.us.wei"),
+        ("GSCPI_US", "econ.us.gscpi"),
         ("HOMEOWNERSHIP_RATE_US", "housing.us.homeownership"),
         ("RENTAL_VACANCY_RATE_US", "housing.us.rental_vacancy"),
         ("HOMEOWNER_VACANCY_RATE_US", "housing.us.homeowner_vacancy"),

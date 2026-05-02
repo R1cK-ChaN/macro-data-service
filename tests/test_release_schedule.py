@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from ingestion.release_schedule import (
     _next_day_of_month,
     _next_weekday_of_month,
+    _next_business_day_of_month,
     _next_quarter_lag,
     _next_daily,
     _next_weekly,
@@ -90,6 +91,42 @@ class TestNextWeekdayOfMonth:
         assert result.month == 4
         assert result.day == 3
         assert result.weekday() == 4
+
+
+class TestNextBusinessDayOfMonth:
+    def test_fourth_business_day_future(self):
+        ref = datetime(2026, 4, 1, tzinfo=timezone.utc)
+        result = _next_business_day_of_month({"ordinal": 4}, ref)
+        assert result is not None
+        assert result.date().isoformat() == "2026-04-06"
+
+    def test_fourth_business_day_past(self):
+        ref = datetime(2026, 4, 7, tzinfo=timezone.utc)
+        result = _next_business_day_of_month({"ordinal": 4}, ref)
+        assert result is not None
+        assert result.date().isoformat() == "2026-05-06"
+
+    def test_fourth_business_day_uses_us_federal_holiday_calendar(self):
+        ref = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        result = _next_business_day_of_month(
+            {"ordinal": 4, "calendar": "us_federal"}, ref,
+        )
+        assert result is not None
+        assert result.date().isoformat() == "2026-01-07"
+
+    def test_local_release_time_converts_to_utc(self):
+        ref = datetime(2026, 5, 1, tzinfo=timezone.utc)
+        result = _next_business_day_of_month(
+            {
+                "ordinal": 4,
+                "calendar": "us_federal",
+                "time": "10:00",
+                "timezone": "America/New_York",
+            },
+            ref,
+        )
+        assert result is not None
+        assert result.isoformat() == "2026-05-06T14:00:00+00:00"
 
 
 class TestNextQuarterLag:

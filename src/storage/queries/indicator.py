@@ -94,6 +94,7 @@ _NYFED_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "NYFED_SOFR": ("us.rates.sofr", "Secured Overnight Financing Rate", "percent", "daily", "none"),
     "NYFED_EFFR": ("us.rates.effr", "Effective Federal Funds Rate",     "percent", "daily", "none"),
     "NYFED_OBFR": ("us.rates.obfr", "Overnight Bank Funding Rate",     "percent", "daily", "none"),
+    "NYFED_GSCPI": ("us.supply_chain.gscpi", "Global Supply Chain Pressure Index", "index", "monthly", "none"),
 }
 
 _RATEPROBABILITY_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
@@ -911,6 +912,7 @@ class _IndicatorQueriesMixin:
         ("INDPRO_US",           "fred",           "INDPRO",         "us.growth.industrial_production",1,"primary",    "SA, index"),
         ("WEI_US",              "fred",           "WEI",            "us.growth.weekly_economic_index",1,"primary",    "Weekly Economic Index, NSA"),
         ("GDP_GROWTH_WB_US",    "worldbank",      "WB_GDP_GROWTH_US","us.growth.gdp_growth_wb",      1, "primary",     "Annual % growth"),
+        ("GSCPI_US",            "nyfed",          "NYFED_GSCPI",    "us.supply_chain.gscpi",          1, "primary",     "NY Fed Global Supply Chain Pressure Index"),
         #
         # ── US Rates ─────────────────────────────────────────────────
         ("POLICY_RATE_US",      "nyfed",          "NYFED_EFFR",     "us.rates.effr",                 1, "primary",     "NY Fed EFFR"),

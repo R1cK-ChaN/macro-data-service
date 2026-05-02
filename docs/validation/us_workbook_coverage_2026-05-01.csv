@@ -225,12 +225,12 @@ Wind/workbook label,美国:ISM:非制造业PMI:进口,美国ISM制造业PMI（�
 Wind/workbook label,美国:ISM:非制造业PMI:进口:环比增加,美国ISM制造业PMI（月度指标）!R22C70,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
 Wind/workbook label,美国:M2:季调:同比,月度数据!R4C78,connected,fred:M2SL,M2 base series is configured; growth transforms can be computed downstream.
 Wind/workbook label,美国:M2:季调:环比,月度数据!R4C77,connected,fred:M2SL,M2 base series is configured; growth transforms can be computed downstream.
-Wind/workbook label,美国:PCE:当月同比,月度数据!R4C37,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
+Wind/workbook label,美国:PCE:当月同比,月度数据!R4C37,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source paths exist; this exact field needs scheduled timeseries sync.
 Wind/workbook label,美国:Sentix投资信心指数,月度数据!R4C66,missing,,Sentix source connector is absent.
 Wind/workbook label,美国:Sentix投资信心指数:核心现状指数,月度数据!R4C67,missing,,Sentix source connector is absent.
 Wind/workbook label,美国:Sentix投资信心指数:核心预期指数,月度数据!R4C68,missing,,Sentix source connector is absent.
-Wind/workbook label,美国:个人总支出:个人消费支出:季调:折年数:环比,月度数据!R4C4,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
-Wind/workbook label,美国:个人总收入:季调:折年数:环比,月度数据!R4C2,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
+Wind/workbook label,美国:个人总支出:个人消费支出:季调:折年数:环比,月度数据!R4C4,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source paths exist; this exact field needs scheduled timeseries sync.
+Wind/workbook label,美国:个人总收入:季调:折年数:环比,月度数据!R4C2,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source paths exist; this exact field needs scheduled timeseries sync.
 Wind/workbook label,美国:中小企业乐观指数:季调,月度数据!R4C74,partial,fred source available,FRED source exists; NFIB series is absent from configured MACRO_SERIES.
 Wind/workbook label,美国:产能利用率:制造业(NAICS):季调,月度数据!R4C20,partial,fred source available,Industrial production is configured; capacity-utilization series is absent from configured MACRO_SERIES.
 Wind/workbook label,美国:企业债收益率:美银美国AAA级企业债有效收益率:-美国:国债收益率:10年:周,美债!R26C22,partial,fred source available,High-yield OAS and Treasury yields are configured; exact AAA yield spread needs an explicit corporate-yield series and transform.
@@ -238,9 +238,9 @@ Wind/workbook label,美国:企业债收益率:美银美国高收益BB级企业�
 Wind/workbook label,美国:住房自有率,季度数据!R5C13,connected,fred:RHORUSQ156N,FRED Census-hosted HVS homeownership rate is configured in MACRO_SERIES and concept_map.
 Wind/workbook label,美国:供应管理协会(ISM):制造业PMI,美国ISM制造业PMI（月度指标）!R22C20,partial,ism calendar:ISM_MANUFACTURING_PMI,ISM Manufacturing headline current-value connector exists; historical timeseries and transform layer are absent.
 Wind/workbook label,美国:供应管理协会(ISM):制造业PMI:环比增加,美国ISM制造业PMI（月度指标）!R22C33,partial,ism calendar:ISM_MANUFACTURING_PMI,ISM Manufacturing headline current-value connector exists; historical timeseries and transform layer are absent.
-Wind/workbook label,美国:全球供应链压力指数(GSCPI),月度数据!R4C70,missing,,NY Fed GSCPI needs a configured source path.
+Wind/workbook label,美国:全球供应链压力指数(GSCPI),月度数据!R4C70,connected,nyfed:NYFED_GSCPI,NY Fed GSCPI research-data path is configured in the NY Fed fetcher and concept_map.
 Wind/workbook label,美国:全部工业部门产能利用率,月度数据!R4C19,partial,fred source available,Industrial production is configured; capacity-utilization series is absent from configured MACRO_SERIES.
-Wind/workbook label,美国:出口金额:季调:同比,月度数据!R4C26,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
+Wind/workbook label,美国:出口金额:季调:同比,月度数据!R4C26,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source paths exist; this exact field needs scheduled timeseries sync.
 Wind/workbook label,美国:出租空置率,季度数据!R5C11,connected,fred:RRVRUSQ156N,FRED Census-hosted HVS rental vacancy rate is configured in MACRO_SERIES and concept_map.
 Wind/workbook label,美国:劳动力参与率:季调,劳动力市场（月度指标）!R35C48;劳动力市场（月度指标）!R35C170,connected,bls:LNS14000000/LNS11300000; fred:UNRATE,Headline unemployment and labor-force participation paths are configured.
 Wind/workbook label,美国:周度经济指数:周,周度数据!R4C19,connected,fred:WEI,Weekly Economic Index is configured in MACRO_SERIES and concept_map.
@@ -366,8 +366,8 @@ Wind/workbook label,美国:粗钢产量:当周值:周,周度数据!R4C2,missing,
 Wind/workbook label,美国:粗钢产量:当周同比:周,周度数据!R4C4,missing,,Steel production field has no configured equivalent source.
 Wind/workbook label,美国:粗钢产量:环比:周,周度数据!R4C3,missing,,Steel production field has no configured equivalent source.
 Wind/workbook label,美国:红皮书商业零售销售:周同比:周,周度数据!R4C7,missing,,Redbook retail sales field has no configured equivalent source.
-Wind/workbook label,美国:经常项目差额:季调,季度数据!R5C6,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
-Wind/workbook label,美国:经常项目差额占GDP比重:季调,季度数据!R5C7,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
+Wind/workbook label,美国:经常项目差额:季调,季度数据!R5C6,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source paths exist; this exact field needs scheduled timeseries sync.
+Wind/workbook label,美国:经常项目差额占GDP比重:季调,季度数据!R5C7,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source paths exist; this exact field needs scheduled timeseries sync.
 Wind/workbook label,美国:耐用品:新增订单:季调:当月同比,月度数据!R4C13,partial,census calendar connector,Census event/value connector covers selected releases; historical timeseries config for this exact field is absent.
 Wind/workbook label,美国:耐用品:新增订单:季调:环比,月度数据!R4C11,partial,census calendar connector,Census event/value connector covers selected releases; historical timeseries config for this exact field is absent.
 Wind/workbook label,美国:耐用品除国防外:出货量:季调:-美国:耐用品除国防外:总存货量:季调,月度数据!R4C17,partial,census calendar connector,Census event/value connector covers selected releases; historical timeseries config for this exact field is absent.
@@ -392,8 +392,8 @@ Wind/workbook label,美国:芝加哥联储全国活动指数,月度数据!R4C69,
 Wind/workbook label,美国:芝加哥联储全国金融状况指数(周):周,周度数据!R4C18,partial,fred/nyfed source family available,Source family exists; this stress/activity/supply-chain series is absent from configured series.
 Wind/workbook label,美国:芝加哥联储全国金融状况指数(月),月度数据!R4C72,partial,fred/nyfed source family available,Source family exists; this stress/activity/supply-chain series is absent from configured series.
 Wind/workbook label,美国:货币流通速度:M2:季调,季度数据!R5C16,partial,fred source available,FRED source exists; M2 velocity series is absent from configured MACRO_SERIES.
-Wind/workbook label,美国:贸易差额:季调,月度数据!R4C30,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
-Wind/workbook label,美国:进口金额:季调:同比,月度数据!R4C28,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source families exist; this exact workbook series is absent from scheduled timeseries sync.
+Wind/workbook label,美国:贸易差额:季调,月度数据!R4C30,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source paths exist; this exact field needs scheduled timeseries sync.
+Wind/workbook label,美国:进口金额:季调:同比,月度数据!R4C28,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source paths exist; this exact field needs scheduled timeseries sync.
 Wind/workbook label,美国:部门生产力和成本指数:企业:每小时产量:当季同比,季度数据!R5C2,connected,bls:PRS85006092,BLS productivity base series is configured; workbook growth transform can be computed downstream.
 Wind/workbook label,美国:部门生产力和成本指数:企业:每小时产量:环比折年率,季度数据!R5C3,connected,bls:PRS85006092,BLS productivity base series is configured; workbook growth transform can be computed downstream.
 Wind/workbook label,美国:雇佣率:非农:总计:季调,劳动力市场（月度指标）!R35C173,partial,bls source available,"BLS connector exists; this demographic, industry, alternate-rate, or detailed JOLTS series is absent from BLS_SERIES."

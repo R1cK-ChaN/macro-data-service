@@ -16,18 +16,23 @@ Coverage definitions:
 - missing: no configured source path found in repo scan
 
 Field counts:
-- connected: 44
+- connected: 52
 - partial: 284
-- missing: 73
+- missing: 65
 - total extracted unique fields: 401
 
-Workbook source labels:
+Input source labels:
 - Bloomberg security: 5
 - Wind/workbook label: 396
 
+Source capability and storage pipeline use separate gates. A connected source
+adapter can discover or fetch data from an institution, while a series reaches
+storage after provider-series config, obs-family metadata, concept mapping,
+fetcher output, and schedule/vintage handling are wired.
+
 ## Evidence From Repo
 
-- Source capability adapters are registered for FRED, BLS, EIA, Treasury Fiscal, NY Fed rates, market watchlist, OECD, World Bank, Eurostat, ECB, IMF, BIS, Census, and BEA. Exact Wind/Bloomberg source parity requires licensed adapters.
+- Source capability adapters are registered for FRED, BLS, EIA, Treasury Fiscal, NY Fed rates/research, market watchlist, OECD, World Bank, Eurostat, ECB, IMF, BIS, Census, and BEA. Exact Wind/Bloomberg source parity requires licensed adapters.
 - FRED configured macro series include CPI/core CPI/core PCE, NFP, unemployment, claims, GDP, real GDP, retail sales, industrial production, 2Y/10Y/30Y Treasury, 10Y real yield, 10Y-2Y spread, Fed balance sheet, M2, reverse repo, TGA, broad dollar, CNY/USD, HY OAS, and VIX.
 - BLS configured series include headline CPI/core/food/energy/shelter, PPI/core PPI, NFP/private payrolls, average hourly earnings, average weekly hours, unemployment, LFPR, JOLTS openings/hires/quits, ECI, productivity, and unit labor costs.
 - BEA configs cover NIPA GDP summary/contributions/real GDP/PCE/personal income plus ITA current-account and goods-balance datasets; latest sync for arbitrary BEA datasets remains a follow-up.
@@ -40,12 +45,12 @@ Workbook source labels:
 | --- | ---: | ---: | ---: |
 | MOVE 和VIX | 1 | 0 | 1 |
 | 主要国家国债收益率利差 | 1 | 0 | 3 |
-| 劳动力市场（月度指标） | 6 | 80 | 0 |
-| 周度数据 | 2 | 4 | 5 |
-| 季度数据 | 2 | 3 | 6 |
+| 劳动力市场（月度指标） | 8 | 81 | 0 |
+| 周度数据 | 3 | 4 | 4 |
+| 季度数据 | 8 | 3 | 0 |
 | 德国国债 | 0 | 0 | 6 |
 | 日本国债 | 0 | 0 | 7 |
-| 月度数据 | 10 | 29 | 4 |
+| 月度数据 | 11 | 29 | 3 |
 | 汇率 | 5 | 12 | 0 |
 | 流动性SOFR-OIS | 1 | 0 | 1 |
 | 美债 | 5 | 6 | 0 |
@@ -55,9 +60,9 @@ Workbook source labels:
 | 美联储金融流动性（负债规模-TGA-逆回购） | 3 | 0 | 0 |
 | 通胀（月度指标） | 4 | 63 | 0 |
 
-## Gap Families
+## Source/Indicator Groups
 
-| Family | Status | Notes |
+| Source/indicator group | Status | Notes |
 | --- | --- | --- |
 | Exact Wind/Bloomberg source | missing | The workbook source layer is Wind plus Bloomberg securities. Exact parity requires licensed Wind and Bloomberg adapters. |
 | BEA GDP/PCE/ITA detail | partial | BEA client and NIPA/ITA configs exist; arbitrary-dataset latest sync needs production wiring. |
@@ -67,13 +72,13 @@ Workbook source labels:
 | FX | partial | DXY, broad dollar, EUR/USD, USD/CNY, and USD/JPY are covered; dollar sub-indexes and additional FX pairs need configured series/watchlist entries. |
 | Global sovereign yields | missing | Germany, Japan, and China yield series need configured source paths. |
 | Market volatility | partial | VIX is configured; MOVE needs a configured source path. |
-| GSCPI | missing | NY Fed GSCPI needs a configured source path. |
+| GSCPI | connected | NY Fed GSCPI is configured through the NY Fed research-data fetcher. |
 
 ## Source Policy For Follow-Up Wiring
 
 Current coverage status remains a repo-configuration finding. A field marked missing can still have an available vendor or official source path outside the current configured universe.
 
-| Gap family | Canonical source path | Repo action |
+| Source/indicator group | Canonical source path | Repo action |
 | --- | --- | --- |
 | MOVE index | Market lane through EODHD `MOVE.INDX`; official reference is ICE MOVE | Add `MOVE.INDX` to the EODHD market universe/config. |
 | China 10Y government yield | Market lane through EODHD `CN10Y.GBOND`; ChinaBond official path for official parity | Add EODHD GBOND market config and keep ChinaBond as the official-source parity path. |
@@ -82,7 +87,7 @@ Current coverage status remains a repo-configuration finding. A field marked mis
 | WEI | FRED/Dallas Fed `WEI` | Connected in issue #112 slice 2 through FRED `MACRO_SERIES`, obs-family, concept-map, release-schedule, and subject aliases. |
 | Housing vacancy and homeownership | Census HVS official data or FRED Census-hosted mirrors `RHORUSQ156N`, `RRVRUSQ156N`, `RHVRUSQ156N` | Connected in issue #112 slice 2 through FRED Census-hosted HVS series, obs-families, concept-map, release-schedules, and subject aliases. |
 | Sector leverage ratios | BIS Total Credit Statistics | Connected in issue #112 slice 3 through BIS `WS_TC` v2.0 government, household, and non-financial corporation leverage mappings. |
-| GSCPI | NY Fed GSCPI research-product data | Add NY Fed GSCPI fetch/config. |
+| GSCPI | NY Fed GSCPI research-product data | Connected in issue #112 slice 4 through `NYFED_GSCPI`, obs-family, concept-map, release-schedule, and subject aliases. |
 | Redbook weekly YoY | Redbook Research / Johnson Redbook official or authorized source | Decide authorized source and add connector/config. |
 | Weekly raw steel production | AISI weekly raw steel production page | Add AISI scraper for weekly value, WoW, and YoY fields. |
 | ISM manufacturing/services subcomponents | ISM official PMI report pages | Extend the ISM connector beyond Manufacturing PMI headline to full manufacturing/services subcomponents. |
@@ -91,7 +96,7 @@ Current coverage status remains a repo-configuration finding. A field marked mis
 
 EODHD remains a market/quote source for exchange, FX, index, GBOND, and related quote-style observations. Canonical economic ingestion uses official sources with vintage/as-of support where available, or repo-owned raw snapshots from first ingestion onward.
 
-The workbook liquidity sheet is connected through existing FRED/Treasury paths:
+The liquidity fields in the coverage sample are connected through existing FRED/Treasury paths:
 
 | Workbook field | Current repo source path | Status |
 | --- | --- | --- |
@@ -103,4 +108,4 @@ The workbook liquidity sheet is connected through existing FRED/Treasury paths:
 
 Full field-level map: `docs/validation/us_workbook_coverage_2026-05-01.csv`
 
-Recommended implementation sequence: add NY Fed GSCPI, Bundesbank yields, Japan MOF yields, AISI weekly steel, and full ISM official report parsing. Licensed-source decisions remain for Redbook, Sentix US, SOFR-OIS, and exact Wind/Bloomberg parity.
+Recommended implementation sequence: add Bundesbank yields, Japan MOF yields, AISI weekly steel, and full ISM official report parsing. Licensed-source decisions remain for Redbook, Sentix US, SOFR-OIS, and exact Wind/Bloomberg parity.

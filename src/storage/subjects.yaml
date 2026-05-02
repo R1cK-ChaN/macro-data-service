@@ -95,6 +95,14 @@ subjects:
         - '\bweekly economic index\b'
         - '(?-i:\bWEI\b)'
 
+  - id: econ.us.gscpi
+    display: "Global Supply Chain Pressure Index"
+    aliases:
+      ny_fed_series: [GSCPI, NYFED_GSCPI]
+      title_regex:
+        - '\bglobal supply chain pressure index\b'
+        - '(?-i:\bGSCPI\b)'
+
   - id: housing.us.homeownership
     display: "US Homeownership Rate"
     aliases:

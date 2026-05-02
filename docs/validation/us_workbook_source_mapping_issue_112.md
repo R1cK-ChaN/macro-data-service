@@ -1,15 +1,19 @@
-# US Workbook Source Mapping Implementation Notes
+# US Source Mapping Implementation Notes
 
 Date: 2026-05-01
 Issue: #112
-Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings
+Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings; NY Fed GSCPI mapping
+
+The inspected US workbook is a coverage sample for finding omitted fields. Source
+grouping here follows the indicator's economic meaning, official publisher,
+frequency, and instrument type.
 
 ## Implemented Rows
 
 The EODHD market universe now includes the quote-style rows from the first
 implementation slice.
 
-| Workbook family | EODHD ticker | Instrument id | Asset class |
+| Indicator/source group | EODHD ticker | Instrument id | Asset class |
 | --- | --- | --- | --- |
 | MOVE index | `MOVE.INDX` | `US_MOVE` | `index` |
 | China 10Y government yield | `CN10Y.GBOND` | `RATES_CN_10Y_GBOND` | `rate` |
@@ -32,7 +36,7 @@ percent-formatted rate summaries.
 
 ## FRED WEI/HVS Rows
 
-| Workbook family | FRED series | Concept id | Obs family |
+| Indicator/source group | FRED series | Concept id | Obs family |
 | --- | --- | --- | --- |
 | Weekly Economic Index | `WEI` | `WEI_US` | `us.growth.weekly_economic_index` |
 | Homeownership rate | `RHORUSQ156N` | `HOMEOWNERSHIP_RATE_US` | `us.housing.homeownership_rate` |
@@ -40,19 +44,30 @@ percent-formatted rate summaries.
 | Homeowner vacancy rate | `RHVRUSQ156N` | `HOMEOWNER_VACANCY_RATE_US` | `us.housing.homeowner_vacancy_rate` |
 
 Focused tests cover FRED config presence, obs-family seeding, concept-map
-seeding, and FRED source discovery for the workbook HVS and WEI rows.
+seeding, and FRED source discovery for the HVS and WEI rows.
 
 ## BIS Total Credit Rows
 
-| Workbook family | BIS dataflow | BIS key | Series id | Concept id | Obs family |
+| Indicator/source group | BIS dataflow | BIS key | Series id | Concept id | Obs family |
 | --- | --- | --- | --- | --- | --- |
 | General government leverage | `WS_TC` v2.0 | `Q.US.G.A.N.770.A` | `BIS_TC_GOV_US` | `GOV_LEVERAGE_US` | `us.credit.gov_leverage` |
 | Household leverage | `WS_TC` v2.0 | `Q.US.H.A.M.770.A` | `BIS_TC_HH_US` | `HOUSEHOLD_LEVERAGE_US` | `us.credit.household_leverage` |
 | Non-financial corporation leverage | `WS_TC` v2.0 | `Q.US.N.A.M.770.A` | `BIS_TC_NFC_US` | `NFC_LEVERAGE_US` | `us.credit.nfc_leverage` |
 
 Focused tests cover BIS config presence, obs-family seeding, concept-map
-seeding, and release-schedule seeding for the workbook sector leverage rows.
+seeding, and release-schedule seeding for the sector leverage rows.
 
-Remaining source families for later slices: NY Fed GSCPI, Bundesbank official
-yields, Japan MOF official yields, AISI weekly steel, ISM subcomponents,
-Redbook, Sentix US, SOFR-OIS, and exact Wind/Bloomberg parity.
+## NY Fed GSCPI Row
+
+| Indicator/source group | Source file | Series id | Concept id | Obs family |
+| --- | --- | --- | --- | --- |
+| Global Supply Chain Pressure Index | NY Fed `gscpi_data.xlsx` | `NYFED_GSCPI` | `GSCPI_US` | `us.supply_chain.gscpi` |
+
+Focused tests cover legacy Excel and OOXML parsing, fetcher output,
+obs-family seeding, concept-map seeding, release-schedule seeding, source
+discovery, subject alias resolution, US holiday handling, and NY release-time
+conversion for the GSCPI row.
+
+Remaining source groups for later slices: Bundesbank official yields, Japan
+MOF official yields, AISI weekly steel, ISM subcomponents, Redbook, Sentix US,
+SOFR-OIS, and exact Wind/Bloomberg parity.

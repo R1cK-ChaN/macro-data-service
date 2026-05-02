@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Sequence
+from zoneinfo import ZoneInfo
 
 # Re-use the dataclass from storage when available; if imported standalone
 # we only need the fields listed in the protocol below.
@@ -54,6 +55,73 @@ def _month_add(dt: datetime, months: int) -> datetime:
     return dt.replace(year=year, month=month, day=day)
 
 
+def _observed_fed_holidays(year: int) -> set[date]:
+    """US Federal Reserve holidays observed on weekdays."""
+
+    def _nth_weekday(month: int, weekday: int, ordinal: int) -> date:
+        count = 0
+        for day in range(1, calendar.monthrange(year, month)[1] + 1):
+            candidate = date(year, month, day)
+            if candidate.weekday() == weekday:
+                count += 1
+                if count == ordinal:
+                    return candidate
+        raise ValueError("weekday ordinal outside month")
+
+    def _last_weekday(month: int, weekday: int) -> date:
+        for day in range(calendar.monthrange(year, month)[1], 0, -1):
+            candidate = date(year, month, day)
+            if candidate.weekday() == weekday:
+                return candidate
+        raise ValueError("weekday outside month")
+
+    def _observed(month: int, day: int) -> date | None:
+        holiday = date(year, month, day)
+        if holiday.weekday() == 6:
+            return holiday + timedelta(days=1)
+        if holiday.weekday() == 5:
+            return None
+        return holiday
+
+    holidays = {
+        _nth_weekday(1, 0, 3),   # Martin Luther King Jr. Day
+        _nth_weekday(2, 0, 3),   # Washington's Birthday
+        _last_weekday(5, 0),     # Memorial Day
+        _nth_weekday(9, 0, 1),   # Labor Day
+        _nth_weekday(10, 0, 2),  # Columbus Day
+        _nth_weekday(11, 3, 4),  # Thanksgiving Day
+    }
+    for fixed in (
+        _observed(1, 1),
+        _observed(6, 19),
+        _observed(7, 4),
+        _observed(11, 11),
+        _observed(12, 25),
+    ):
+        if fixed is not None:
+            holidays.add(fixed)
+    return holidays
+
+
+def _apply_rule_time(candidate: datetime, rule: dict[str, Any]) -> datetime:
+    time_text = str(rule.get("time", "") or rule.get("release_time", "")).strip()
+    if not time_text:
+        return candidate
+    parts = time_text.split(":", 1)
+    hour = int(parts[0])
+    minute = int(parts[1]) if len(parts) > 1 else 0
+    tz_name = str(rule.get("timezone", "UTC") or "UTC")
+    local_dt = datetime(
+        candidate.year,
+        candidate.month,
+        candidate.day,
+        hour,
+        minute,
+        tzinfo=ZoneInfo(tz_name),
+    )
+    return local_dt.astimezone(timezone.utc)
+
+
 # ── Individual resolvers ──────────────────────────────────────────────
 
 def _next_day_of_month(rule: dict[str, Any], ref: datetime) -> datetime | None:
@@ -95,6 +163,33 @@ def _next_weekday_of_month(rule: dict[str, Any], ref: datetime) -> datetime | No
         return candidate  # weekday targets are never weekend-shifted
 
     # Advance to next month
+    nxt = _month_add(ref, 1)
+    return _find(nxt.year, nxt.month)
+
+
+def _next_business_day_of_month(rule: dict[str, Any], ref: datetime) -> datetime | None:
+    ordinal = int(rule.get("ordinal", 1))
+
+    def _find(year: int, month: int) -> datetime | None:
+        count = 0
+        holiday_calendar = str(rule.get("calendar", "")).lower()
+        holidays = (
+            _observed_fed_holidays(year)
+            if holiday_calendar in {"us_federal", "us_fed", "federal_reserve"}
+            else set()
+        )
+        for day in range(1, calendar.monthrange(year, month)[1] + 1):
+            candidate = datetime(year, month, day, tzinfo=timezone.utc)
+            if candidate.weekday() >= 5 or candidate.date() in holidays:
+                continue
+            count += 1
+            if count == ordinal:
+                return _apply_rule_time(candidate, rule)
+        return None
+
+    candidate = _find(ref.year, ref.month)
+    if candidate is not None and candidate > ref:
+        return candidate
     nxt = _month_add(ref, 1)
     return _find(nxt.year, nxt.month)
 
@@ -204,6 +299,7 @@ def _next_monthly_lag(rule: dict[str, Any], ref: datetime) -> datetime | None:
 _RESOLVERS: dict[str, Callable[..., datetime | None]] = {
     "day_of_month": _next_day_of_month,
     "weekday_of_month": _next_weekday_of_month,
+    "business_day_of_month": _next_business_day_of_month,
     "quarter_lag": _next_quarter_lag,
     "daily": _next_daily,
     "weekly": _next_weekly,

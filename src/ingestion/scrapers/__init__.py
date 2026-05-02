@@ -123,7 +123,7 @@ from .worldbank import (
 )
 from .wsj import WSJArticle, WSJArticleClient, WSJNewsClient
 from .gov_report import GovReportClient, GovReportItem
-from .nyfed import NYFedRate, NYFedRatesClient
+from .nyfed import NYFedGSCPI, NYFedRate, NYFedRatesClient
 from .rateprobability import (
     FedMeetingProbability,
     FedRateProbability,
@@ -205,6 +205,7 @@ __all__ = [
     "IMFObservation",
     "IMFRateLimitError",
     "IMFVintageObservation",
+    "NYFedGSCPI",
     "NYFedRate",
     "OECDAPIError",
     "OECDCode",

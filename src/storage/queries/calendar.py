@@ -1761,6 +1761,7 @@ class _CalendarQueriesMixin:
         ("INDPRO_US",           "day_of_month",     {"day": 16, "tolerance_days": 3},       "monthly",  "13:15", "America/New_York", "pattern", "Fed ~16th"),
         ("WEI_US",              "weekly",           {"weekday": 3},                         "weekly",   "",      "",                 "pattern", "FRED WEI weekly Thursday"),
         ("GDP_GROWTH_WB_US",    "approximate_window", {"month_offset": 6, "window_days": 60}, "annual",  "",     "",                 "approximate", "World Bank annual"),
+        ("GSCPI_US",            "business_day_of_month", {"ordinal": 4, "calendar": "us_federal", "time": "10:00", "timezone": "America/New_York"}, "monthly",  "10:00", "America/New_York", "pattern", "NY Fed GSCPI fourth business day"),
         # ── US Rates ──────────────────────────────────────────────────
         ("POLICY_RATE_US",      "daily",            {},                                     "daily",    "",      "",                 "pattern", "NY Fed EFFR daily"),
         ("SOFR_US",             "daily",            {},                                     "daily",    "",      "",                 "pattern", "SOFR daily"),

@@ -1028,12 +1028,19 @@ class SourceCapabilityManager:
             return _limit_items(entities, query, limit)
 
         def _nyfed_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
-            items = [
-                ("SOFR", "SOFR", {}),
-                ("EFFR", "EFFR", {}),
-                ("OBFR", "OBFR", {}),
+            entities = [
+                _entity("nyfed_rates", "SOFR", "rate", "SOFR"),
+                _entity("nyfed_rates", "EFFR", "rate", "EFFR"),
+                _entity("nyfed_rates", "OBFR", "rate", "OBFR"),
+                _entity(
+                    "nyfed_rates",
+                    "GSCPI",
+                    "research_series",
+                    "Global Supply Chain Pressure Index",
+                    metadata={"series_id": "NYFED_GSCPI"},
+                ),
             ]
-            return _simple_entities("nyfed_rates", "rate", items)(query, limit)
+            return _limit_items(entities, query, limit)
 
         def _weibo_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
             items = [("weibo_hot_topics", "Weibo Hot Topics", {})]
@@ -1235,10 +1242,10 @@ class SourceCapabilityManager:
         )
         adapters["nyfed_rates"] = SourceCapabilityAdapter(
             source_id="nyfed_rates",
-            display_name="NYFed Rates",
+            display_name="NYFed Rates and Research",
             source_type="fixed-scope-complete",
-            entity_type="rate",
-            description="NYFed reference rate set",
+            entity_type="series",
+            description="NYFed reference rates and GSCPI research data",
             is_default_scheduled=True,
             discover=_nyfed_entities,
             sync_latest=lambda entity_ids, limit: _run_job("nyfed_rates"),
