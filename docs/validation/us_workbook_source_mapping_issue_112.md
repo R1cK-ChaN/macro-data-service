@@ -164,5 +164,4 @@ raw snapshot hashing, obs-family seeding, concept-map seeding, release-schedule
 seeding, subject alias resolution, source discovery, country-scoped validation,
 and the orchestrator save path into `indicators` and `obs_raw`.
 
-Remaining source groups for later slices: SOFR-OIS and exact Wind/Bloomberg
-parity.
+Remaining source group for later slices: exact Wind/Bloomberg parity.

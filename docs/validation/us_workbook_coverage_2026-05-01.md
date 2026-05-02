@@ -18,11 +18,11 @@ Coverage definitions:
 Field counts:
 - connected: 116
 - partial: 282
-- missing: 3
-- total extracted unique fields: 401
+- missing: 2
+- total extracted unique fields: 400
 
 Input source labels:
-- Bloomberg security: 5
+- Bloomberg security: 4
 - Wind/workbook label: 396
 
 Source capability and storage pipeline use separate gates. A connected source
@@ -54,7 +54,7 @@ fetcher output, and schedule/vintage handling are wired.
 | 日本国债 | 7 | 0 | 0 |
 | 月度数据 | 14 | 29 | 0 |
 | 汇率 | 5 | 12 | 0 |
-| 流动性SOFR-OIS | 1 | 0 | 1 |
+| 流动性SOFR-OIS | 1 | 0 | 0 |
 | 美债 | 5 | 6 | 0 |
 | 美国GDP分稿 | 2 | 72 | 0 |
 | 美国ISM制造业PMI（月度指标） | 44 | 0 | 0 |
@@ -96,7 +96,6 @@ Current coverage status remains a repo-configuration finding. A field marked mis
 | Weekly raw steel production | AISI weekly raw steel production page | Connected in issue #112 slice 7 through AISI official weekly raw steel production page for weekly value, WoW, and YoY fields, obs-family, concept-map, release-schedule, subject aliases, and raw snapshots. |
 | ISM manufacturing/services subcomponents | ISM official PMI report pages | Connected in issue #112 slice 8 through official report parsing for Manufacturing and Services headline, subcomponent indexes, point changes, obs-family, concept-map, release-schedule, subject aliases, and raw snapshots. |
 | Sentix US current/expectations/headline | sentix official SNTE Economic Index via sentix Data REST API | Connected in issue #112 slice 10 through `SNTEUSH0`, `SNTEUSH6`, derived headline, obs-family, concept-map, release-schedule, subject aliases, and raw snapshots. |
-| SOFR-OIS / `USSOC BGN Curncy` | Bloomberg BGN or licensed SOFR OIS curve vendor | Store as a rates-market quote/curve series with raw snapshots. |
 
 EODHD remains a market/quote source for exchange, FX, index, GBOND, and related quote-style observations. Canonical economic ingestion uses official sources with vintage/as-of support where available, or repo-owned raw snapshots from first ingestion onward.
 
@@ -112,4 +111,4 @@ The liquidity fields in the coverage sample are connected through existing FRED/
 
 Full field-level map: `docs/validation/us_workbook_coverage_2026-05-01.csv`
 
-Recommended implementation sequence: decide licensed SOFR-OIS curve path. Licensed-source decisions remain for SOFR-OIS and exact Wind/Bloomberg parity.
+Recommended implementation sequence: continue exact Wind/Bloomberg parity decisions.
