@@ -34,6 +34,7 @@ from ingestion.timeseries.sdmx.providers.ecb import ECBClient
 from ingestion.timeseries.scrapers.eia import EIAClient
 from ingestion.timeseries.sdmx.providers.eurostat import EurostatClient
 from ingestion.timeseries.scrapers.aisi import AISIClient
+from ingestion.timeseries.scrapers.ism import ISMClient
 from ingestion.timeseries.scrapers.fred import FredClient
 from ingestion.timeseries.sdmx.providers.imf import IMFClient
 from ingestion.timeseries.sdmx._errors import OECDRateLimitError
@@ -129,6 +130,7 @@ from ingestion.timeseries._config import (  # noqa: E402
     IMF_VINTAGE_SERIES,
     MACRO_SERIES,
     MOF_JGB_SERIES,
+    ISM_REPORT_SERIES,
     OECD_SERIES,
     OECDSeriesConfig,
     TREASURY_DATASETS,
@@ -207,6 +209,7 @@ SOURCE_FAMILIES: dict[str, str] = {
     "bundesbank": "economic_data",
     "mof_jp": "economic_data",
     "aisi": "economic_data",
+    "ism": "economic_data",
     "oecd": "economic_data",
     "worldbank": "economic_data",
     "worldbank_catalog": "economic_data",
@@ -313,6 +316,7 @@ class IngestionOrchestrator:
         bundesbank: BundesbankIngestionClient | None = None,
         mof_jp: MOFJGBClient | None = None,
         aisi: AISIClient | None = None,
+        ism: ISMClient | None = None,
         oecd: OECDIngestionClient | None = None,
         worldbank: WorldBankIngestionClient | None = None,
         validation_engine: Any | None = None,
@@ -344,6 +348,7 @@ class IngestionOrchestrator:
         self.bundesbank = bundesbank or BundesbankIngestionClient()
         self.mof_jp = mof_jp or MOFJGBClient()
         self.aisi = aisi or AISIClient()
+        self.ism = ism or ISMClient()
         self.oecd = oecd or OECDIngestionClient()
         self.worldbank = worldbank or WorldBankIngestionClient()
         self._obs_seeded = False
@@ -447,6 +452,7 @@ class IngestionOrchestrator:
             self._build_bundesbank_source(),
             self._build_mof_jp_source(),
             self._build_aisi_source(),
+            self._build_ism_source(),
             self._build_oecd_source(),
             self._build_worldbank_source(),
             self._build_worldbank_catalog_source(),
@@ -480,6 +486,7 @@ class IngestionOrchestrator:
             "bundesbank",
             "mof_jp",
             "aisi",
+            "ism",
             "oecd",
             "worldbank",
             "worldbank_catalog",
@@ -1132,6 +1139,13 @@ class IngestionOrchestrator:
             AISIFetcher(client=self.aisi, series_config=AISI_WEEKLY_STEEL_SERIES),
         )
 
+    def _build_ism_source(self) -> IngestionSourceDefinition:
+        from ingestion.fetchers._ism import ISMFetcher
+        return self._build_fetcher_source(
+            "ism",
+            ISMFetcher(client=self.ism, series_config=ISM_REPORT_SERIES),
+        )
+
     def _build_oecd_source(self) -> IngestionSourceDefinition:
         from ingestion.fetchers._oecd import OECDFetcher
         return self._build_fetcher_source(
@@ -1177,6 +1191,7 @@ class IngestionOrchestrator:
         "bundesbank": "bundesbank",
         "mof_jp": "mof_jp",
         "aisi": "aisi",
+        "ism": "ism",
         "oecd": "oecd",
         "worldbank": "worldbank",
     }
@@ -1187,6 +1202,7 @@ class IngestionOrchestrator:
         from ingestion.fetchers._bls import BLSFetcher
         from ingestion.fetchers._eia import EIAFetcher
         from ingestion.fetchers._fred import FredFetcher
+        from ingestion.fetchers._ism import ISMFetcher
         from ingestion.fetchers._mof_jgb import MOFJGBFetcher
         from ingestion.fetchers._nyfed import NYFedFetcher
         from ingestion.fetchers._oecd import OECDFetcher
@@ -1232,6 +1248,11 @@ class IngestionOrchestrator:
             fetcher = AISIFetcher(
                 client=self.aisi,
                 series_config=AISI_WEEKLY_STEEL_SERIES,
+            )
+        elif source_id == "ism":
+            fetcher = ISMFetcher(
+                client=self.ism,
+                series_config=ISM_REPORT_SERIES,
             )
         elif source_id == "oecd":
             fetcher = OECDFetcher(client=self.oecd.client)

@@ -158,6 +158,17 @@ def test_tagger_structured_resolves_aisi_series(
     ) == [("industry.us.steel", STRUCTURED_CONFIDENCE)]
 
 
+def test_tagger_structured_resolves_ism_series(
+    store: SQLiteEngineStore,
+) -> None:
+    sync_from_yaml(store)
+    with store._connection(commit=False) as c:
+        tagger = SubjectTagger(c)
+    assert tagger.tag_structured(
+        ism_series="ISM_SERVICES_PMI_US",
+    ) == [("econ.us.ism_pmi", STRUCTURED_CONFIDENCE)]
+
+
 @pytest.mark.parametrize(
     "concept_id, expected_subject",
     [
@@ -190,6 +201,8 @@ def test_tagger_structured_resolves_aisi_series(
         ("JP_GOVT_10Y", "rate.jp.govt"),
         # AISI bridges
         ("RAW_STEEL_PRODUCTION_US", "industry.us.steel"),
+        # ISM bridges
+        ("ISM_MFG_PMI_US", "econ.us.ism_pmi"),
     ],
 )
 def test_resolve_subjects_for_concept_bridges_vocabularies(

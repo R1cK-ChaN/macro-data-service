@@ -181,48 +181,48 @@ Wind/workbook label,美国:GDP环比拉动率:政府消费支出和投资总额:
 Wind/workbook label,美国:GDP环比拉动率:政府消费支出和投资总额:非国防:季调,美国GDP分稿!R4C105,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
 Wind/workbook label,美国:GDP环比拉动率:服务出口:季调,美国GDP分稿!R4C112,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
 Wind/workbook label,美国:GDP环比拉动率:服务进口:季调,美国GDP分稿!R4C115,partial,bea:NIPA tables T10101/T10102/T10106,BEA client and NIPA table configs exist; BEA arbitrary dataset latest sync is discovery/structure only.
-Wind/workbook label,美国:ISM:制造业PMI:产出,美国ISM制造业PMI（月度指标）!R22C22,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:产出:环比增加,美国ISM制造业PMI（月度指标）!R22C35,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:供应商交付,美国ISM制造业PMI（月度指标）!R22C24,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:供应商交付:环比增加,美国ISM制造业PMI（月度指标）!R22C37,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:客户库存,美国ISM制造业PMI（月度指标）!R22C26,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:客户库存:环比增加,美国ISM制造业PMI（月度指标）!R22C39,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:就业,美国ISM制造业PMI（月度指标）!R22C23,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:就业:环比增加,美国ISM制造业PMI（月度指标）!R22C36,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:新出口订单,美国ISM制造业PMI（月度指标）!R22C29,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:新出口订单:环比增加,美国ISM制造业PMI（月度指标）!R22C42,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:新订单,美国ISM制造业PMI（月度指标）!R22C21,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:新订单:环比增加,美国ISM制造业PMI（月度指标）!R22C34,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:物价,美国ISM制造业PMI（月度指标）!R22C27,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:物价:环比增加,美国ISM制造业PMI（月度指标）!R22C40,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:自有库存,美国ISM制造业PMI（月度指标）!R22C25,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:自有库存:环比增加,美国ISM制造业PMI（月度指标）!R22C38,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:订单库存,美国ISM制造业PMI（月度指标）!R22C28,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:订单库存:环比增加,美国ISM制造业PMI（月度指标）!R22C41,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:进口,美国ISM制造业PMI（月度指标）!R22C30,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:制造业PMI:进口:环比增加,美国ISM制造业PMI（月度指标）!R22C43,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI,美国ISM制造业PMI（月度指标）!R22C47,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:供应商交付,美国ISM制造业PMI（月度指标）!R22C51,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:供应商交付:环比增加,美国ISM制造业PMI（月度指标）!R22C65,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:商业活动,美国ISM制造业PMI（月度指标）!R22C48,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:商业活动:环比增加,美国ISM制造业PMI（月度指标）!R22C62,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:就业,美国ISM制造业PMI（月度指标）!R22C50,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:就业:环比增加,美国ISM制造业PMI（月度指标）!R22C64,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:库存,美国ISM制造业PMI（月度指标）!R22C52,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:库存:环比增加,美国ISM制造业PMI（月度指标）!R22C66,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:库存景气,美国ISM制造业PMI（月度指标）!R22C57,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:库存景气:环比增加,美国ISM制造业PMI（月度指标）!R22C71,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:新出口订单,美国ISM制造业PMI（月度指标）!R22C55,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:新出口订单:环比增加,美国ISM制造业PMI（月度指标）!R22C69,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:新订单,美国ISM制造业PMI（月度指标）!R22C49,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:新订单:环比增加,美国ISM制造业PMI（月度指标）!R22C63,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:物价,美国ISM制造业PMI（月度指标）!R22C53,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:物价:环比增加,美国ISM制造业PMI（月度指标）!R22C67,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:环比增加,美国ISM制造业PMI（月度指标）!R22C61,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:订单库存,美国ISM制造业PMI（月度指标）!R22C54,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:订单库存:环比增加,美国ISM制造业PMI（月度指标）!R22C68,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:进口,美国ISM制造业PMI（月度指标）!R22C56,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
-Wind/workbook label,美国:ISM:非制造业PMI:进口:环比增加,美国ISM制造业PMI（月度指标）!R22C70,missing,,ISM subcomponent/non-manufacturing timeseries fields are absent; only Manufacturing PMI headline is registered.
+Wind/workbook label,美国:ISM:制造业PMI:产出,美国ISM制造业PMI（月度指标）!R22C22,connected,ism:ISM_MFG_PRODUCTION_US,ISM official Manufacturing PMI report parser maps the Production index.
+Wind/workbook label,美国:ISM:制造业PMI:产出:环比增加,美国ISM制造业PMI（月度指标）!R22C35,connected,ism:ISM_MFG_PRODUCTION_MOM_US,ISM official Manufacturing PMI report parser maps the Production point change.
+Wind/workbook label,美国:ISM:制造业PMI:供应商交付,美国ISM制造业PMI（月度指标）!R22C24,connected,ism:ISM_MFG_SUPPLIER_DELIVERIES_US,ISM official Manufacturing PMI report parser maps the Supplier Deliveries index.
+Wind/workbook label,美国:ISM:制造业PMI:供应商交付:环比增加,美国ISM制造业PMI（月度指标）!R22C37,connected,ism:ISM_MFG_SUPPLIER_DELIVERIES_MOM_US,ISM official Manufacturing PMI report parser maps the Supplier Deliveries point change.
+Wind/workbook label,美国:ISM:制造业PMI:客户库存,美国ISM制造业PMI（月度指标）!R22C26,connected,ism:ISM_MFG_CUSTOMERS_INVENTORIES_US,ISM official Manufacturing PMI report parser maps the Customers' Inventories index.
+Wind/workbook label,美国:ISM:制造业PMI:客户库存:环比增加,美国ISM制造业PMI（月度指标）!R22C39,connected,ism:ISM_MFG_CUSTOMERS_INVENTORIES_MOM_US,ISM official Manufacturing PMI report parser maps the Customers' Inventories point change.
+Wind/workbook label,美国:ISM:制造业PMI:就业,美国ISM制造业PMI（月度指标）!R22C23,connected,ism:ISM_MFG_EMPLOYMENT_US,ISM official Manufacturing PMI report parser maps the Employment index.
+Wind/workbook label,美国:ISM:制造业PMI:就业:环比增加,美国ISM制造业PMI（月度指标）!R22C36,connected,ism:ISM_MFG_EMPLOYMENT_MOM_US,ISM official Manufacturing PMI report parser maps the Employment point change.
+Wind/workbook label,美国:ISM:制造业PMI:新出口订单,美国ISM制造业PMI（月度指标）!R22C29,connected,ism:ISM_MFG_NEW_EXPORT_ORDERS_US,ISM official Manufacturing PMI report parser maps the New Export Orders index.
+Wind/workbook label,美国:ISM:制造业PMI:新出口订单:环比增加,美国ISM制造业PMI（月度指标）!R22C42,connected,ism:ISM_MFG_NEW_EXPORT_ORDERS_MOM_US,ISM official Manufacturing PMI report parser maps the New Export Orders point change.
+Wind/workbook label,美国:ISM:制造业PMI:新订单,美国ISM制造业PMI（月度指标）!R22C21,connected,ism:ISM_MFG_NEW_ORDERS_US,ISM official Manufacturing PMI report parser maps the New Orders index.
+Wind/workbook label,美国:ISM:制造业PMI:新订单:环比增加,美国ISM制造业PMI（月度指标）!R22C34,connected,ism:ISM_MFG_NEW_ORDERS_MOM_US,ISM official Manufacturing PMI report parser maps the New Orders point change.
+Wind/workbook label,美国:ISM:制造业PMI:物价,美国ISM制造业PMI（月度指标）!R22C27,connected,ism:ISM_MFG_PRICES_US,ISM official Manufacturing PMI report parser maps the Prices index.
+Wind/workbook label,美国:ISM:制造业PMI:物价:环比增加,美国ISM制造业PMI（月度指标）!R22C40,connected,ism:ISM_MFG_PRICES_MOM_US,ISM official Manufacturing PMI report parser maps the Prices point change.
+Wind/workbook label,美国:ISM:制造业PMI:自有库存,美国ISM制造业PMI（月度指标）!R22C25,connected,ism:ISM_MFG_INVENTORIES_US,ISM official Manufacturing PMI report parser maps the Inventories index.
+Wind/workbook label,美国:ISM:制造业PMI:自有库存:环比增加,美国ISM制造业PMI（月度指标）!R22C38,connected,ism:ISM_MFG_INVENTORIES_MOM_US,ISM official Manufacturing PMI report parser maps the Inventories point change.
+Wind/workbook label,美国:ISM:制造业PMI:订单库存,美国ISM制造业PMI（月度指标）!R22C28,connected,ism:ISM_MFG_BACKLOG_OF_ORDERS_US,ISM official Manufacturing PMI report parser maps the Backlog of Orders index.
+Wind/workbook label,美国:ISM:制造业PMI:订单库存:环比增加,美国ISM制造业PMI（月度指标）!R22C41,connected,ism:ISM_MFG_BACKLOG_OF_ORDERS_MOM_US,ISM official Manufacturing PMI report parser maps the Backlog of Orders point change.
+Wind/workbook label,美国:ISM:制造业PMI:进口,美国ISM制造业PMI（月度指标）!R22C30,connected,ism:ISM_MFG_IMPORTS_US,ISM official Manufacturing PMI report parser maps the Imports index.
+Wind/workbook label,美国:ISM:制造业PMI:进口:环比增加,美国ISM制造业PMI（月度指标）!R22C43,connected,ism:ISM_MFG_IMPORTS_MOM_US,ISM official Manufacturing PMI report parser maps the Imports point change.
+Wind/workbook label,美国:ISM:非制造业PMI,美国ISM制造业PMI（月度指标）!R22C47,connected,ism:ISM_SERVICES_PMI_US,ISM official Services PMI report parser maps the headline index.
+Wind/workbook label,美国:ISM:非制造业PMI:供应商交付,美国ISM制造业PMI（月度指标）!R22C51,connected,ism:ISM_SERVICES_SUPPLIER_DELIVERIES_US,ISM official Services PMI report parser maps the Supplier Deliveries index.
+Wind/workbook label,美国:ISM:非制造业PMI:供应商交付:环比增加,美国ISM制造业PMI（月度指标）!R22C65,connected,ism:ISM_SERVICES_SUPPLIER_DELIVERIES_MOM_US,ISM official Services PMI report parser maps the Supplier Deliveries point change.
+Wind/workbook label,美国:ISM:非制造业PMI:商业活动,美国ISM制造业PMI（月度指标）!R22C48,connected,ism:ISM_SERVICES_BUSINESS_ACTIVITY_US,ISM official Services PMI report parser maps the Business Activity index.
+Wind/workbook label,美国:ISM:非制造业PMI:商业活动:环比增加,美国ISM制造业PMI（月度指标）!R22C62,connected,ism:ISM_SERVICES_BUSINESS_ACTIVITY_MOM_US,ISM official Services PMI report parser maps the Business Activity point change.
+Wind/workbook label,美国:ISM:非制造业PMI:就业,美国ISM制造业PMI（月度指标）!R22C50,connected,ism:ISM_SERVICES_EMPLOYMENT_US,ISM official Services PMI report parser maps the Employment index.
+Wind/workbook label,美国:ISM:非制造业PMI:就业:环比增加,美国ISM制造业PMI（月度指标）!R22C64,connected,ism:ISM_SERVICES_EMPLOYMENT_MOM_US,ISM official Services PMI report parser maps the Employment point change.
+Wind/workbook label,美国:ISM:非制造业PMI:库存,美国ISM制造业PMI（月度指标）!R22C52,connected,ism:ISM_SERVICES_INVENTORIES_US,ISM official Services PMI report parser maps the Inventories index.
+Wind/workbook label,美国:ISM:非制造业PMI:库存:环比增加,美国ISM制造业PMI（月度指标）!R22C66,connected,ism:ISM_SERVICES_INVENTORIES_MOM_US,ISM official Services PMI report parser maps the Inventories point change.
+Wind/workbook label,美国:ISM:非制造业PMI:库存景气,美国ISM制造业PMI（月度指标）!R22C57,connected,ism:ISM_SERVICES_INVENTORY_SENTIMENT_US,ISM official Services PMI report parser maps the Inventory Sentiment index.
+Wind/workbook label,美国:ISM:非制造业PMI:库存景气:环比增加,美国ISM制造业PMI（月度指标）!R22C71,connected,ism:ISM_SERVICES_INVENTORY_SENTIMENT_MOM_US,ISM official Services PMI report parser maps the Inventory Sentiment point change.
+Wind/workbook label,美国:ISM:非制造业PMI:新出口订单,美国ISM制造业PMI（月度指标）!R22C55,connected,ism:ISM_SERVICES_NEW_EXPORT_ORDERS_US,ISM official Services PMI report parser maps the New Export Orders index.
+Wind/workbook label,美国:ISM:非制造业PMI:新出口订单:环比增加,美国ISM制造业PMI（月度指标）!R22C69,connected,ism:ISM_SERVICES_NEW_EXPORT_ORDERS_MOM_US,ISM official Services PMI report parser maps the New Export Orders point change.
+Wind/workbook label,美国:ISM:非制造业PMI:新订单,美国ISM制造业PMI（月度指标）!R22C49,connected,ism:ISM_SERVICES_NEW_ORDERS_US,ISM official Services PMI report parser maps the New Orders index.
+Wind/workbook label,美国:ISM:非制造业PMI:新订单:环比增加,美国ISM制造业PMI（月度指标）!R22C63,connected,ism:ISM_SERVICES_NEW_ORDERS_MOM_US,ISM official Services PMI report parser maps the New Orders point change.
+Wind/workbook label,美国:ISM:非制造业PMI:物价,美国ISM制造业PMI（月度指标）!R22C53,connected,ism:ISM_SERVICES_PRICES_US,ISM official Services PMI report parser maps the Prices index.
+Wind/workbook label,美国:ISM:非制造业PMI:物价:环比增加,美国ISM制造业PMI（月度指标）!R22C67,connected,ism:ISM_SERVICES_PRICES_MOM_US,ISM official Services PMI report parser maps the Prices point change.
+Wind/workbook label,美国:ISM:非制造业PMI:环比增加,美国ISM制造业PMI（月度指标）!R22C61,connected,ism:ISM_SERVICES_PMI_MOM_US,ISM official Services PMI report parser maps the headline point change.
+Wind/workbook label,美国:ISM:非制造业PMI:订单库存,美国ISM制造业PMI（月度指标）!R22C54,connected,ism:ISM_SERVICES_BACKLOG_OF_ORDERS_US,ISM official Services PMI report parser maps the Backlog of Orders index.
+Wind/workbook label,美国:ISM:非制造业PMI:订单库存:环比增加,美国ISM制造业PMI（月度指标）!R22C68,connected,ism:ISM_SERVICES_BACKLOG_OF_ORDERS_MOM_US,ISM official Services PMI report parser maps the Backlog of Orders point change.
+Wind/workbook label,美国:ISM:非制造业PMI:进口,美国ISM制造业PMI（月度指标）!R22C56,connected,ism:ISM_SERVICES_IMPORTS_US,ISM official Services PMI report parser maps the Imports index.
+Wind/workbook label,美国:ISM:非制造业PMI:进口:环比增加,美国ISM制造业PMI（月度指标）!R22C70,connected,ism:ISM_SERVICES_IMPORTS_MOM_US,ISM official Services PMI report parser maps the Imports point change.
 Wind/workbook label,美国:M2:季调:同比,月度数据!R4C78,connected,fred:M2SL,M2 base series is configured; growth transforms can be computed downstream.
 Wind/workbook label,美国:M2:季调:环比,月度数据!R4C77,connected,fred:M2SL,M2 base series is configured; growth transforms can be computed downstream.
 Wind/workbook label,美国:PCE:当月同比,月度数据!R4C37,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source paths exist; this exact field needs scheduled timeseries sync.
@@ -236,8 +236,8 @@ Wind/workbook label,美国:产能利用率:制造业(NAICS):季调,月度数据!
 Wind/workbook label,美国:企业债收益率:美银美国AAA级企业债有效收益率:-美国:国债收益率:10年:周,美债!R26C22,partial,fred source available,High-yield OAS and Treasury yields are configured; exact AAA yield spread needs an explicit corporate-yield series and transform.
 Wind/workbook label,美国:企业债收益率:美银美国高收益BB级企业债有效收益率:-美国:国债收益率:10年:周,美债!R26C23,partial,fred source available,High-yield OAS and Treasury yields are configured; exact BB yield spread needs an explicit corporate-yield series and transform.
 Wind/workbook label,美国:住房自有率,季度数据!R5C13,connected,fred:RHORUSQ156N,FRED Census-hosted HVS homeownership rate is configured in MACRO_SERIES and concept_map.
-Wind/workbook label,美国:供应管理协会(ISM):制造业PMI,美国ISM制造业PMI（月度指标）!R22C20,partial,ism calendar:ISM_MANUFACTURING_PMI,ISM Manufacturing headline current-value connector exists; historical timeseries and transform layer are absent.
-Wind/workbook label,美国:供应管理协会(ISM):制造业PMI:环比增加,美国ISM制造业PMI（月度指标）!R22C33,partial,ism calendar:ISM_MANUFACTURING_PMI,ISM Manufacturing headline current-value connector exists; historical timeseries and transform layer are absent.
+Wind/workbook label,美国:供应管理协会(ISM):制造业PMI,美国ISM制造业PMI（月度指标）!R22C20,connected,ism:ISM_MFG_PMI_US,ISM official Manufacturing PMI report parser maps the headline index.
+Wind/workbook label,美国:供应管理协会(ISM):制造业PMI:环比增加,美国ISM制造业PMI（月度指标）!R22C33,connected,ism:ISM_MFG_PMI_MOM_US,ISM official Manufacturing PMI report parser maps the headline point change.
 Wind/workbook label,美国:全球供应链压力指数(GSCPI),月度数据!R4C70,connected,nyfed:NYFED_GSCPI,NY Fed GSCPI research-data path is configured in the NY Fed fetcher and concept_map.
 Wind/workbook label,美国:全部工业部门产能利用率,月度数据!R4C19,partial,fred source available,Industrial production is configured; capacity-utilization series is absent from configured MACRO_SERIES.
 Wind/workbook label,美国:出口金额:季调:同比,月度数据!R4C26,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source paths exist; this exact field needs scheduled timeseries sync.

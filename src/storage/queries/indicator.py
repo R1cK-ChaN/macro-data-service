@@ -253,6 +253,84 @@ _AISI_STEEL_CONCEPT_MAP_DEFS: tuple[tuple[str, str, str, str, int, str, str], ..
     ),
 )
 
+_ISM_REPORT_METRICS: tuple[tuple[str, str, str, str], ...] = (
+    ("manufacturing", "pmi", "MFG_PMI", "Manufacturing PMI"),
+    ("manufacturing", "new_orders", "MFG_NEW_ORDERS", "Manufacturing New Orders"),
+    ("manufacturing", "production", "MFG_PRODUCTION", "Manufacturing Production"),
+    ("manufacturing", "employment", "MFG_EMPLOYMENT", "Manufacturing Employment"),
+    ("manufacturing", "supplier_deliveries", "MFG_SUPPLIER_DELIVERIES", "Manufacturing Supplier Deliveries"),
+    ("manufacturing", "inventories", "MFG_INVENTORIES", "Manufacturing Inventories"),
+    ("manufacturing", "customers_inventories", "MFG_CUSTOMERS_INVENTORIES", "Manufacturing Customers' Inventories"),
+    ("manufacturing", "prices", "MFG_PRICES", "Manufacturing Prices"),
+    ("manufacturing", "backlog_of_orders", "MFG_BACKLOG_OF_ORDERS", "Manufacturing Backlog of Orders"),
+    ("manufacturing", "new_export_orders", "MFG_NEW_EXPORT_ORDERS", "Manufacturing New Export Orders"),
+    ("manufacturing", "imports", "MFG_IMPORTS", "Manufacturing Imports"),
+    ("services", "pmi", "SERVICES_PMI", "Services PMI"),
+    ("services", "business_activity", "SERVICES_BUSINESS_ACTIVITY", "Services Business Activity"),
+    ("services", "new_orders", "SERVICES_NEW_ORDERS", "Services New Orders"),
+    ("services", "employment", "SERVICES_EMPLOYMENT", "Services Employment"),
+    ("services", "supplier_deliveries", "SERVICES_SUPPLIER_DELIVERIES", "Services Supplier Deliveries"),
+    ("services", "inventories", "SERVICES_INVENTORIES", "Services Inventories"),
+    ("services", "prices", "SERVICES_PRICES", "Services Prices"),
+    ("services", "backlog_of_orders", "SERVICES_BACKLOG_OF_ORDERS", "Services Backlog of Orders"),
+    ("services", "new_export_orders", "SERVICES_NEW_EXPORT_ORDERS", "Services New Export Orders"),
+    ("services", "imports", "SERVICES_IMPORTS", "Services Imports"),
+    ("services", "inventory_sentiment", "SERVICES_INVENTORY_SENTIMENT", "Services Inventory Sentiment"),
+)
+
+_ISM_SA_METRICS = {
+    ("manufacturing", "pmi"),
+    ("manufacturing", "new_orders"),
+    ("manufacturing", "production"),
+    ("manufacturing", "employment"),
+    ("manufacturing", "supplier_deliveries"),
+    ("manufacturing", "inventories"),
+    ("services", "pmi"),
+    ("services", "business_activity"),
+    ("services", "new_orders"),
+    ("services", "employment"),
+    ("services", "supplier_deliveries"),
+}
+
+
+def _ism_family_id(survey: str, metric: str, measure: str) -> str:
+    survey_part = "mfg" if survey == "manufacturing" else "services"
+    suffix = "_mom" if measure == "change" else ""
+    return f"us.growth.ism_{survey_part}_{metric}{suffix}"
+
+
+_ISM_REPORT_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    series_id: (
+        _ism_family_id(survey, metric, measure),
+        f"US ISM {name}{' MoM' if measure == 'change' else ''}",
+        "percentage_points" if measure == "change" else "index",
+        "monthly",
+        "sa" if (survey, metric) in _ISM_SA_METRICS else "nsa",
+    )
+    for survey, metric, token, name in _ISM_REPORT_METRICS
+    for measure, series_id in (
+        ("index", f"ISM_{token}_US"),
+        ("change", f"ISM_{token}_MOM_US"),
+    )
+}
+
+_ISM_REPORT_CONCEPT_MAP_DEFS: tuple[tuple[str, str, str, str, int, str, str], ...] = tuple(
+    (
+        f"ISM_{token}_{'MOM_' if measure == 'change' else ''}US",
+        "ism",
+        series_id,
+        _ism_family_id(survey, metric, measure),
+        1,
+        "primary",
+        f"ISM {name}{' month-over-month point change' if measure == 'change' else ''}",
+    )
+    for survey, metric, token, name in _ISM_REPORT_METRICS
+    for measure, series_id in (
+        ("index", f"ISM_{token}_US"),
+        ("change", f"ISM_{token}_MOM_US"),
+    )
+)
+
 _OECD_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
     "OECD_CLI_US":           ("us.leading.cli",             "US Composite Leading Indicator",  "index",   "monthly", "none"),
@@ -337,6 +415,7 @@ _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
     ("bundesbank",      "bundesbank",      "Deutsche Bundesbank",               "central_bank",     "DE", "https://www.bundesbank.de",                                      "https://api.statistiken.bundesbank.de/rest"),
     ("mof_jp",          "mof_jp",          "Japan Ministry of Finance",         "government_agency", "JP", "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/index.htm", "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/historical/jgbcme_all.csv"),
     ("aisi",            "aisi",            "American Iron and Steel Institute", "data_aggregator",  "US", "https://www.steel.org/industry-data/",                            "https://www.steel.org/industry-data/"),
+    ("ism",             "ism",             "Institute for Supply Management",  "data_aggregator",  "US", "https://www.ismworld.org/supply-management-news-and-reports/reports/ism-pmi-reports/", "https://www.ismworld.org/supply-management-news-and-reports/reports/ism-pmi-reports/"),
     ("oecd",            "oecd",            "Organisation for Economic Co-operation", "data_aggregator", "XX", "https://www.oecd.org",                                      "https://sdmx.oecd.org/public/rest/v2"),
     ("worldbank",       "worldbank",       "World Bank",                        "data_aggregator",  "XX", "https://www.worldbank.org",                                      "https://api.worldbank.org/v2"),
     ("bls",             "bls",             "Bureau of Labor Statistics",         "government_agency", "US", "https://www.bls.gov",                                            "https://api.bls.gov/publicAPI/v2"),
@@ -882,6 +961,7 @@ class _IndicatorQueriesMixin:
             ("bundesbank", _BUNDESBANK_FAMILY_MAP),
             ("mof_jp", _MOF_JGB_FAMILY_MAP),
             ("aisi", _AISI_STEEL_FAMILY_MAP),
+            ("ism", _ISM_REPORT_FAMILY_MAP),
             ("oecd", _OECD_FAMILY_MAP),
             ("worldbank", _WORLDBANK_FAMILY_MAP),
             ("bls", _BLS_FAMILY_MAP),
@@ -1013,6 +1093,7 @@ class _IndicatorQueriesMixin:
         ("GDP_GROWTH_WB_US",    "worldbank",      "WB_GDP_GROWTH_US","us.growth.gdp_growth_wb",      1, "primary",     "Annual % growth"),
         ("GSCPI_US",            "nyfed",          "NYFED_GSCPI",    "us.supply_chain.gscpi",          1, "primary",     "NY Fed Global Supply Chain Pressure Index"),
         *_AISI_STEEL_CONCEPT_MAP_DEFS,
+        *_ISM_REPORT_CONCEPT_MAP_DEFS,
         #
         # ── US Rates ─────────────────────────────────────────────────
         ("POLICY_RATE_US",      "nyfed",          "NYFED_EFFR",     "us.rates.effr",                 1, "primary",     "NY Fed EFFR"),

@@ -103,6 +103,61 @@ subjects:
         - '\bglobal supply chain pressure index\b'
         - '(?-i:\bGSCPI\b)'
 
+  - id: econ.us.ism_pmi
+    display: "US ISM PMI"
+    aliases:
+      ism_series:
+        - ISM_MFG_PMI_US
+        - ISM_MFG_PMI_MOM_US
+        - ISM_MFG_NEW_ORDERS_US
+        - ISM_MFG_NEW_ORDERS_MOM_US
+        - ISM_MFG_PRODUCTION_US
+        - ISM_MFG_PRODUCTION_MOM_US
+        - ISM_MFG_EMPLOYMENT_US
+        - ISM_MFG_EMPLOYMENT_MOM_US
+        - ISM_MFG_SUPPLIER_DELIVERIES_US
+        - ISM_MFG_SUPPLIER_DELIVERIES_MOM_US
+        - ISM_MFG_INVENTORIES_US
+        - ISM_MFG_INVENTORIES_MOM_US
+        - ISM_MFG_CUSTOMERS_INVENTORIES_US
+        - ISM_MFG_CUSTOMERS_INVENTORIES_MOM_US
+        - ISM_MFG_PRICES_US
+        - ISM_MFG_PRICES_MOM_US
+        - ISM_MFG_BACKLOG_OF_ORDERS_US
+        - ISM_MFG_BACKLOG_OF_ORDERS_MOM_US
+        - ISM_MFG_NEW_EXPORT_ORDERS_US
+        - ISM_MFG_NEW_EXPORT_ORDERS_MOM_US
+        - ISM_MFG_IMPORTS_US
+        - ISM_MFG_IMPORTS_MOM_US
+        - ISM_SERVICES_PMI_US
+        - ISM_SERVICES_PMI_MOM_US
+        - ISM_SERVICES_BUSINESS_ACTIVITY_US
+        - ISM_SERVICES_BUSINESS_ACTIVITY_MOM_US
+        - ISM_SERVICES_NEW_ORDERS_US
+        - ISM_SERVICES_NEW_ORDERS_MOM_US
+        - ISM_SERVICES_EMPLOYMENT_US
+        - ISM_SERVICES_EMPLOYMENT_MOM_US
+        - ISM_SERVICES_SUPPLIER_DELIVERIES_US
+        - ISM_SERVICES_SUPPLIER_DELIVERIES_MOM_US
+        - ISM_SERVICES_INVENTORIES_US
+        - ISM_SERVICES_INVENTORIES_MOM_US
+        - ISM_SERVICES_PRICES_US
+        - ISM_SERVICES_PRICES_MOM_US
+        - ISM_SERVICES_BACKLOG_OF_ORDERS_US
+        - ISM_SERVICES_BACKLOG_OF_ORDERS_MOM_US
+        - ISM_SERVICES_NEW_EXPORT_ORDERS_US
+        - ISM_SERVICES_NEW_EXPORT_ORDERS_MOM_US
+        - ISM_SERVICES_IMPORTS_US
+        - ISM_SERVICES_IMPORTS_MOM_US
+        - ISM_SERVICES_INVENTORY_SENTIMENT_US
+        - ISM_SERVICES_INVENTORY_SENTIMENT_MOM_US
+      calendar_indicator: ["ISM Manufacturing PMI", "ISM Services PMI", "ISM Non-Manufacturing PMI"]
+      title_regex:
+        - '\bISM\b.*\bPMI\b'
+        - '\bmanufacturing PMI\b'
+        - '\bservices PMI\b'
+        - '\bnon[- ]manufacturing PMI\b'
+
   - id: industry.us.steel
     display: "US Raw Steel Production"
     aliases:

@@ -131,6 +131,15 @@ from .aisi import (
     AISIWeeklySteelReport,
     parse_weekly_raw_steel_page,
 )
+from .ism import (
+    ISMClient,
+    ISMObservation,
+    ISMReport,
+    ISMReportMetric,
+    ISMReportParseError,
+    discover_current_report_urls,
+    parse_ism_report_page,
+)
 from .wsj import WSJArticle, WSJArticleClient, WSJNewsClient
 from .gov_report import GovReportClient, GovReportItem
 from .mof_jgb import MOFJGBClient, MOFJGBObservation, parse_jgb_interest_rate_csv
@@ -209,6 +218,10 @@ __all__ = [
     "ILORateLimitError",
     "ILOSizeEstimate",
     "ILOStructureSummary",
+    "ISMObservation",
+    "ISMReport",
+    "ISMReportMetric",
+    "ISMReportParseError",
     "FedMeetingProbability",
     "FedRateProbability",
     "FredAPIError",
@@ -290,6 +303,7 @@ __all__ = [
     "FredClient",
     "ILOClient",
     "IMFClient",
+    "ISMClient",
     "MOFJGBClient",
     "OECDClient",
     "TreasuryFiscalClient",
@@ -301,6 +315,8 @@ __all__ = [
     # Rate Probabilities & Reference Rates
     "NYFedRatesClient",
     "RateProbabilityClient",
+    "discover_current_report_urls",
+    "parse_ism_report_page",
     "parse_weekly_raw_steel_page",
     "parse_jgb_interest_rate_csv",
 ]

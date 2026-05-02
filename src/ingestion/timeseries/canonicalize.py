@@ -203,6 +203,33 @@ def aisi_content_hash(payload: dict[str, Any]) -> str:
     return _hash_canonical(canonicalize_aisi_payload(payload))
 
 
+# ── ISM PMI report HTML ───────────────────────────────────────────────────
+
+def canonicalize_ism_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize per-series ISM report observations."""
+    observations = payload.get("observations") or []
+    cleaned = [
+        {"date": row.get("date"), "value": row.get("value")}
+        for row in observations
+        if isinstance(row, dict)
+    ]
+    cleaned.sort(key=lambda row: (row.get("date") or "", str(row.get("value") or "")))
+    return json.dumps(
+        {
+            "survey": payload.get("survey", ""),
+            "metric": payload.get("metric", ""),
+            "measure": payload.get("measure", ""),
+            "observations": cleaned,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def ism_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_ism_payload(payload))
+
+
 # ── Dispatch ──────────────────────────────────────────────────────────────
 
 _HASH_BY_SOURCE = {
@@ -218,6 +245,7 @@ _HASH_BY_SOURCE = {
     "ilo": sdmx_content_hash,
     "mof_jp": mof_jp_content_hash,
     "aisi": aisi_content_hash,
+    "ism": ism_content_hash,
 }
 
 

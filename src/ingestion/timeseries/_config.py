@@ -24,6 +24,7 @@ __all__ = [
     "BUNDESBANK_SERIES",
     "MOF_JGB_SERIES",
     "AISI_WEEKLY_STEEL_SERIES",
+    "ISM_REPORT_SERIES",
     "OECD_DEFAULT_AGENCY_ID", "OECDSeriesConfig",
     "_slugify_oecd_token", "_generated_oecd_series_id", "_generated_oecd_config_key",
     "render_oecd_series_configs", "OECD_SERIES",
@@ -770,6 +771,111 @@ AISI_WEEKLY_STEEL_SERIES = {
         "category": "industry",
         "unit": "percent",
     },
+}
+
+# ---------------------------------------------------------------------------
+# ISM PMI official report pages
+# ---------------------------------------------------------------------------
+
+_ISM_REPORT_METRICS: tuple[tuple[str, str, str, str], ...] = (
+    ("manufacturing", "pmi", "MFG_PMI", "Manufacturing PMI"),
+    ("manufacturing", "new_orders", "MFG_NEW_ORDERS", "Manufacturing New Orders"),
+    ("manufacturing", "production", "MFG_PRODUCTION", "Manufacturing Production"),
+    ("manufacturing", "employment", "MFG_EMPLOYMENT", "Manufacturing Employment"),
+    (
+        "manufacturing",
+        "supplier_deliveries",
+        "MFG_SUPPLIER_DELIVERIES",
+        "Manufacturing Supplier Deliveries",
+    ),
+    ("manufacturing", "inventories", "MFG_INVENTORIES", "Manufacturing Inventories"),
+    (
+        "manufacturing",
+        "customers_inventories",
+        "MFG_CUSTOMERS_INVENTORIES",
+        "Manufacturing Customers' Inventories",
+    ),
+    ("manufacturing", "prices", "MFG_PRICES", "Manufacturing Prices"),
+    (
+        "manufacturing",
+        "backlog_of_orders",
+        "MFG_BACKLOG_OF_ORDERS",
+        "Manufacturing Backlog of Orders",
+    ),
+    (
+        "manufacturing",
+        "new_export_orders",
+        "MFG_NEW_EXPORT_ORDERS",
+        "Manufacturing New Export Orders",
+    ),
+    ("manufacturing", "imports", "MFG_IMPORTS", "Manufacturing Imports"),
+    ("services", "pmi", "SERVICES_PMI", "Services PMI"),
+    (
+        "services",
+        "business_activity",
+        "SERVICES_BUSINESS_ACTIVITY",
+        "Services Business Activity",
+    ),
+    ("services", "new_orders", "SERVICES_NEW_ORDERS", "Services New Orders"),
+    ("services", "employment", "SERVICES_EMPLOYMENT", "Services Employment"),
+    (
+        "services",
+        "supplier_deliveries",
+        "SERVICES_SUPPLIER_DELIVERIES",
+        "Services Supplier Deliveries",
+    ),
+    ("services", "inventories", "SERVICES_INVENTORIES", "Services Inventories"),
+    ("services", "prices", "SERVICES_PRICES", "Services Prices"),
+    (
+        "services",
+        "backlog_of_orders",
+        "SERVICES_BACKLOG_OF_ORDERS",
+        "Services Backlog of Orders",
+    ),
+    (
+        "services",
+        "new_export_orders",
+        "SERVICES_NEW_EXPORT_ORDERS",
+        "Services New Export Orders",
+    ),
+    ("services", "imports", "SERVICES_IMPORTS", "Services Imports"),
+    (
+        "services",
+        "inventory_sentiment",
+        "SERVICES_INVENTORY_SENTIMENT",
+        "Services Inventory Sentiment",
+    ),
+)
+
+ISM_REPORT_SERIES = {
+    key: cfg
+    for survey, metric, series_token, name in _ISM_REPORT_METRICS
+    for key, cfg in (
+        (
+            f"{survey}_{metric}",
+            {
+                "survey": survey,
+                "metric": metric,
+                "measure": "index",
+                "series_id": f"ISM_{series_token}_US",
+                "name": f"US ISM {name}",
+                "category": "growth",
+                "unit": "index",
+            },
+        ),
+        (
+            f"{survey}_{metric}_mom",
+            {
+                "survey": survey,
+                "metric": metric,
+                "measure": "change",
+                "series_id": f"ISM_{series_token}_MOM_US",
+                "name": f"US ISM {name} MoM",
+                "category": "growth",
+                "unit": "percentage_points",
+            },
+        ),
+    )
 }
 
 # ---------------------------------------------------------------------------

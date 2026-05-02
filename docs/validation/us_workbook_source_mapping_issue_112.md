@@ -2,7 +2,7 @@
 
 Date: 2026-05-01
 Issue: #112
-Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings; NY Fed GSCPI mapping; Bundesbank Germany yield mappings; Japan MOF JGB yield mappings; AISI weekly steel mappings
+Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings; NY Fed GSCPI mapping; Bundesbank Germany yield mappings; Japan MOF JGB yield mappings; AISI weekly steel mappings; ISM official PMI report mappings
 
 The inspected US workbook is a coverage sample for finding omitted fields. Source
 grouping here follows the indicator's economic meaning, official publisher,
@@ -123,5 +123,20 @@ seeding, subject alias resolution, source discovery, country-scoped validation,
 US-holiday-aware weekly release timing, and the orchestrator save path into
 `indicators` and `obs_raw`.
 
-Remaining source groups for later slices: ISM subcomponents, Redbook, Sentix US,
-SOFR-OIS, and exact Wind/Bloomberg parity.
+## ISM Official PMI Report Rows
+
+| Indicator/source group | ISM report metric group | Series id pattern | Concept id pattern | Obs family pattern |
+| --- | --- | --- | --- | --- |
+| Manufacturing PMI headline and point change | Manufacturing PMI | `ISM_MFG_PMI_*` | `ISM_MFG_PMI_*` | `us.growth.ism_mfg_pmi*` |
+| Manufacturing subcomponent indexes and point changes | New Orders, Production, Employment, Supplier Deliveries, Inventories, Customers' Inventories, Prices, Backlog of Orders, New Export Orders, Imports | `ISM_MFG_<METRIC>_*` | `ISM_MFG_<METRIC>_*` | `us.growth.ism_mfg_<metric>*` |
+| Services PMI headline and point change | Services PMI | `ISM_SERVICES_PMI_*` | `ISM_SERVICES_PMI_*` | `us.growth.ism_services_pmi*` |
+| Services subcomponent indexes and point changes | Business Activity, New Orders, Employment, Supplier Deliveries, Inventories, Prices, Backlog of Orders, New Export Orders, Imports, Inventory Sentiment | `ISM_SERVICES_<METRIC>_*` | `ISM_SERVICES_<METRIC>_*` | `us.growth.ism_services_<metric>*` |
+
+Focused tests cover official Manufacturing and Services report parsing, current
+report discovery, client raw payloads, fetcher output, raw snapshot hashing,
+obs-family seeding, concept-map seeding, release-schedule seeding, subject alias
+resolution, source discovery, country-scoped validation, and the orchestrator
+save path into `indicators` and `obs_raw`.
+
+Remaining source groups for later slices: Redbook, Sentix US, SOFR-OIS, and
+exact Wind/Bloomberg parity.

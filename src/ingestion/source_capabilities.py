@@ -529,6 +529,7 @@ class SourceCapabilityManager:
             FED_FEEDS,
             ILO_SERIES,
             IMF_VINTAGE_SERIES,
+            ISM_REPORT_SERIES,
             MACRO_SERIES,
             MACRO_WATCHLIST,
             MOF_JGB_SERIES,
@@ -1358,6 +1359,17 @@ class SourceCapabilityManager:
                 "aisi", "series", AISI_WEEKLY_STEEL_SERIES,
             ),
             sync_latest=lambda entity_ids, limit: _run_job("aisi"),
+        )
+        adapters["ism"] = SourceCapabilityAdapter(
+            source_id="ism",
+            display_name="Institute for Supply Management",
+            source_type="fixed-scope-complete",
+            entity_type="series",
+            description="ISM Manufacturing and Services PMI official report metrics.",
+            supports_structure=False,
+            is_default_scheduled=True,
+            discover=_configured_entities("ism", "series", ISM_REPORT_SERIES),
+            sync_latest=lambda entity_ids, limit: _run_job("ism"),
         )
 
         if orchestrator is not None:
