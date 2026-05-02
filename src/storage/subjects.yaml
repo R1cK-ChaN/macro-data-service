@@ -319,11 +319,9 @@ subjects:
     display: "US SOFR"
     aliases:
       ny_fed_series: [SOFR, NYFED_SOFR]
-      market_ticker: [USSOC, "USSOC BGN Curncy", RATES_USD_OIS_3M_BLOOMBERG]
       title_regex:
         - '\bSOFR\b'
         - '\bsecured overnight financing rate\b'
-        - '\bUSD\s+OIS\b'
 
   - id: rate.us.effr
     display: "US EFFR"

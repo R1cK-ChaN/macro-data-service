@@ -3,7 +3,7 @@ Bloomberg security,FARBDTRS Index,美联储金融流动性（负债规模-TGA-�
 Bloomberg security,FARBLIAB Index,美联储金融流动性（负债规模-TGA-逆回购）!R2C2,connected,fred:WALCL,Equivalent Fed total assets series is configured in FRED.
 Bloomberg security,FARWRRA Index,美联储金融流动性（负债规模-TGA-逆回购）!R2C4,connected,fred:RRPONTSYD,Equivalent reverse repo series is configured in FRED.
 Bloomberg security,SOFRRATE Index,流动性SOFR-OIS!R1C2,connected,nyfed_rates:NYFED_SOFR,Equivalent SOFR path is configured through the NY Fed rate fetcher.
-Bloomberg security,USSOC BGN Curncy,流动性SOFR-OIS!R1C3,partial,bloomberg_rates:RATES_USD_OIS_3M_BLOOMBERG,Licensed Bloomberg BGN-compatible CSV ingestion path is configured; a source file path is required before observations are stored.
+Bloomberg security,USSOC BGN Curncy,流动性SOFR-OIS!R1C3,missing,,USD OIS Bloomberg security has no equivalent configured source.
 Wind/workbook label,MOVE指数,MOVE 和VIX!R2C1,missing,,MOVE is absent from market/FRED/Bloomberg-equivalent configs.
 Wind/workbook label,中国:中债国债到期收益率:10年,主要国家国债收益率利差!R2C12,missing,,ChinaBond official parity path remains open.
 Wind/workbook label,名义美元指数:对国外发达经济体:周,汇率!R28C16,partial,fred source available,Broad dollar and DXY paths are configured; the advanced-economy dollar sub-index needs its own configured series.

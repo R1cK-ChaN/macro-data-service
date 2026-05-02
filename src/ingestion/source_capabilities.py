@@ -541,7 +541,6 @@ class SourceCapabilityManager:
             ECB_SERIES,
             EUROSTAT_SERIES,
         )
-        from ingestion.market._bloomberg_rates import BLOOMBERG_RATE_UNIVERSE
         from ingestion.news_feeds import get_feeds
         from ingestion.scrapers.eia import EIAClient
         from ingestion.scrapers.treasury_fiscal import TreasuryFiscalClient
@@ -635,29 +634,6 @@ class SourceCapabilityManager:
                         description=asset_class,
                         metadata={"asset_class": asset_class},
                     ))
-            return _limit_items(entities, query, limit)
-
-        def _bloomberg_rate_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
-            entities = [
-                _entity(
-                    "bloomberg_rates",
-                    entry.provider_symbol,
-                    "series",
-                    entry.name,
-                    description=entry.description_for_agent,
-                    metadata={
-                        "instrument_id": entry.instrument_id,
-                        "ticker": entry.ticker,
-                        "provider": entry.provider,
-                        "provider_symbol": entry.provider_symbol,
-                        "curve": entry.curve,
-                        "tenor": entry.tenor,
-                        "unit": entry.unit,
-                        "env_vars": list(entry.env_vars),
-                    },
-                )
-                for entry in BLOOMBERG_RATE_UNIVERSE
-            ]
             return _limit_items(entities, query, limit)
 
         def _fed_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
@@ -1229,17 +1205,6 @@ class SourceCapabilityManager:
             is_default_scheduled=True,
             discover=_market_entities,
             sync_latest=lambda entity_ids, limit: _run_job("market"),
-        )
-        adapters["bloomberg_rates"] = SourceCapabilityAdapter(
-            source_id="bloomberg_rates",
-            display_name="Bloomberg Rates CSV",
-            source_type="licensed-file-drop",
-            entity_type="series",
-            description="Licensed Bloomberg-compatible rates CSV imports",
-            notes="Requires BLOOMBERG_USSOC_CSV or compatible path env var for USSOC BGN Curncy.",
-            is_default_scheduled=True,
-            discover=_bloomberg_rate_entities,
-            sync_latest=lambda entity_ids, limit: _run_job("bloomberg_rates"),
         )
         adapters["news"] = SourceCapabilityAdapter(
             source_id="news",

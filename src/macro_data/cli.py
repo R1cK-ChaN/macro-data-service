@@ -818,7 +818,7 @@ def _run_diagnose_sources(args: argparse.Namespace, service) -> int:
     _PROBE_SOURCES = [
         "fred_daily", "bls", "nyfed_rates", "eia", "treasury_fiscal",
         "imf", "eurostat", "bis", "ecb", "bundesbank", "mof_jp", "aisi",
-        "ism", "redbook", "sentix", "bloomberg_rates", "oecd", "worldbank",
+        "ism", "redbook", "sentix", "oecd", "worldbank",
     ]
     results = []
     for name in _PROBE_SOURCES:

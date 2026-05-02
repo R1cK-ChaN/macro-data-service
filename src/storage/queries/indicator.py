@@ -1594,12 +1594,6 @@ class _IndicatorQueriesMixin:
             "ism": ("indicators", "source = ?", ("ism",), "scraped_at"),
             "redbook": ("indicators", "source = ?", ("redbook",), "scraped_at"),
             "sentix": ("indicators", "source = ?", ("sentix",), "scraped_at"),
-            "bloomberg_rates": (
-                "market_price_bars",
-                "source_name = ?",
-                ("Bloomberg BGN",),
-                "collected_at",
-            ),
             "oecd": ("indicators", "source = ?", ("oecd",), "scraped_at"),
             "worldbank": ("indicators", "source = ?", ("worldbank",), "scraped_at"),
             "nyfed_rates": ("indicators", "source = ?", ("nyfed",), "scraped_at"),

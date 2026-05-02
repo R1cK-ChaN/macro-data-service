@@ -2,7 +2,7 @@
 
 Date: 2026-05-01
 Issue: #112
-Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings; NY Fed GSCPI mapping; Bundesbank Germany yield mappings; Japan MOF JGB yield mappings; AISI weekly steel mappings; ISM official PMI report mappings; Redbook weekly retail-sales mappings; sentix Economic Index US mappings; SOFR-OIS licensed CSV market-rate path
+Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings; NY Fed GSCPI mapping; Bundesbank Germany yield mappings; Japan MOF JGB yield mappings; AISI weekly steel mappings; ISM official PMI report mappings; Redbook weekly retail-sales mappings; sentix Economic Index US mappings
 
 The inspected US workbook is a coverage sample for finding omitted fields. Source
 grouping here follows the indicator's economic meaning, official publisher,
@@ -164,14 +164,5 @@ raw snapshot hashing, obs-family seeding, concept-map seeding, release-schedule
 seeding, subject alias resolution, source discovery, country-scoped validation,
 and the orchestrator save path into `indicators` and `obs_raw`.
 
-## SOFR-OIS Licensed CSV Market-Rate Row
-
-| Workbook field | Licensed source path | Instrument id | Storage lane |
-| --- | --- | --- | --- |
-| `USSOC BGN Curncy` | Bloomberg BGN-compatible CSV via `BLOOMBERG_USSOC_CSV` / `BLOOMBERG_USSOC_CSV_PATH` / `BLOOMBERG_USD_OIS_3M_CSV` / `BLOOMBERG_USD_OIS_3M_CSV_PATH` | `RATES_USD_OIS_3M_BLOOMBERG` | `market_instruments`, `market_symbol_history`, `market_price_bars`, `market_price_bars_raw` |
-
-Focused tests cover workbook ticker mapping, `PX_LAST` and bid/ask CSV shapes,
-raw snapshot hashing, market-bar projection, subject alias resolution through
-`rate.us.sofr`, source discovery, and the orchestrator save path.
-
-Remaining source groups for later slices: exact Wind and wider Bloomberg parity.
+Remaining source groups for later slices: SOFR-OIS and exact Wind/Bloomberg
+parity.
