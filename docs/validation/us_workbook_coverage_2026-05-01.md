@@ -8,7 +8,7 @@ The `.~` file is a 165-byte Excel lock file. Field extraction used sibling workb
 
 ## Result
 
-Coverage is partial. The repo has connected official-source equivalents for core US macro fields. Exact Wind/Bloomberg parity requires licensed Wind and Bloomberg adapters.
+Coverage is partial. The repo has connected official-source equivalents for core US macro fields. Exact Wind and wider Bloomberg parity require licensed adapters.
 
 Coverage definitions:
 - connected: configured exact or direct-equivalent source path exists in repo
@@ -17,8 +17,8 @@ Coverage definitions:
 
 Field counts:
 - connected: 116
-- partial: 282
-- missing: 3
+- partial: 283
+- missing: 2
 - total extracted unique fields: 401
 
 Input source labels:
@@ -32,7 +32,7 @@ fetcher output, and schedule/vintage handling are wired.
 
 ## Evidence From Repo
 
-- Source capability adapters are registered for FRED, BLS, EIA, Treasury Fiscal, NY Fed rates/research, Japan MOF JGB rates, AISI weekly steel, ISM official PMI reports, Redbook Research weekly retail sales, sentix Economic Index, market watchlist, OECD, World Bank, Eurostat, ECB, IMF, BIS, Census, and BEA. Exact Wind/Bloomberg source parity requires licensed adapters.
+- Source capability adapters are registered for FRED, BLS, EIA, Treasury Fiscal, NY Fed rates/research, Japan MOF JGB rates, AISI weekly steel, ISM official PMI reports, Redbook Research weekly retail sales, sentix Economic Index, Bloomberg-compatible rates CSV, market watchlist, OECD, World Bank, Eurostat, ECB, IMF, BIS, Census, and BEA. Exact Wind and wider Bloomberg source parity require licensed adapters.
 - FRED configured macro series include CPI/core CPI/core PCE, NFP, unemployment, claims, GDP, real GDP, retail sales, industrial production, 2Y/10Y/30Y Treasury, 10Y real yield, 10Y-2Y spread, Fed balance sheet, M2, reverse repo, TGA, broad dollar, CNY/USD, HY OAS, and VIX.
 - BLS configured series include headline CPI/core/food/energy/shelter, PPI/core PPI, NFP/private payrolls, average hourly earnings, average weekly hours, unemployment, LFPR, JOLTS openings/hires/quits, ECI, productivity, and unit labor costs.
 - BEA configs cover NIPA GDP summary/contributions/real GDP/PCE/personal income plus ITA current-account and goods-balance datasets; latest sync for arbitrary BEA datasets remains a follow-up.
@@ -40,6 +40,7 @@ fetcher output, and schedule/vintage handling are wired.
 - ISM official report coverage includes Manufacturing and Services PMI headline, subcomponent indexes, and month-over-month point changes.
 - Redbook Research weekly retail-sales YoY is configured through the authorized Trading Economics historical feed with Redbook source attribution.
 - sentix Economic Index US headline, current situation, and expectations are configured through the official sentix Data REST API.
+- SOFR-OIS `USSOC BGN Curncy` has a licensed Bloomberg BGN-compatible CSV path that stores the quote as a market-rate series with raw snapshots when a file path is configured.
 
 ## Coverage By Sheet
 
@@ -54,7 +55,7 @@ fetcher output, and schedule/vintage handling are wired.
 | 日本国债 | 7 | 0 | 0 |
 | 月度数据 | 14 | 29 | 0 |
 | 汇率 | 5 | 12 | 0 |
-| 流动性SOFR-OIS | 1 | 0 | 1 |
+| 流动性SOFR-OIS | 1 | 1 | 0 |
 | 美债 | 5 | 6 | 0 |
 | 美国GDP分稿 | 2 | 72 | 0 |
 | 美国ISM制造业PMI（月度指标） | 44 | 0 | 0 |
@@ -72,6 +73,7 @@ fetcher output, and schedule/vintage handling are wired.
 | ISM PMI | connected | ISM Manufacturing and Services PMI report metrics are configured through official ISM report pages. |
 | Redbook weekly retail sales | connected | Redbook Research weekly YoY index is configured through the authorized Trading Economics historical feed. |
 | Sentix US investor confidence | connected | sentix official SNTE US headline current/expectations tickers and derived headline path are configured through the sentix Data REST API. |
+| SOFR-OIS / `USSOC BGN Curncy` | partial | Licensed Bloomberg BGN-compatible CSV ingestion is configured; production storage requires a configured file path. |
 | Treasury curve | partial | 2Y/5Y proxy/10Y/30Y/10Y real/10Y-2Y are configured; additional maturities and TIPS tenors need series additions. |
 | FX | partial | DXY, broad dollar, EUR/USD, USD/CNY, and USD/JPY are covered; dollar sub-indexes and additional FX pairs need configured series/watchlist entries. |
 | Global sovereign yields | partial | Germany yield series are configured through Bundesbank BBSSY. Japan yield series are configured through MOF JGB interest-rate CSV. China official parity path remains open. |
@@ -96,7 +98,7 @@ Current coverage status remains a repo-configuration finding. A field marked mis
 | Weekly raw steel production | AISI weekly raw steel production page | Connected in issue #112 slice 7 through AISI official weekly raw steel production page for weekly value, WoW, and YoY fields, obs-family, concept-map, release-schedule, subject aliases, and raw snapshots. |
 | ISM manufacturing/services subcomponents | ISM official PMI report pages | Connected in issue #112 slice 8 through official report parsing for Manufacturing and Services headline, subcomponent indexes, point changes, obs-family, concept-map, release-schedule, subject aliases, and raw snapshots. |
 | Sentix US current/expectations/headline | sentix official SNTE Economic Index via sentix Data REST API | Connected in issue #112 slice 10 through `SNTEUSH0`, `SNTEUSH6`, derived headline, obs-family, concept-map, release-schedule, subject aliases, and raw snapshots. |
-| SOFR-OIS / `USSOC BGN Curncy` | Bloomberg BGN or licensed SOFR OIS curve vendor | Store as a rates-market quote/curve series with raw snapshots. |
+| SOFR-OIS / `USSOC BGN Curncy` | Bloomberg BGN or licensed SOFR OIS curve vendor | Partial in issue #112 slice 11 through `bloomberg_rates:RATES_USD_OIS_3M_BLOOMBERG`, a licensed CSV file-drop parser, market instrument seeding, subject alias linkage, and raw snapshots. |
 
 EODHD remains a market/quote source for exchange, FX, index, GBOND, and related quote-style observations. Canonical economic ingestion uses official sources with vintage/as-of support where available, or repo-owned raw snapshots from first ingestion onward.
 
@@ -112,4 +114,4 @@ The liquidity fields in the coverage sample are connected through existing FRED/
 
 Full field-level map: `docs/validation/us_workbook_coverage_2026-05-01.csv`
 
-Recommended implementation sequence: decide licensed SOFR-OIS curve path. Licensed-source decisions remain for SOFR-OIS and exact Wind/Bloomberg parity.
+Recommended implementation sequence: configure the licensed `USSOC BGN Curncy` CSV path in production, then continue exact Wind and wider Bloomberg parity.

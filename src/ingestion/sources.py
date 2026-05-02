@@ -223,6 +223,7 @@ SOURCE_FAMILIES: dict[str, str] = {
     "market": "market_price",
     "tiingo_market": "market_price",
     "eodhd_market": "market_price",
+    "bloomberg_rates": "market_price",
     "macro_market": "market_price",
     "identity_repair": "market_price",
     # release_report
@@ -277,6 +278,7 @@ from ingestion.clients._fed import FedIngestionClient
 from ingestion.clients._market import MarketPriceClient
 from ingestion.market.clients._tiingo import TiingoMarketDataProvider
 from ingestion.market.clients._eodhd import EODHDMarketDataProvider
+from ingestion.market.clients._bloomberg_rates import BloombergRatesFileProvider
 from ingestion.market.clients._macro_market import MacroMarketProvider
 from ingestion.market.clients._identity_repair import IdentityRepairService
 from ingestion.clients._trends import (
@@ -305,6 +307,7 @@ class IngestionOrchestrator:
         market: MarketPriceClient | None = None,
         tiingo: TiingoMarketDataProvider | None = None,
         eodhd: EODHDMarketDataProvider | None = None,
+        bloomberg_rates: BloombergRatesFileProvider | None = None,
         macro_market: MacroMarketProvider | None = None,
         identity_repair: IdentityRepairService | None = None,
         news: NewsIngestionClient | None = None,
@@ -339,6 +342,7 @@ class IngestionOrchestrator:
         self.market = market or MarketPriceClient()
         self.tiingo = tiingo or TiingoMarketDataProvider()
         self.eodhd = eodhd or EODHDMarketDataProvider()
+        self.bloomberg_rates = bloomberg_rates or BloombergRatesFileProvider()
         self.macro_market = macro_market or MacroMarketProvider()
         self.identity_repair = identity_repair or IdentityRepairService()
         self.news = news or NewsIngestionClient()
@@ -442,6 +446,7 @@ class IngestionOrchestrator:
             self._build_market_source(),
             self._build_tiingo_market_source(),
             self._build_eodhd_market_source(),
+            self._build_bloomberg_rates_source(),
             self._build_fred_daily_source(),
             self._build_fred_nondaily_source(),
             self._build_fred_full_source(),
@@ -481,6 +486,7 @@ class IngestionOrchestrator:
             "market",
             "tiingo_market",
             "eodhd_market",
+            "bloomberg_rates",
             "fred_daily",
             "news",
             "reddit_trends",
@@ -906,6 +912,13 @@ class IngestionOrchestrator:
                 self.store,
                 lookback_days=lookback_days,
             ).count,
+        )
+
+    def _build_bloomberg_rates_source(self) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name="bloomberg_rates",
+            interval_seconds=86_400,
+            execute=lambda: self.bloomberg_rates.refresh_universe(self.store).count,
         )
 
     def _build_macro_market_source(self) -> IngestionSourceDefinition:
