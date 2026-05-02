@@ -655,34 +655,19 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_trend_topics_normalized "
         "ON trend_topics(normalized_topic_hash)"
     )
-    # -- issue #113 P0: drop legacy downstream-shaped tables ----------
+    # -- issue #113 P0+P4: drop legacy downstream-shaped tables ------
     # Trading / analytical / messaging / portfolio / subagent_runs were
     # scaffolded for downstream services that never landed. Tables verified
     # empty in production at branch cut; safe to drop on existing engine.db.
     # Children-before-parents ordering keeps PRAGMA foreign_keys=ON happy
-    # if a dev still has stale rows locally. ``research_artifacts`` is held
-    # over to issue #113 P4 because rag/bridge.py still SELECTs from it
-    # until src/rag/ is removed.
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS research_artifacts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            artifact_type TEXT NOT NULL,
-            title TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            content_markdown TEXT NOT NULL,
-            source_kind TEXT NOT NULL,
-            source_id INTEGER NOT NULL,
-            tags_json TEXT NOT NULL,
-            metadata_json TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
+    # if a dev still has stale rows locally. ``research_artifacts`` and
+    # ``rag_sync_watermarks`` joined the drop list in P4 when src/rag/
+    # was removed.
     for legacy_table in (
         "trading_artifacts",
         "decision_log",
         "trade_signals",
+        "research_artifacts",
         "position_state",
         "performance_records",
         "regime_snapshots",
@@ -699,6 +684,7 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         "portfolio_vol_snapshots",
         "portfolio_holdings",
         "subagent_runs",
+        "rag_sync_watermarks",
     ):
         connection.execute(f"DROP TABLE IF EXISTS {legacy_table}")
     # -- Document storage: 5-table normalized schema --------------------
@@ -834,16 +820,6 @@ def apply_schema(connection: sqlite3.Connection) -> None:
             document_id TEXT PRIMARY KEY,
             extra_json TEXT NOT NULL DEFAULT '{}',
             FOREIGN KEY (document_id) REFERENCES document(document_id)
-        )
-        """
-    )
-    # -- RAG sync watermarks ----------------------------------------
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS rag_sync_watermarks (
-            source_type TEXT PRIMARY KEY,
-            last_synced_id INTEGER NOT NULL DEFAULT 0,
-            last_synced_at TEXT NOT NULL
         )
         """
     )

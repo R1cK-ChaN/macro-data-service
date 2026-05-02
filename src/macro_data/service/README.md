@@ -77,8 +77,8 @@ lives in `_documents.py` for that reason.
 ## Initialization
 
 `LocalMacroDataServiceBase.__init__` requires a keyword-only `store`
-argument; `ingestion` and `retriever` are optional keyword args that
-default to `None`. There is no built-in default-store branch.
+argument; `ingestion` is an optional keyword arg that defaults to
+`None`. There is no built-in default-store branch.
 
 For most callers the right entry point is the factory in
 `src/macro_data/factory.py`:
@@ -88,13 +88,14 @@ from macro_data.factory import build_local_macro_data_service
 service = build_local_macro_data_service(db_path=Path("..."))
 ```
 
-`build_local_macro_data_service` constructs a `SQLiteEngineStore`, an
-`IngestionOrchestrator` bound to that store, and an optional
-`MacroRetriever` (best-effort import — falls back to `None` if `rag`
-isn't available), then wires them into a `LocalMacroDataService`.
+`build_local_macro_data_service` constructs a `SQLiteEngineStore` and
+an `IngestionOrchestrator` bound to that store, then wires them into a
+`LocalMacroDataService`. (Issue #113 P4 retired the in-tree RAG
+sidecar; downstream RAG services consume `get_document` / `list_items`
+over HTTP.)
 
 Mixins must not override `__init__`. They read `self._store`,
-optionally `self._ingestion` / `self._retriever`, and call the two
-lazy seeders defined on the base — `_ensure_structural_ontology` and
+optionally `self._ingestion`, and call the two lazy seeders defined on
+the base — `_ensure_structural_ontology` and
 `_ensure_subject_vocabulary` — when an op needs the ontology or
 subject vocabulary tables seeded.

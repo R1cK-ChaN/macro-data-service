@@ -10,7 +10,7 @@ from ~25 free/licensed upstreams instead of BBG's paid feed.
 resolves macro + market + calendar + document data from ~25 upstreams into a
 single SQLite store that downstream services (analyst UI, RAG, agents) read
 through one service interface.
-**Last updated:** 2026-05-02 (branch `refactor/issue-113-data-layer-only` P0+P1+P2+P3. P0 dropped trading/analytical/messaging/portfolio/subagent_runs (research_artifacts kept until P4). P1 stripped 14 LLM-enrichment columns from `news_articles` and deleted `src/ingestion/news/_extract.py`. P2 retired the `cal_econ_event` write-back from `XSpikeDetector` and dropped `social_breakout` from the `x_post_event_links.link_type` CHECK. P3 deleted the three downstream-shaped service ops `search_knowledge_base` (RAG-shaped), `get_surprise_summary` (derived signal), and `get_indicator_trend` (collapses into `get_indicator_history`). Public-read allowlist for `POST /v1/ops/<op>` remains in `macro_data/server.py` via `PUBLIC_READ_OPS` for six read ops: `resolve_indicator`, `resolve_indicator_history`, `list_items`, `get_document`, `get_release_schedule`, `get_release_status`; admin / write ops stay reachable via CLI / systemd over the same in-process service — see § Service boundary)
+**Last updated:** 2026-05-02 (branch `refactor/issue-113-data-layer-only` complete: P0+P1+P2+P3+P4. P0 dropped trading/analytical/messaging/portfolio/subagent_runs. P1 stripped 14 LLM-enrichment columns from `news_articles` and deleted `src/ingestion/news/_extract.py`. P2 retired the `cal_econ_event` write-back from `XSpikeDetector` and dropped `social_breakout` from the `x_post_event_links.link_type` CHECK. P3 deleted the three downstream-shaped service ops `search_knowledge_base` (RAG-shaped), `get_surprise_summary` (derived signal), and `get_indicator_trend` (collapses into `get_indicator_history`). P4 deleted `src/rag/` (~2480 LOC) along with the `research_artifacts` and `rag_sync_watermarks` tables, the `rag` CLI subcommand, and the `_build_optional_retriever` factory hook. Public-read allowlist for `POST /v1/ops/<op>` remains in `macro_data/server.py` via `PUBLIC_READ_OPS` for six read ops: `resolve_indicator`, `resolve_indicator_history`, `list_items`, `get_document`, `get_release_schedule`, `get_release_status`; admin / write ops stay reachable via CLI / systemd over the same in-process service — see § Service boundary)
 
 ### Bloomberg-capability coverage (current → 1.0)
 
@@ -59,9 +59,10 @@ the resolution layer.
 | **Storage** | `src/storage/{sqlite.py, schema.py, queries/}`, ~60 tables | Canonical persistence |
 | **Resolution** | `src/macro_data/service/` + storage helpers | Cross-source ranking, PIT queries, unified views |
 | **Service** | `src/macro_data/cli.py`, `server.py` | CLI + HTTP boundary |
-| **RAG sidecar** | `src/rag/` | Local semantic index + retrieval (Milvus optional) |
 
-Everything else (agents, UIs, notebooks) is a consumer.
+Everything else (agents, UIs, notebooks, **RAG**) is a consumer; the
+in-tree `src/rag/` sidecar was retired in issue #113 P4 — downstream
+RAG services consume `get_document` / `list_items` over HTTP.
 
 ---
 
@@ -248,10 +249,6 @@ Issue #36 — Wayback evidence-archive URL per vintage row:
 
 - `source_capability` registers each source's discovery / latest-sync / status contract. `catalog_entity` + `catalog_sync_*` persist crawled catalogs and run logs — used for OECD / World Bank / ILO / SDMX catalogs.
 
-### 8. RAG sidecar
-
-- `src/rag/`: chunker, BM25 lexical, embeddings, Milvus vector store, reranker, retriever, orchestrator, policy layer. Reads from `document_blob`; writes to a sibling index. Optional at runtime.
-
 ---
 
 ## Service boundary
@@ -335,7 +332,6 @@ src/
       _ops_health.py        refresh-all/run-schedule/source listing/health/alerts
     cli.py, server.py       Thin boundaries
     factory.py, client.py   Wiring + programmatic access
-  rag/                      Local RAG (see src/rag/README.md)
 ```
 
 ---
