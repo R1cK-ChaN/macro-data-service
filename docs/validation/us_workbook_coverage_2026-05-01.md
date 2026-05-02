@@ -8,7 +8,7 @@ The `.~` file is a 165-byte Excel lock file. Field extraction used sibling workb
 
 ## Result
 
-Coverage is partial. The repo has connected official-source equivalents for core US macro fields. Exact Wind/Bloomberg parity requires licensed Wind and Bloomberg adapters.
+Coverage is partial. The repo has connected official-source equivalents for core US macro fields. Wind/Bloomberg worksheet labels are used as audit hints; configured coverage is based on official, public, or otherwise authorized sources available to this repo.
 
 Coverage definitions:
 - connected: configured exact or direct-equivalent source path exists in repo
@@ -32,7 +32,7 @@ fetcher output, and schedule/vintage handling are wired.
 
 ## Evidence From Repo
 
-- Source capability adapters are registered for FRED, BLS, EIA, Treasury Fiscal, NY Fed rates/research, Japan MOF JGB rates, AISI weekly steel, ISM official PMI reports, Redbook Research weekly retail sales, sentix Economic Index, market watchlist, OECD, World Bank, Eurostat, ECB, IMF, BIS, Census, and BEA. Exact Wind/Bloomberg source parity requires licensed adapters.
+- Source capability adapters are registered for FRED, BLS, EIA, Treasury Fiscal, NY Fed rates/research, Japan MOF JGB rates, AISI weekly steel, ISM official PMI reports, Redbook Research weekly retail sales, sentix Economic Index, market watchlist, OECD, World Bank, Eurostat, ECB, IMF, BIS, Census, and BEA.
 - FRED configured macro series include CPI/core CPI/core PCE, NFP, unemployment, claims, GDP, real GDP, retail sales, industrial production, 2Y/10Y/30Y Treasury, 10Y real yield, 10Y-2Y spread, Fed balance sheet, M2, reverse repo, TGA, broad dollar, CNY/USD, HY OAS, and VIX.
 - BLS configured series include headline CPI/core/food/energy/shelter, PPI/core PPI, NFP/private payrolls, average hourly earnings, average weekly hours, unemployment, LFPR, JOLTS openings/hires/quits, ECI, productivity, and unit labor costs.
 - BEA configs cover NIPA GDP summary/contributions/real GDP/PCE/personal income plus ITA current-account and goods-balance datasets; latest sync for arbitrary BEA datasets remains a follow-up.
@@ -66,7 +66,6 @@ fetcher output, and schedule/vintage handling are wired.
 
 | Source/indicator group | Status | Notes |
 | --- | --- | --- |
-| Exact Wind/Bloomberg source | missing | The workbook source layer is Wind plus Bloomberg securities. Exact parity requires licensed Wind and Bloomberg adapters. |
 | BEA GDP/PCE/ITA detail | partial | BEA client and NIPA/ITA configs exist; arbitrary-dataset latest sync needs production wiring. |
 | BLS CPI/labor detail | partial | BLS connector and headline series exist; detailed CPI weights/components, seasonal food/energy components, payroll industries, race unemployment, U1-U6, and detailed JOLTS ids need config mapping. |
 | ISM PMI | connected | ISM Manufacturing and Services PMI report metrics are configured through official ISM report pages. |
@@ -111,4 +110,4 @@ The liquidity fields in the coverage sample are connected through existing FRED/
 
 Full field-level map: `docs/validation/us_workbook_coverage_2026-05-01.csv`
 
-Recommended implementation sequence: continue exact Wind/Bloomberg parity decisions.
+Recommended implementation sequence: finish the two concrete remaining gaps with available sources: MOVE market data and ChinaBond official 10Y yield.

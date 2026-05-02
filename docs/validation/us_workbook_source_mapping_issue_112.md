@@ -164,4 +164,5 @@ raw snapshot hashing, obs-family seeding, concept-map seeding, release-schedule
 seeding, subject alias resolution, source discovery, country-scoped validation,
 and the orchestrator save path into `indicators` and `obs_raw`.
 
-Remaining source group for later slices: exact Wind/Bloomberg parity.
+Remaining concrete gaps for later slices: MOVE market data and ChinaBond
+official 10Y yield.
