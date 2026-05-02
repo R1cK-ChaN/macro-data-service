@@ -532,29 +532,27 @@ class _IndicatorQueriesMixin:
             )
 
     def upsert_indicator_observation(self, observation: IndicatorObservationRecord) -> None:
-        with self._connection(commit=True) as connection:
-            connection.execute(
-                """
-                INSERT OR REPLACE INTO indicators (
-                    series_id,
-                    source,
-                    date,
-                    value,
-                    metadata_json,
-                    obs_family_id,
-                    scraped_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    observation.series_id,
-                    observation.source,
-                    observation.date,
-                    observation.value,
-                    json.dumps(observation.metadata, ensure_ascii=True, sort_keys=True),
-                    observation.obs_family_id,
-                    utc_now().isoformat(),
-                ),
+        """Write through the canonical vintage path (issue #114 P1).
+
+        ``indicators`` is now a view over ``indicator_vintages``. Every
+        observation lands as a ``synthetic_snapshot`` vintage with
+        ``vintage_date = utc_now()``; the value-changed filter lives in
+        ``upsert_indicator_vintage`` so an unrevised daily refresh
+        doesn't accumulate one row per day.
+        """
+        scraped_at = utc_now().isoformat()
+        self.upsert_indicator_vintage(
+            IndicatorVintageRecord(
+                series_id=observation.series_id,
+                source=observation.source,
+                observation_date=observation.date,
+                vintage_date=scraped_at,
+                value=observation.value,
+                metadata=observation.metadata,
+                obs_family_id=observation.obs_family_id,
+                vintage_quality="synthetic_snapshot",
             )
+        )
 
     def insert_obs_raw(self, records: list[ObsRawRecord]) -> int:
         """Insert raw macro time-series snapshots; return number of new rows.
@@ -731,6 +729,37 @@ class _IndicatorQueriesMixin:
                 f"single_observation; got {vintage.vintage_quality!r}"
             )
         with self._connection(commit=True) as connection:
+            # Value-change filter for synthetic_snapshot rows: skip the
+            # write when the strictly-prior vintage (latest one with
+            # ``vintage_date < this``) already carries the same value —
+            # the prior row already covers PIT queries for the new range.
+            # Compare against the strict-prior, not the max stored row,
+            # so out-of-order backfills (e.g. IMF ``refresh_vintages``
+            # iterating ``as_of_dates`` from newest to oldest) don't drop
+            # legitimate vintages: e.g. for stream Mar=100, Feb=100,
+            # Jan=90, Feb must land or PIT(Feb-15) collapses to Jan=90.
+            # ``native_pit`` and ``single_observation`` rows skip this
+            # filter — ALFRED already returns deduped rows, and
+            # single_observation rows are migration-only.
+            if vintage.vintage_quality == "synthetic_snapshot":
+                prior = connection.execute(
+                    """
+                    SELECT value FROM indicator_vintages
+                    WHERE source = ? AND series_id = ?
+                      AND observation_date = ?
+                      AND vintage_date < ?
+                    ORDER BY vintage_date DESC
+                    LIMIT 1
+                    """,
+                    (
+                        vintage.source,
+                        vintage.series_id,
+                        vintage.observation_date,
+                        vintage.vintage_date,
+                    ),
+                ).fetchone()
+                if prior is not None and float(prior[0]) == float(vintage.value):
+                    return
             connection.execute(
                 """
                 INSERT OR REPLACE INTO indicator_vintages (
@@ -1118,19 +1147,15 @@ class _IndicatorQueriesMixin:
         self.seed_calendar_indicators()
 
     def backfill_obs_family_ids(self) -> int:
-        """Set obs_family_id on existing indicators/vintages rows from obs_family table.
-        Returns total number of rows updated."""
+        """Set obs_family_id on indicator_vintages rows from obs_family table.
+
+        Returns total number of rows updated. Pre-#114 P1 this also
+        UPDATEd ``indicators`` directly; that table is now a SQL view
+        over ``indicator_vintages``, so backfilling the underlying
+        vintages alone keeps the projection consistent.
+        """
         with self._connection(commit=True) as connection:
-            cur1 = connection.execute(
-                """
-                UPDATE indicators SET obs_family_id = (
-                    SELECT family_id FROM obs_family
-                    WHERE obs_family.provider_series_id = indicators.series_id
-                      AND obs_family.source_id = indicators.source
-                ) WHERE obs_family_id IS NULL
-                """
-            )
-            cur2 = connection.execute(
+            cur = connection.execute(
                 """
                 UPDATE indicator_vintages SET obs_family_id = (
                     SELECT family_id FROM obs_family
@@ -1139,7 +1164,7 @@ class _IndicatorQueriesMixin:
                 ) WHERE obs_family_id IS NULL
                 """
             )
-        return (cur1.rowcount or 0) + (cur2.rowcount or 0)
+        return cur.rowcount or 0
 
     def build_obs_family_lookup(self) -> dict[tuple[str, str], str]:
         """Build a lookup dict mapping (source_id, provider_series_id) -> family_id."""

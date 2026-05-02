@@ -245,11 +245,31 @@ Seed data: 26 FRED series + 5 EIA + 3 Treasury Fiscal + 3 NY Fed = 37 families.
 ## Indicator Vintage Storage
 
 `indicator_vintages` is the **canonical write target** for every macro
-fetcher (issue #114 P0). The `indicators` table is a derived view over the
-latest vintage per `(source, series_id, observation_date)` — see "Indicator
-View" below. Tracks **revision history** for macro series (GDP, CPI,
+fetcher (issue #114 P0+P1). `indicators` is a SQL view over the latest
+vintage per `(source, series_id, observation_date)` — never independently
+written. Tracks **revision history** for macro series (GDP, CPI,
 payrolls, etc.) where official agencies publish initial estimates then
 revise them over subsequent releases.
+
+### indicators (view)
+
+```sql
+CREATE VIEW indicators AS
+SELECT v.id, v.series_id, v.source, v.observation_date AS date,
+       v.value, v.metadata_json, v.scraped_at, v.obs_family_id
+FROM indicator_vintages v
+JOIN (SELECT source, series_id, observation_date, MAX(vintage_date) AS vd
+      FROM indicator_vintages
+      GROUP BY source, series_id, observation_date) latest
+  ON latest.source = v.source AND latest.series_id = v.series_id
+ AND latest.observation_date = v.observation_date AND latest.vd = v.vintage_date
+```
+
+`upsert_indicator_observation(record)` writes a `synthetic_snapshot` row
+to `indicator_vintages` with `vintage_date = utc_now()` and skips the
+insert when the latest stored vintage for that `(source, series_id,
+observation_date)` already carries the same value. The `indicators` view
+returns the latest-vintage projection automatically.
 
 ### indicator_vintages
 
