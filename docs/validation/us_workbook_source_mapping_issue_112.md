@@ -2,7 +2,7 @@
 
 Date: 2026-05-01
 Issue: #112
-Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings; NY Fed GSCPI mapping; Bundesbank Germany yield mappings; Japan MOF JGB yield mappings; AISI weekly steel mappings; ISM official PMI report mappings
+Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings; NY Fed GSCPI mapping; Bundesbank Germany yield mappings; Japan MOF JGB yield mappings; AISI weekly steel mappings; ISM official PMI report mappings; Redbook weekly retail-sales mappings
 
 The inspected US workbook is a coverage sample for finding omitted fields. Source
 grouping here follows the indicator's economic meaning, official publisher,
@@ -138,5 +138,17 @@ obs-family seeding, concept-map seeding, release-schedule seeding, subject alias
 resolution, source discovery, country-scoped validation, and the orchestrator
 save path into `indicators` and `obs_raw`.
 
-Remaining source groups for later slices: Redbook, Sentix US, SOFR-OIS, and
-exact Wind/Bloomberg parity.
+## Redbook Weekly Retail Sales Row
+
+| Indicator/source group | Authorized feed | Source symbol | Series id | Concept id | Obs family |
+| --- | --- | --- | --- | --- | --- |
+| US Redbook weekly retail-sales YoY | Trading Economics historical API with Redbook Research source attribution | `UNITEDSTAREDIND` | `REDBOOK_RETAIL_SALES_YOY_US` | `REDBOOK_RETAIL_SALES_YOY_US` | `us.consumer.redbook_retail_sales_yoy` |
+
+Focused tests cover historical-feed parsing, client raw payloads, fetcher
+output, raw snapshot hashing, obs-family seeding, concept-map seeding,
+release-schedule seeding, subject alias resolution, source discovery,
+country-scoped validation, New York release-time conversion, and the
+orchestrator save path into `indicators` and `obs_raw`.
+
+Remaining source groups for later slices: Sentix US, SOFR-OIS, and exact
+Wind/Bloomberg parity.

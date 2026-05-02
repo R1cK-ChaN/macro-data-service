@@ -365,7 +365,7 @@ Wind/workbook label,美国:私人非农企业全部员工:平均时薪:私人服
 Wind/workbook label,美国:粗钢产量:当周值:周,周度数据!R4C2,connected,aisi:AISI_RAW_STEEL_PRODUCTION_US,AISI weekly raw steel production is configured through the official industry-data page.
 Wind/workbook label,美国:粗钢产量:当周同比:周,周度数据!R4C4,connected,aisi:AISI_RAW_STEEL_YOY_US,AISI weekly raw steel production YoY is parsed from the official industry-data page.
 Wind/workbook label,美国:粗钢产量:环比:周,周度数据!R4C3,connected,aisi:AISI_RAW_STEEL_WOW_US,AISI weekly raw steel production WoW is parsed from the official industry-data page.
-Wind/workbook label,美国:红皮书商业零售销售:周同比:周,周度数据!R4C7,missing,,Redbook retail sales field has no configured equivalent source.
+Wind/workbook label,美国:红皮书商业零售销售:周同比:周,周度数据!R4C7,connected,redbook:REDBOOK_RETAIL_SALES_YOY_US,Redbook Research weekly retail-sales YoY index is configured through the authorized Trading Economics historical feed.
 Wind/workbook label,美国:经常项目差额:季调,季度数据!R5C6,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source paths exist; this exact field needs scheduled timeseries sync.
 Wind/workbook label,美国:经常项目差额占GDP比重:季调,季度数据!R5C7,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source paths exist; this exact field needs scheduled timeseries sync.
 Wind/workbook label,美国:耐用品:新增订单:季调:当月同比,月度数据!R4C13,partial,census calendar connector,Census event/value connector covers selected releases; historical timeseries config for this exact field is absent.

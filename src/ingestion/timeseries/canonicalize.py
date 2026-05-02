@@ -230,6 +230,32 @@ def ism_content_hash(payload: dict[str, Any]) -> str:
     return _hash_canonical(canonicalize_ism_payload(payload))
 
 
+# ── Redbook Research weekly retail sales ──────────────────────────────────
+
+def canonicalize_redbook_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize Redbook weekly retail-sales observations."""
+    observations = payload.get("observations") or []
+    cleaned = [
+        {"date": row.get("date"), "value": row.get("value")}
+        for row in observations
+        if isinstance(row, dict)
+    ]
+    cleaned.sort(key=lambda row: (row.get("date") or "", str(row.get("value") or "")))
+    return json.dumps(
+        {
+            "source_symbol": payload.get("source_symbol", ""),
+            "indicator": payload.get("indicator", ""),
+            "observations": cleaned,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def redbook_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_redbook_payload(payload))
+
+
 # ── Dispatch ──────────────────────────────────────────────────────────────
 
 _HASH_BY_SOURCE = {
@@ -246,6 +272,7 @@ _HASH_BY_SOURCE = {
     "mof_jp": mof_jp_content_hash,
     "aisi": aisi_content_hash,
     "ism": ism_content_hash,
+    "redbook": redbook_content_hash,
 }
 
 

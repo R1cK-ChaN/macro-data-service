@@ -75,6 +75,7 @@ VALID_SOURCE_IDS: frozenset[str] = frozenset({
     "mof_jp",
     "aisi",
     "ism",
+    "redbook",
     "oecd",
     "worldbank",
     "bls",

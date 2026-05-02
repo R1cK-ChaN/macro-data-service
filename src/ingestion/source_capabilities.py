@@ -533,6 +533,7 @@ class SourceCapabilityManager:
             MACRO_SERIES,
             MACRO_WATCHLIST,
             MOF_JGB_SERIES,
+            REDBOOK_SERIES,
             TREASURY_DATASETS,
             UNSD_SERIES,
             VINTAGE_SERIES,
@@ -1370,6 +1371,17 @@ class SourceCapabilityManager:
             is_default_scheduled=True,
             discover=_configured_entities("ism", "series", ISM_REPORT_SERIES),
             sync_latest=lambda entity_ids, limit: _run_job("ism"),
+        )
+        adapters["redbook"] = SourceCapabilityAdapter(
+            source_id="redbook",
+            display_name="Redbook Research",
+            source_type="fixed-scope-complete",
+            entity_type="series",
+            description="US Redbook weekly retail-sales year-over-year index.",
+            supports_structure=False,
+            is_default_scheduled=True,
+            discover=_configured_entities("redbook", "series", REDBOOK_SERIES),
+            sync_latest=lambda entity_ids, limit: _run_job("redbook"),
         )
 
         if orchestrator is not None:

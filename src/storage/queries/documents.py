@@ -943,6 +943,7 @@ class _DocumentsQueriesMixin:
         "mof_jp_series": "mof_jp",
         "aisi_series": "aisi",
         "ism_series": "ism",
+        "redbook_series": "redbook",
         "ny_fed_series": "nyfed",
         "fedwatch_series": "rateprobability",
         "imf_series": "imf",

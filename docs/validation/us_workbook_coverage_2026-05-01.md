@@ -16,9 +16,9 @@ Coverage definitions:
 - missing: no configured source path found in repo scan
 
 Field counts:
-- connected: 112
+- connected: 113
 - partial: 282
-- missing: 7
+- missing: 6
 - total extracted unique fields: 401
 
 Input source labels:
@@ -32,12 +32,13 @@ fetcher output, and schedule/vintage handling are wired.
 
 ## Evidence From Repo
 
-- Source capability adapters are registered for FRED, BLS, EIA, Treasury Fiscal, NY Fed rates/research, Japan MOF JGB rates, AISI weekly steel, ISM official PMI reports, market watchlist, OECD, World Bank, Eurostat, ECB, IMF, BIS, Census, and BEA. Exact Wind/Bloomberg source parity requires licensed adapters.
+- Source capability adapters are registered for FRED, BLS, EIA, Treasury Fiscal, NY Fed rates/research, Japan MOF JGB rates, AISI weekly steel, ISM official PMI reports, Redbook Research weekly retail sales, market watchlist, OECD, World Bank, Eurostat, ECB, IMF, BIS, Census, and BEA. Exact Wind/Bloomberg source parity requires licensed adapters.
 - FRED configured macro series include CPI/core CPI/core PCE, NFP, unemployment, claims, GDP, real GDP, retail sales, industrial production, 2Y/10Y/30Y Treasury, 10Y real yield, 10Y-2Y spread, Fed balance sheet, M2, reverse repo, TGA, broad dollar, CNY/USD, HY OAS, and VIX.
 - BLS configured series include headline CPI/core/food/energy/shelter, PPI/core PPI, NFP/private payrolls, average hourly earnings, average weekly hours, unemployment, LFPR, JOLTS openings/hires/quits, ECI, productivity, and unit labor costs.
 - BEA configs cover NIPA GDP summary/contributions/real GDP/PCE/personal income plus ITA current-account and goods-balance datasets; latest sync for arbitrary BEA datasets remains a follow-up.
 - The market watchlist covers DXY, USD/JPY, USD/CNY, VIX, 5Y/10Y/30Y Treasury proxies, and WTI.
 - ISM official report coverage includes Manufacturing and Services PMI headline, subcomponent indexes, and month-over-month point changes.
+- Redbook Research weekly retail-sales YoY is configured through the authorized Trading Economics historical feed with Redbook source attribution.
 
 ## Coverage By Sheet
 
@@ -46,7 +47,7 @@ fetcher output, and schedule/vintage handling are wired.
 | MOVE 和VIX | 1 | 0 | 1 |
 | 主要国家国债收益率利差 | 3 | 0 | 1 |
 | 劳动力市场（月度指标） | 8 | 81 | 0 |
-| 周度数据 | 6 | 4 | 1 |
+| 周度数据 | 7 | 4 | 0 |
 | 季度数据 | 8 | 3 | 0 |
 | 德国国债 | 6 | 0 | 0 |
 | 日本国债 | 7 | 0 | 0 |
@@ -68,6 +69,7 @@ fetcher output, and schedule/vintage handling are wired.
 | BEA GDP/PCE/ITA detail | partial | BEA client and NIPA/ITA configs exist; arbitrary-dataset latest sync needs production wiring. |
 | BLS CPI/labor detail | partial | BLS connector and headline series exist; detailed CPI weights/components, seasonal food/energy components, payroll industries, race unemployment, U1-U6, and detailed JOLTS ids need config mapping. |
 | ISM PMI | connected | ISM Manufacturing and Services PMI report metrics are configured through official ISM report pages. |
+| Redbook weekly retail sales | connected | Redbook Research weekly YoY index is configured through the authorized Trading Economics historical feed. |
 | Treasury curve | partial | 2Y/5Y proxy/10Y/30Y/10Y real/10Y-2Y are configured; additional maturities and TIPS tenors need series additions. |
 | FX | partial | DXY, broad dollar, EUR/USD, USD/CNY, and USD/JPY are covered; dollar sub-indexes and additional FX pairs need configured series/watchlist entries. |
 | Global sovereign yields | partial | Germany yield series are configured through Bundesbank BBSSY. Japan yield series are configured through MOF JGB interest-rate CSV. China official parity path remains open. |
@@ -88,7 +90,7 @@ Current coverage status remains a repo-configuration finding. A field marked mis
 | Housing vacancy and homeownership | Census HVS official data or FRED Census-hosted mirrors `RHORUSQ156N`, `RRVRUSQ156N`, `RHVRUSQ156N` | Connected in issue #112 slice 2 through FRED Census-hosted HVS series, obs-families, concept-map, release-schedules, and subject aliases. |
 | Sector leverage ratios | BIS Total Credit Statistics | Connected in issue #112 slice 3 through BIS `WS_TC` v2.0 government, household, and non-financial corporation leverage mappings. |
 | GSCPI | NY Fed GSCPI research-product data | Connected in issue #112 slice 4 through `NYFED_GSCPI`, obs-family, concept-map, release-schedule, and subject aliases. |
-| Redbook weekly YoY | Redbook Research / Johnson Redbook official or authorized source | Decide authorized source and add connector/config. |
+| Redbook weekly YoY | Redbook Research via authorized Trading Economics historical feed | Connected in issue #112 slice 9 through Redbook weekly retail-sales YoY config, obs-family, concept-map, release-schedule, subject aliases, and raw snapshots. |
 | Weekly raw steel production | AISI weekly raw steel production page | Connected in issue #112 slice 7 through AISI official weekly raw steel production page for weekly value, WoW, and YoY fields, obs-family, concept-map, release-schedule, subject aliases, and raw snapshots. |
 | ISM manufacturing/services subcomponents | ISM official PMI report pages | Connected in issue #112 slice 8 through official report parsing for Manufacturing and Services headline, subcomponent indexes, point changes, obs-family, concept-map, release-schedule, subject aliases, and raw snapshots. |
 | Sentix US current/expectations/headline | Sentix official account or authorized data vendor | Decide authorized source and add connector/config. |
@@ -108,4 +110,4 @@ The liquidity fields in the coverage sample are connected through existing FRED/
 
 Full field-level map: `docs/validation/us_workbook_coverage_2026-05-01.csv`
 
-Recommended implementation sequence: decide authorized Redbook source. Licensed-source decisions remain for Redbook, Sentix US, SOFR-OIS, and exact Wind/Bloomberg parity.
+Recommended implementation sequence: decide authorized Sentix US source. Licensed-source decisions remain for Sentix US, SOFR-OIS, and exact Wind/Bloomberg parity.

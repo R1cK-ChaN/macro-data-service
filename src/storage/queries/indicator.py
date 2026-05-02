@@ -331,6 +331,28 @@ _ISM_REPORT_CONCEPT_MAP_DEFS: tuple[tuple[str, str, str, str, int, str, str], ..
     )
 )
 
+_REDBOOK_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    "REDBOOK_RETAIL_SALES_YOY_US": (
+        "us.consumer.redbook_retail_sales_yoy",
+        "US Redbook Retail Sales YoY",
+        "percent",
+        "weekly",
+        "nsa",
+    ),
+}
+
+_REDBOOK_CONCEPT_MAP_DEFS: tuple[tuple[str, str, str, str, int, str, str], ...] = (
+    (
+        "REDBOOK_RETAIL_SALES_YOY_US",
+        "redbook",
+        "REDBOOK_RETAIL_SALES_YOY_US",
+        "us.consumer.redbook_retail_sales_yoy",
+        1,
+        "primary",
+        "Redbook Research weekly retail-sales year-over-year index",
+    ),
+)
+
 _OECD_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
     "OECD_CLI_US":           ("us.leading.cli",             "US Composite Leading Indicator",  "index",   "monthly", "none"),
@@ -416,6 +438,7 @@ _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
     ("mof_jp",          "mof_jp",          "Japan Ministry of Finance",         "government_agency", "JP", "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/index.htm", "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/historical/jgbcme_all.csv"),
     ("aisi",            "aisi",            "American Iron and Steel Institute", "data_aggregator",  "US", "https://www.steel.org/industry-data/",                            "https://www.steel.org/industry-data/"),
     ("ism",             "ism",             "Institute for Supply Management",  "data_aggregator",  "US", "https://www.ismworld.org/supply-management-news-and-reports/reports/ism-pmi-reports/", "https://www.ismworld.org/supply-management-news-and-reports/reports/ism-pmi-reports/"),
+    ("redbook",         "redbook",         "Redbook Research Inc.",            "data_aggregator",  "US", "https://www.redbookresearch.com/",                              "https://api.tradingeconomics.com/historical/country/united%20states/indicator/redbook%20index"),
     ("oecd",            "oecd",            "Organisation for Economic Co-operation", "data_aggregator", "XX", "https://www.oecd.org",                                      "https://sdmx.oecd.org/public/rest/v2"),
     ("worldbank",       "worldbank",       "World Bank",                        "data_aggregator",  "XX", "https://www.worldbank.org",                                      "https://api.worldbank.org/v2"),
     ("bls",             "bls",             "Bureau of Labor Statistics",         "government_agency", "US", "https://www.bls.gov",                                            "https://api.bls.gov/publicAPI/v2"),
@@ -962,6 +985,7 @@ class _IndicatorQueriesMixin:
             ("mof_jp", _MOF_JGB_FAMILY_MAP),
             ("aisi", _AISI_STEEL_FAMILY_MAP),
             ("ism", _ISM_REPORT_FAMILY_MAP),
+            ("redbook", _REDBOOK_FAMILY_MAP),
             ("oecd", _OECD_FAMILY_MAP),
             ("worldbank", _WORLDBANK_FAMILY_MAP),
             ("bls", _BLS_FAMILY_MAP),
@@ -1094,6 +1118,7 @@ class _IndicatorQueriesMixin:
         ("GSCPI_US",            "nyfed",          "NYFED_GSCPI",    "us.supply_chain.gscpi",          1, "primary",     "NY Fed Global Supply Chain Pressure Index"),
         *_AISI_STEEL_CONCEPT_MAP_DEFS,
         *_ISM_REPORT_CONCEPT_MAP_DEFS,
+        *_REDBOOK_CONCEPT_MAP_DEFS,
         #
         # ── US Rates ─────────────────────────────────────────────────
         ("POLICY_RATE_US",      "nyfed",          "NYFED_EFFR",     "us.rates.effr",                 1, "primary",     "NY Fed EFFR"),
@@ -1507,6 +1532,10 @@ class _IndicatorQueriesMixin:
             "bis": ("indicators", "source = ?", ("bis",), "scraped_at"),
             "ecb": ("indicators", "source = ?", ("ecb",), "scraped_at"),
             "bundesbank": ("indicators", "source = ?", ("bundesbank",), "scraped_at"),
+            "mof_jp": ("indicators", "source = ?", ("mof_jp",), "scraped_at"),
+            "aisi": ("indicators", "source = ?", ("aisi",), "scraped_at"),
+            "ism": ("indicators", "source = ?", ("ism",), "scraped_at"),
+            "redbook": ("indicators", "source = ?", ("redbook",), "scraped_at"),
             "oecd": ("indicators", "source = ?", ("oecd",), "scraped_at"),
             "worldbank": ("indicators", "source = ?", ("worldbank",), "scraped_at"),
             "nyfed_rates": ("indicators", "source = ?", ("nyfed",), "scraped_at"),

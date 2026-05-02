@@ -87,6 +87,16 @@ subjects:
       title_regex:
         - '\bretail sales\b'
 
+  - id: econ.us.redbook
+    display: "US Redbook Retail Sales"
+    aliases:
+      redbook_series: [REDBOOK_RETAIL_SALES_YOY_US]
+      calendar_indicator: ["Redbook YoY", "Redbook Index", "Redbook"]
+      title_regex:
+        - '\bredbook\b'
+        - '\bredbook index\b'
+        - '\bweekly retail sales\b'
+
   - id: econ.us.wei
     display: "US Weekly Economic Index"
     aliases:

@@ -25,6 +25,7 @@ __all__ = [
     "MOF_JGB_SERIES",
     "AISI_WEEKLY_STEEL_SERIES",
     "ISM_REPORT_SERIES",
+    "REDBOOK_SERIES",
     "OECD_DEFAULT_AGENCY_ID", "OECDSeriesConfig",
     "_slugify_oecd_token", "_generated_oecd_series_id", "_generated_oecd_config_key",
     "render_oecd_series_configs", "OECD_SERIES",
@@ -876,6 +877,22 @@ ISM_REPORT_SERIES = {
             },
         ),
     )
+}
+
+# ---------------------------------------------------------------------------
+# Redbook Research weekly retail sales via authorized TE historical API
+# ---------------------------------------------------------------------------
+
+REDBOOK_SERIES = {
+    "redbook_retail_sales_yoy": {
+        "country": "united states",
+        "indicator": "redbook index",
+        "source_symbol": "UNITEDSTAREDIND",
+        "series_id": "REDBOOK_RETAIL_SALES_YOY_US",
+        "name": "US Redbook Retail Sales YoY",
+        "category": "consumer",
+        "unit": "percent",
+    },
 }
 
 # ---------------------------------------------------------------------------

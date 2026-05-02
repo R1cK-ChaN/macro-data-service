@@ -140,6 +140,14 @@ from .ism import (
     discover_current_report_urls,
     parse_ism_report_page,
 )
+from .redbook import (
+    RedbookAPIError,
+    RedbookAuthError,
+    RedbookClient,
+    RedbookHistoricalRow,
+    RedbookObservation,
+    parse_redbook_historical_rows,
+)
 from .wsj import WSJArticle, WSJArticleClient, WSJNewsClient
 from .gov_report import GovReportClient, GovReportItem
 from .mof_jgb import MOFJGBClient, MOFJGBObservation, parse_jgb_interest_rate_csv
@@ -248,6 +256,10 @@ __all__ = [
     "OECDSeries",
     "OECDStructureSummary",
     "ReutersArticle",
+    "RedbookAPIError",
+    "RedbookAuthError",
+    "RedbookHistoricalRow",
+    "RedbookObservation",
     "RedditTrendPost",
     "ScrapedIndicator",
     "ScrapedMarketQuote",
@@ -306,6 +318,7 @@ __all__ = [
     "ISMClient",
     "MOFJGBClient",
     "OECDClient",
+    "RedbookClient",
     "TreasuryFiscalClient",
     "UNSDClient",
     "WorldBankClient",
@@ -317,6 +330,7 @@ __all__ = [
     "RateProbabilityClient",
     "discover_current_report_urls",
     "parse_ism_report_page",
+    "parse_redbook_historical_rows",
     "parse_weekly_raw_steel_page",
     "parse_jgb_interest_rate_csv",
 ]

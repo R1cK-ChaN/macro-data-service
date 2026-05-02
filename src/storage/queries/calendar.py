@@ -151,6 +151,24 @@ _ISM_REPORT_RELEASE_SCHEDULE_DEFS: tuple[tuple[str, str, dict[str, Any], str, st
     for measure in ("index", "change")
 )
 
+_REDBOOK_RELEASE_SCHEDULE_DEFS: tuple[tuple[str, str, dict[str, Any], str, str, str, str, str], ...] = (
+    (
+        "REDBOOK_RETAIL_SALES_YOY_US",
+        "weekly",
+        {
+            "calendar": "us_federal",
+            "weekday": 1,
+            "time": "08:55",
+            "timezone": "America/New_York",
+        },
+        "weekly",
+        "08:55",
+        "America/New_York",
+        "pattern",
+        "Redbook weekly index public release Tuesday morning",
+    ),
+)
+
 
 def _calendar_corp_raw_at_or_before_with_conn(
     connection: sqlite3.Connection,
@@ -1876,6 +1894,7 @@ class _CalendarQueriesMixin:
         ("GSCPI_US",            "business_day_of_month", {"ordinal": 4, "calendar": "us_federal", "time": "10:00", "timezone": "America/New_York"}, "monthly",  "10:00", "America/New_York", "pattern", "NY Fed GSCPI fourth business day"),
         *_AISI_STEEL_RELEASE_SCHEDULE_DEFS,
         *_ISM_REPORT_RELEASE_SCHEDULE_DEFS,
+        *_REDBOOK_RELEASE_SCHEDULE_DEFS,
         # ── US Rates ──────────────────────────────────────────────────
         ("POLICY_RATE_US",      "daily",            {},                                     "daily",    "",      "",                 "pattern", "NY Fed EFFR daily"),
         ("SOFR_US",             "daily",            {},                                     "daily",    "",      "",                 "pattern", "SOFR daily"),
