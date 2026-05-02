@@ -10,7 +10,7 @@ from ~25 free/licensed upstreams instead of BBG's paid feed.
 resolves macro + market + calendar + document data from ~25 upstreams into a
 single SQLite store that downstream services (analyst UI, RAG, agents) read
 through one service interface.
-**Last updated:** 2026-05-02 (branch `feat/issue-112-us-workbook-sources`, sentix Economic Index US mappings added to the macro time-series pipeline; prior public-read allowlist for `POST /v1/ops/<op>` remains in `macro_data/server.py` via `PUBLIC_READ_OPS` for six read ops: `resolve_indicator`, `resolve_indicator_history`, `list_items`, `get_document`, `get_release_schedule`, `get_release_status`; admin / write ops stay reachable via CLI / systemd over the same in-process service — see § Service boundary)
+**Last updated:** 2026-05-02 (branch `refactor/issue-113-data-layer-only` P0, A-tier scaffolded tables + their mixin/model files dropped; trading/analytical/messaging/portfolio/subagent_runs no longer in this repo. `research_artifacts` table is held over until P4 because `src/rag/bridge.py` still SELECTs from it — gone with the rag sidecar. Public-read allowlist for `POST /v1/ops/<op>` remains in `macro_data/server.py` via `PUBLIC_READ_OPS` for six read ops: `resolve_indicator`, `resolve_indicator_history`, `list_items`, `get_document`, `get_release_schedule`, `get_release_status`; admin / write ops stay reachable via CLI / systemd over the same in-process service — see § Service boundary)
 
 ### Bloomberg-capability coverage (current → 1.0)
 
@@ -23,10 +23,10 @@ through one service interface.
 | FA — company fundamentals (income / balance / cashflow / ratios) | `fundamentals_*` + EODHD `/api/fundamentals/` | shipped (issue #68) |
 | Terminal News (N) | `news_articles` + 140-feed RSS pipeline + classifier | shipped core; dedup + ranking ongoing |
 | Research / NIM | `document` + `document_blob` (+ RAG index) | shipped core; Fed + gov-report wired |
-| PORT / PRTU analytics | `portfolio_*`, `trade_signals`, `performance_records` | scaffolded; awaiting downstream |
+| PORT / PRTU analytics | downstream concern — not in this repo (issue #113) | downstream |
 | FLDS / SRCH (metadata search) | `subjects` + `concept_map` + `list_items` family filter | shipped (issues #2, #5) |
 | Release alerts, SRCY | `release_schedule` + `release_status` + 3 alert types | shipped |
-| Terminal chat (IB / MSG) | `conversation_threads` / `_messages`, `group_*`, `delivery_queue` | scaffolded |
+| Terminal chat (IB / MSG) | downstream concern — not in this repo (issue #113) | downstream |
 
 "Shipped" = tables + code in place. "In flight" = current work. "Scaffolded" =
 schema exists; population pending downstream services.
@@ -252,10 +252,6 @@ Issue #36 — Wayback evidence-archive URL per vintage row:
 
 - `src/rag/`: chunker, BM25 lexical, embeddings, Milvus vector store, reranker, retriever, orchestrator, policy layer. Reads from `document_blob`; writes to a sibling index. Optional at runtime.
 
-### 9. Trading / research artifacts (scaffolded)
-
-- `trade_signals`, `decision_log`, `position_state`, `performance_records`, `analytical_observations`, `research_artifacts`, `generated_notes`, `regime_snapshots`, `portfolio_*`, `group_*`, `client_profiles`, `conversation_threads` / `_messages`, `delivery_queue`, `subagent_runs`. Tables exist; most are scaffolding pending the downstream services that will populate them.
-
 ---
 
 ## Service boundary
@@ -305,19 +301,17 @@ defeats the whole aggregation-layer premise.
 src/
   contracts.py              Core DTOs (Event, CalendarItem, MarketSnapshot, RegimeState, ...)
   storage/
-    sqlite.py               SQLiteEngineStore — composes 8 query mixins + connection-management base
+    sqlite.py               SQLiteEngineStore — composes 7 query mixins + connection-management base
     schema.py               apply_schema(connection) — every CREATE TABLE / INDEX / additive ALTER
-    models/                 40 frozen record dataclasses, per-domain (issue #58 Tier 2.1A)
+    models/                 Frozen record dataclasses, per-domain (issue #58 Tier 2.1A)
     queries/                Per-domain SQL helpers, mixed into SQLiteEngineStore (issue #71 Tier 2.1B)
-      analytical.py         regime_snapshots, generated_notes, analytical_observations, …
       calendar.py           calendar_events, vintages, indicator/alias, release_schedule/status + free helpers
       documents.py          doc_source/release_family, document/blob/extra, FTS, item_subjects, list_items_*
+      fundamentals.py       fundamentals_raw + company/financials/highlights/estimates (issue #68)
       indicator.py          indicators, vintages, obs_*, concept_map, source_capability + catalog_*, seed dicts
-      market.py             market_prices/instruments/symbol_history/price_bars + portfolio_*
-      messaging.py          client_profiles, conversations, delivery_queue, group_*
+      market.py             market_prices/instruments/symbol_history/price_bars
       news.py               news_articles, trend_topics, article_fingerprint, news_context scoring
       sentiment.py          x_tracked_accounts, x_posts, x_keyword_pool — X (Twitter) lane (issue #76)
-      trading.py            trade_signals, decision_log, position_state, performance, trading_artifacts
     STORAGE.md              Table-by-table narrative (kept in sync with schema.py)
     subjects.py             Subject vocabulary loader + tagger
     subjects.yaml           Canonical subject list (edit here, sync via subjects.py)
