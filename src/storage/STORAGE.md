@@ -244,10 +244,12 @@ Seed data: 26 FRED series + 5 EIA + 3 Treasury Fiscal + 3 NY Fed = 37 families.
 
 ## Indicator Vintage Storage
 
-Tracks **revision history** for macro series (GDP, CPI, payrolls, etc.) where
-official agencies publish initial estimates then revise them over subsequent
-releases. The `indicators` table always holds the **latest** value; the
-`indicator_vintages` table stores the **full revision timeline**.
+`indicator_vintages` is the **canonical write target** for every macro
+fetcher (issue #114 P0). The `indicators` table is a derived view over the
+latest vintage per `(source, series_id, observation_date)` — see "Indicator
+View" below. Tracks **revision history** for macro series (GDP, CPI,
+payrolls, etc.) where official agencies publish initial estimates then
+revise them over subsequent releases.
 
 ### indicator_vintages
 
@@ -261,11 +263,20 @@ releases. The `indicators` table always holds the **latest** value; the
 | `value` | REAL | The observed value at this vintage |
 | `metadata_json` | TEXT | JSON: `{"name": "GDP"}` |
 | `scraped_at` | TEXT | ISO timestamp of ingestion |
+| `vintage_quality` | TEXT | `native_pit` / `synthetic_snapshot` / `single_observation` |
 
 **Unique constraint:** `(series_id, source, observation_date, vintage_date)`
 
 Same observation_date can have multiple vintage_dates showing how a value
 changed over time (e.g. GDP advance → second → third estimate).
+
+### vintage_quality
+
+| Value | Meaning | Sources today |
+|-------|---------|---------------|
+| `native_pit` | Source exposes a real `vintage_date` (publication time, not poll time) | FRED ALFRED `realtime_start` |
+| `synthetic_snapshot` | We tag `vintage_date = scrape_time`; only insert when value differs from latest stored vintage | every fetcher except FRED ALFRED, IMF SDMX `asOf` |
+| `single_observation` | Only seen once, no revision context — legacy `indicators` rows migrated in #114 P1 + pre-#114 IMF rows | migration default |
 
 ### CRUD Methods
 

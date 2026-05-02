@@ -44,6 +44,12 @@ class IndicatorVintageRecord:
     value: float
     metadata: dict[str, Any] = field(default_factory=dict)
     obs_family_id: str | None = None
+    # `native_pit` (source exposes a real vintage_date, e.g. ALFRED),
+    # `synthetic_snapshot` (we tag vintage_date = scrape_time, value-change
+    # triggered), or `single_observation` (only seen once, no revision
+    # context). Default is the safest tag — explicit fetchers should pass
+    # `synthetic_snapshot` or `native_pit`.
+    vintage_quality: str = "single_observation"
 
 
 @dataclass(frozen=True)

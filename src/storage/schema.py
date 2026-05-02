@@ -398,6 +398,21 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         )
         """
     )
+    # ``indicator_vintages`` is the canonical write target for every macro
+    # fetcher (issue #114 P0). ``indicators`` is a derived view over the
+    # latest vintage per ``(source, series_id, observation_date)``. PK
+    # ``(source, series_id, observation_date, vintage_date)`` matches the
+    # FRED/ALFRED real-time period model.
+    #
+    # ``vintage_quality`` tags the provenance of each vintage row:
+    #   * ``native_pit``           — source exposes a real ``vintage_date``
+    #                                (FRED ALFRED ``realtime_start``).
+    #   * ``synthetic_snapshot``   — we tag ``vintage_date = scrape_time``,
+    #                                value-changed triggered (every other
+    #                                fetcher).
+    #   * ``single_observation``   — only seen once, no revision context
+    #                                (legacy ``indicators`` rows migrated
+    #                                in #114 P1; pre-#114 IMF vintages).
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS indicator_vintages (
@@ -409,10 +424,22 @@ def apply_schema(connection: sqlite3.Connection) -> None:
             value REAL NOT NULL,
             metadata_json TEXT NOT NULL,
             scraped_at TEXT NOT NULL,
+            vintage_quality TEXT NOT NULL DEFAULT 'single_observation'
+                CHECK (vintage_quality IN (
+                    'native_pit', 'synthetic_snapshot', 'single_observation'
+                )),
             UNIQUE(series_id, source, observation_date, vintage_date)
         )
         """
     )
+    # ALTER for existing DBs created before #114 P0.
+    try:
+        connection.execute(
+            "ALTER TABLE indicator_vintages ADD COLUMN vintage_quality TEXT "
+            "NOT NULL DEFAULT 'single_observation'"
+        )
+    except sqlite3.OperationalError:
+        pass  # column already exists
     # ── Macro time-series audit lane (issue #69 slice 1) ─────────────────
     # Mirrors cal_econ_raw — same content-hash + raw-payload + snapshot
     # pattern, ticker-shaped at the source/series_id grain. One row per

@@ -719,6 +719,17 @@ class _IndicatorQueriesMixin:
         )
 
     def upsert_indicator_vintage(self, vintage: IndicatorVintageRecord) -> None:
+        # Defensive enum check — the CREATE TABLE block in #114 P0 added a
+        # CHECK constraint, but ALTER ADD COLUMN on legacy DBs cannot carry
+        # the CHECK, so legacy DBs would silently accept an unknown tag.
+        # Validate at the boundary so both code paths reject bad input.
+        if vintage.vintage_quality not in (
+            "native_pit", "synthetic_snapshot", "single_observation",
+        ):
+            raise ValueError(
+                f"vintage_quality must be one of native_pit / synthetic_snapshot / "
+                f"single_observation; got {vintage.vintage_quality!r}"
+            )
         with self._connection(commit=True) as connection:
             connection.execute(
                 """
@@ -730,8 +741,9 @@ class _IndicatorQueriesMixin:
                     value,
                     metadata_json,
                     obs_family_id,
-                    scraped_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    scraped_at,
+                    vintage_quality
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     vintage.series_id,
@@ -742,6 +754,7 @@ class _IndicatorQueriesMixin:
                     json.dumps(vintage.metadata, ensure_ascii=True, sort_keys=True),
                     vintage.obs_family_id,
                     utc_now().isoformat(),
+                    vintage.vintage_quality,
                 ),
             )
 
@@ -777,6 +790,12 @@ class _IndicatorQueriesMixin:
         return [self._row_to_vintage(row) for row in rows]
 
     def _row_to_vintage(self, row: sqlite3.Row) -> IndicatorVintageRecord:
+        # ``vintage_quality`` is added in #114 P0; older DBs ALTERed in
+        # produce the column with a 'single_observation' default, but
+        # ``sqlite3.Row`` raises when the column is missing on a stale
+        # connection cache, so we fall back via dict-style ``.get``.
+        keys = row.keys() if hasattr(row, "keys") else ()
+        quality = row["vintage_quality"] if "vintage_quality" in keys else "single_observation"
         return IndicatorVintageRecord(
             series_id=row["series_id"],
             source=row["source"],
@@ -784,6 +803,7 @@ class _IndicatorQueriesMixin:
             vintage_date=row["vintage_date"],
             value=float(row["value"]),
             metadata=json.loads(row["metadata_json"]),
+            vintage_quality=quality,
         )
 
     def upsert_obs_source(self, record: ObsSourceRecord) -> None:
