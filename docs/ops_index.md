@@ -7,15 +7,16 @@ grouped by mixin. The op name is the value passed to
 `service.invoke(operation_name, arguments)`; the summary is the
 first line of the method's docstring.
 
-Total: **116** ops across 6 mixins.
+Total: **117** ops across 6 mixins.
 
-## Calendar (`_calendar.py`) — 72 ops
+## Calendar (`_calendar.py`) — 74 ops
 
 | Op | Summary |
 | --- | --- |
 | `calendar_corp_backfill` | Resumable historical backfill of one corp calendar subtype. |
 | `calendar_corp_fetch` | Fetch one EODHD corporate calendar subtype into ``cal_corp_*``. |
 | `calendar_corp_fetch_dividend_details` | Enrich discovered dividends via ``/api/div/{TICKER}.{EXCHANGE}``. |
+| `calendar_corp_forward_sweep` | Daily forward-window sweep of the corp calendar lane — issue #63. |
 | `calendar_econ_backfill` | Plan or run a TE Calendar API backfill window. |
 | `calendar_econ_fetch_bea` | Fetch BEA REST API observations into the calendar. |
 | `calendar_econ_fetch_bls` | Fetch BLS Public Data API observations into the calendar. |
@@ -84,6 +85,7 @@ Total: **116** ops across 6 mixins.
 | `get_today_calendar` | (no docstring) |
 | `get_upcoming_calendar` | (no docstring) |
 | `list_calendar_items` | List calendar items from the unified ``v_calendar_item`` view. |
+| `list_corp_revisions` | Surface ``cal_corp_raw`` multi-version revisions (#66). |
 | `refresh_calendar` | (no docstring) |
 
 ## Timeseries (`_timeseries.py`) — 23 ops
@@ -93,16 +95,16 @@ Total: **116** ops across 6 mixins.
 | `fetch_country_indicators` | (no docstring) |
 | `fetch_rate_expectations` | (no docstring) |
 | `fetch_reference_rates` | (no docstring) |
+| `fundamentals_fetch` | Fetch ``/api/fundamentals/`` for one or more EODHD tickers. |
 | `get_catalog_status` | (no docstring) |
 | `get_catalog_structure` | (no docstring) |
 | `get_fed_communications` | (no docstring) |
+| `get_fundamentals` | Read-side query over ``fundamentals_*`` projections. |
 | `get_indicator_history` | (no docstring) |
 | `get_indicator_ontology` | (no docstring) |
-| `get_indicator_trend` | (no docstring) |
 | `get_recent_fed_comms` | (no docstring) |
 | `get_release_schedule` | (no docstring) |
 | `get_release_status` | (no docstring) |
-| `get_surprise_summary` | (no docstring) |
 | `list_catalog_entities` | (no docstring) |
 | `list_indicators_by_topic` | (no docstring) |
 | `list_release_families_for_indicator` | (no docstring) |
@@ -123,7 +125,7 @@ Total: **116** ops across 6 mixins.
 | `list_items` | Merged feed across the unified surface: documents + indicator observations + market-price bars, all filterable by ``subject``. |
 | `list_subjects` | List the subject vocabulary. Seeds the yaml on first call so the response is always complete on a fresh DB. |
 
-## News (`_news.py`) — 7 ops
+## News (`_news.py`) — 6 ops
 
 | Op | Summary |
 | --- | --- |
@@ -132,7 +134,6 @@ Total: **116** ops across 6 mixins.
 | `get_recent_news` | (no docstring) |
 | `get_trends` | (no docstring) |
 | `refresh_news` | (no docstring) |
-| `search_knowledge_base` | (no docstring) |
 | `search_news` | (no docstring) |
 
 ## Market (`_market.py`) — 2 ops
