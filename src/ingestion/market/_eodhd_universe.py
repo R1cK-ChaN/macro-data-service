@@ -4,13 +4,15 @@ Each entry pins the stable ``instrument_id`` used across provider ticker
 renames, plus identity fields (ISIN/FIGI) so later OpenFIGI or EODHD
 ID-mapping repair can rejoin segments without re-fetching history.
 
-Asset-class coverage: equity / ETF / index plus FX (``.FOREX``), crypto
+Asset-class coverage: equity / ETF / index / rate plus FX (``.FOREX``), crypto
 (``.CC``), and spot metals (also ``.FOREX`` — EODHD lists ``XAUUSD`` /
 ``XAGUSD`` / ``XPTUSD`` / ``XPDUSD`` / ``XCUUSD`` as currency rows backed
 by the LBMA / spot reference). Continuous-front-month futures (``.COMM``)
 require a separate EODHD add-on subscription not present on the current
 account; if that lands later, a follow-up can extend this universe without
-touching the rest of the stack.
+touching the rest of the stack. Government-bond yield rows use EODHD's
+``.GBOND`` exchange and live in the market lane as quote-style rate
+observations.
 
 No-overlap-by-design vs ``ingestion.market._macro_map.MACRO_MARKET_UNIVERSE``:
 
@@ -52,7 +54,7 @@ class EODHDUniverseEntry:
     primary_ticker: str             # bare ticker shown to agents/humans
     exchange_code: str              # EODHD exchange suffix, e.g. "INDX"
     name: str
-    asset_class: str                # equity, equity_etf, index, fx, crypto, commodity
+    asset_class: str                # equity, equity_etf, index, rate, fx, crypto, commodity
     market: str
     currency: str
     isin: str = ""
@@ -96,6 +98,17 @@ EODHD_GLOBAL_UNIVERSE: tuple[EODHDUniverseEntry, ...] = (
         description_for_agent="Hong Kong Hang Seng Index — HK equity proxy.",
     ),
     EODHDUniverseEntry(
+        instrument_id="US_MOVE",
+        eodhd_ticker="MOVE.INDX",
+        primary_ticker="MOVE",
+        exchange_code="INDX",
+        name="ICE BofA MOVE Index",
+        asset_class="index",
+        market="United States rates volatility index",
+        currency="USD",
+        description_for_agent="ICE BofA MOVE Index — US Treasury implied volatility gauge.",
+    ),
+    EODHDUniverseEntry(
         instrument_id="GLOBAL_VWRL_LSE",
         eodhd_ticker="VWRL.LSE",
         primary_ticker="VWRL",
@@ -130,6 +143,117 @@ EODHD_GLOBAL_UNIVERSE: tuple[EODHDUniverseEntry, ...] = (
         currency="HKD",
         isin="KYG875721634",
         description_for_agent="Tencent — China mega-cap tech listed in Hong Kong.",
+    ),
+    # -- Government-bond yield quotes (EODHD .GBOND) -----------------------
+    EODHDUniverseEntry(
+        instrument_id="RATES_CN_10Y_GBOND",
+        eodhd_ticker="CN10Y.GBOND",
+        primary_ticker="CN10Y",
+        exchange_code="GBOND",
+        name="China 10Y Government Bond Yield",
+        asset_class="rate",
+        market="China government bond yield curve",
+        currency="CNY",
+        description_for_agent="China 10-year government bond yield from EODHD GBOND.",
+    ),
+    EODHDUniverseEntry(
+        instrument_id="RATES_DE_2Y_GBOND",
+        eodhd_ticker="DE2Y.GBOND",
+        primary_ticker="DE2Y",
+        exchange_code="GBOND",
+        name="Germany 2Y Government Bond Yield",
+        asset_class="rate",
+        market="Germany government bond yield curve",
+        currency="EUR",
+        description_for_agent="Germany 2-year government bond yield from EODHD GBOND.",
+    ),
+    EODHDUniverseEntry(
+        instrument_id="RATES_DE_5Y_GBOND",
+        eodhd_ticker="DE5Y.GBOND",
+        primary_ticker="DE5Y",
+        exchange_code="GBOND",
+        name="Germany 5Y Government Bond Yield",
+        asset_class="rate",
+        market="Germany government bond yield curve",
+        currency="EUR",
+        description_for_agent="Germany 5-year government bond yield from EODHD GBOND.",
+    ),
+    EODHDUniverseEntry(
+        instrument_id="RATES_DE_10Y_GBOND",
+        eodhd_ticker="DE10Y.GBOND",
+        primary_ticker="DE10Y",
+        exchange_code="GBOND",
+        name="Germany 10Y Government Bond Yield",
+        asset_class="rate",
+        market="Germany government bond yield curve",
+        currency="EUR",
+        description_for_agent="Germany 10-year government bond yield from EODHD GBOND.",
+    ),
+    EODHDUniverseEntry(
+        instrument_id="RATES_DE_30Y_GBOND",
+        eodhd_ticker="DE30Y.GBOND",
+        primary_ticker="DE30Y",
+        exchange_code="GBOND",
+        name="Germany 30Y Government Bond Yield",
+        asset_class="rate",
+        market="Germany government bond yield curve",
+        currency="EUR",
+        description_for_agent="Germany 30-year government bond yield from EODHD GBOND.",
+    ),
+    EODHDUniverseEntry(
+        instrument_id="RATES_JP_2Y_GBOND",
+        eodhd_ticker="JP2Y.GBOND",
+        primary_ticker="JP2Y",
+        exchange_code="GBOND",
+        name="Japan 2Y Government Bond Yield",
+        asset_class="rate",
+        market="Japan government bond yield curve",
+        currency="JPY",
+        description_for_agent="Japan 2-year government bond yield from EODHD GBOND.",
+    ),
+    EODHDUniverseEntry(
+        instrument_id="RATES_JP_3Y_GBOND",
+        eodhd_ticker="JP3Y.GBOND",
+        primary_ticker="JP3Y",
+        exchange_code="GBOND",
+        name="Japan 3Y Government Bond Yield",
+        asset_class="rate",
+        market="Japan government bond yield curve",
+        currency="JPY",
+        description_for_agent="Japan 3-year government bond yield from EODHD GBOND.",
+    ),
+    EODHDUniverseEntry(
+        instrument_id="RATES_JP_5Y_GBOND",
+        eodhd_ticker="JP5Y.GBOND",
+        primary_ticker="JP5Y",
+        exchange_code="GBOND",
+        name="Japan 5Y Government Bond Yield",
+        asset_class="rate",
+        market="Japan government bond yield curve",
+        currency="JPY",
+        description_for_agent="Japan 5-year government bond yield from EODHD GBOND.",
+    ),
+    EODHDUniverseEntry(
+        instrument_id="RATES_JP_10Y_GBOND",
+        eodhd_ticker="JP10Y.GBOND",
+        primary_ticker="JP10Y",
+        exchange_code="GBOND",
+        name="Japan 10Y Government Bond Yield",
+        asset_class="rate",
+        market="Japan government bond yield curve",
+        currency="JPY",
+        description_for_agent="Japan 10-year government bond yield from EODHD GBOND.",
+    ),
+    EODHDUniverseEntry(
+        instrument_id="RATES_JP_30Y_GBOND",
+        eodhd_ticker="JP30Y.GBOND",
+        primary_ticker="JP30Y",
+        exchange_code="GBOND",
+        name="Japan 30Y Government Bond Yield",
+        asset_class="rate",
+        market="Japan government bond yield curve",
+        currency="JPY",
+        description_for_agent="Japan 30-year government bond yield from EODHD GBOND.",
     ),
     # ── FX spot pairs (EODHD .FOREX) ─────────────────────────────────────
     # Currency labels follow market convention: pricing the BASE currency

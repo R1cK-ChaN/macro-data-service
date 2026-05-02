@@ -33,6 +33,10 @@ from ingestion.timeseries.sdmx.providers.bis import BISClient
 from ingestion.timeseries.sdmx.providers.ecb import ECBClient
 from ingestion.timeseries.scrapers.eia import EIAClient
 from ingestion.timeseries.sdmx.providers.eurostat import EurostatClient
+from ingestion.timeseries.scrapers.aisi import AISIClient
+from ingestion.timeseries.scrapers.ism import ISMClient
+from ingestion.timeseries.scrapers.redbook import RedbookClient
+from ingestion.timeseries.scrapers.sentix import SentixClient
 from ingestion.timeseries.scrapers.fred import FredClient
 from ingestion.timeseries.sdmx.providers.imf import IMFClient
 from ingestion.timeseries.sdmx._errors import OECDRateLimitError
@@ -40,6 +44,7 @@ from ingestion.timeseries.sdmx.providers.oecd import OECDClient
 from ingestion.trends.scrapers.reddit import RedditTrendClient, RedditTrendPost
 from ingestion.trends.scrapers.weibo import WeiboTrendClient, WeiboTrendItem
 from ingestion.timeseries.scrapers.worldbank import WorldBankClient, WorldBankRateLimitError
+from ingestion.timeseries.scrapers.mof_jgb import MOFJGBClient
 from ingestion.timeseries.scrapers.nyfed import NYFedRatesClient
 from ingestion.timeseries.scrapers.rateprobability import RateProbabilityClient
 from ingestion.timeseries.scrapers.treasury_fiscal import TreasuryFiscalClient
@@ -108,8 +113,10 @@ def _infer_publish_precision(value: str | None) -> str:
     return "date_only"
 
 from ingestion.timeseries._config import (  # noqa: E402
+    AISI_WEEKLY_STEEL_SERIES,
     BEA_DATASETS,
     BEA_KNOWN_DATASETS,
+    BUNDESBANK_SERIES,
     BIS_SERIES,
     BLS_SERIES,
     BLS_SURVEY_PREFIXES,
@@ -124,8 +131,12 @@ from ingestion.timeseries._config import (  # noqa: E402
     IMF_SERIES,
     IMF_VINTAGE_SERIES,
     MACRO_SERIES,
+    MOF_JGB_SERIES,
+    ISM_REPORT_SERIES,
     OECD_SERIES,
     OECDSeriesConfig,
+    REDBOOK_SERIES,
+    SENTIX_SERIES,
     TREASURY_DATASETS,
     UNSD_SERIES,
     VINTAGE_SERIES,
@@ -199,6 +210,12 @@ SOURCE_FAMILIES: dict[str, str] = {
     "eurostat": "economic_data",
     "bis": "economic_data",
     "ecb": "economic_data",
+    "bundesbank": "economic_data",
+    "mof_jp": "economic_data",
+    "aisi": "economic_data",
+    "ism": "economic_data",
+    "redbook": "economic_data",
+    "sentix": "economic_data",
     "oecd": "economic_data",
     "worldbank": "economic_data",
     "worldbank_catalog": "economic_data",
@@ -251,6 +268,7 @@ from ingestion.clients._sdmx_clients import (
     EurostatIngestionClient,
     BISIngestionClient,
     ECBIngestionClient,
+    BundesbankIngestionClient,
 )
 from ingestion.clients._oecd_client import OECDIngestionClient, _OECDRateLimiter
 from ingestion.clients._ilo_unsd import ILOIngestionClient, UNSDIngestionClient
@@ -301,6 +319,12 @@ class IngestionOrchestrator:
         eurostat: EurostatIngestionClient | None = None,
         bis: BISIngestionClient | None = None,
         ecb: ECBIngestionClient | None = None,
+        bundesbank: BundesbankIngestionClient | None = None,
+        mof_jp: MOFJGBClient | None = None,
+        aisi: AISIClient | None = None,
+        ism: ISMClient | None = None,
+        redbook: RedbookClient | None = None,
+        sentix: SentixClient | None = None,
         oecd: OECDIngestionClient | None = None,
         worldbank: WorldBankIngestionClient | None = None,
         validation_engine: Any | None = None,
@@ -329,6 +353,12 @@ class IngestionOrchestrator:
         self.eurostat = eurostat or EurostatIngestionClient()
         self.bis = bis or BISIngestionClient()
         self.ecb = ecb or ECBIngestionClient()
+        self.bundesbank = bundesbank or BundesbankIngestionClient()
+        self.mof_jp = mof_jp or MOFJGBClient()
+        self.aisi = aisi or AISIClient()
+        self.ism = ism or ISMClient()
+        self.redbook = redbook or RedbookClient()
+        self.sentix = sentix or SentixClient()
         self.oecd = oecd or OECDIngestionClient()
         self.worldbank = worldbank or WorldBankIngestionClient()
         self._obs_seeded = False
@@ -344,6 +374,7 @@ class IngestionOrchestrator:
         if self._obs_seeded:
             return
         self.store.seed_obs_sources_and_families()
+        self.store.seed_concept_map()
         self.store.backfill_obs_family_ids()
         self._family_lookup = self.store.build_obs_family_lookup()
         self._obs_seeded = True
@@ -428,6 +459,12 @@ class IngestionOrchestrator:
             self._build_eurostat_source(),
             self._build_bis_source(),
             self._build_ecb_source(),
+            self._build_bundesbank_source(),
+            self._build_mof_jp_source(),
+            self._build_aisi_source(),
+            self._build_ism_source(),
+            self._build_redbook_source(),
+            self._build_sentix_source(),
             self._build_oecd_source(),
             self._build_worldbank_source(),
             self._build_worldbank_catalog_source(),
@@ -458,6 +495,12 @@ class IngestionOrchestrator:
             "eurostat",
             "bis",
             "ecb",
+            "bundesbank",
+            "mof_jp",
+            "aisi",
+            "ism",
+            "redbook",
+            "sentix",
             "oecd",
             "worldbank",
             "worldbank_catalog",
@@ -1090,6 +1133,47 @@ class IngestionOrchestrator:
             "ecb", SDMXFetcher(self.ecb.client, "ecb", ECB_SERIES),
         )
 
+    def _build_bundesbank_source(self) -> IngestionSourceDefinition:
+        from ingestion.fetchers._sdmx import SDMXFetcher
+        return self._build_fetcher_source(
+            "bundesbank",
+            SDMXFetcher(self.bundesbank.client, "bundesbank", BUNDESBANK_SERIES),
+        )
+
+    def _build_mof_jp_source(self) -> IngestionSourceDefinition:
+        from ingestion.fetchers._mof_jgb import MOFJGBFetcher
+        return self._build_fetcher_source(
+            "mof_jp", MOFJGBFetcher(client=self.mof_jp, series_config=MOF_JGB_SERIES),
+        )
+
+    def _build_aisi_source(self) -> IngestionSourceDefinition:
+        from ingestion.fetchers._aisi import AISIFetcher
+        return self._build_fetcher_source(
+            "aisi",
+            AISIFetcher(client=self.aisi, series_config=AISI_WEEKLY_STEEL_SERIES),
+        )
+
+    def _build_ism_source(self) -> IngestionSourceDefinition:
+        from ingestion.fetchers._ism import ISMFetcher
+        return self._build_fetcher_source(
+            "ism",
+            ISMFetcher(client=self.ism, series_config=ISM_REPORT_SERIES),
+        )
+
+    def _build_redbook_source(self) -> IngestionSourceDefinition:
+        from ingestion.fetchers._redbook import RedbookFetcher
+        return self._build_fetcher_source(
+            "redbook",
+            RedbookFetcher(client=self.redbook, series_config=REDBOOK_SERIES),
+        )
+
+    def _build_sentix_source(self) -> IngestionSourceDefinition:
+        from ingestion.fetchers._sentix import SentixFetcher
+        return self._build_fetcher_source(
+            "sentix",
+            SentixFetcher(client=self.sentix, series_config=SENTIX_SERIES),
+        )
+
     def _build_oecd_source(self) -> IngestionSourceDefinition:
         from ingestion.fetchers._oecd import OECDFetcher
         return self._build_fetcher_source(
@@ -1132,17 +1216,28 @@ class IngestionOrchestrator:
         "eurostat": "eurostat",
         "bis": "bis",
         "ecb": "ecb",
+        "bundesbank": "bundesbank",
+        "mof_jp": "mof_jp",
+        "aisi": "aisi",
+        "ism": "ism",
+        "redbook": "redbook",
+        "sentix": "sentix",
         "oecd": "oecd",
         "worldbank": "worldbank",
     }
 
     def _get_fetcher_for_source(self, source_id: str) -> Any:
         """Return the fetcher adapter for a concept_map source_id."""
+        from ingestion.fetchers._aisi import AISIFetcher
         from ingestion.fetchers._bls import BLSFetcher
         from ingestion.fetchers._eia import EIAFetcher
         from ingestion.fetchers._fred import FredFetcher
+        from ingestion.fetchers._ism import ISMFetcher
+        from ingestion.fetchers._mof_jgb import MOFJGBFetcher
         from ingestion.fetchers._nyfed import NYFedFetcher
         from ingestion.fetchers._oecd import OECDFetcher
+        from ingestion.fetchers._redbook import RedbookFetcher
+        from ingestion.fetchers._sentix import SentixFetcher
         from ingestion.fetchers._sdmx import SDMXFetcher
         from ingestion.fetchers._treasury import TreasuryFetcher
         from ingestion.fetchers._worldbank import WorldBankFetcher
@@ -1175,6 +1270,32 @@ class IngestionOrchestrator:
             fetcher = SDMXFetcher(self.bis.client, "bis", BIS_SERIES)
         elif source_id == "ecb":
             fetcher = SDMXFetcher(self.ecb.client, "ecb", ECB_SERIES)
+        elif source_id == "bundesbank":
+            fetcher = SDMXFetcher(
+                self.bundesbank.client, "bundesbank", BUNDESBANK_SERIES,
+            )
+        elif source_id == "mof_jp":
+            fetcher = MOFJGBFetcher(client=self.mof_jp, series_config=MOF_JGB_SERIES)
+        elif source_id == "aisi":
+            fetcher = AISIFetcher(
+                client=self.aisi,
+                series_config=AISI_WEEKLY_STEEL_SERIES,
+            )
+        elif source_id == "ism":
+            fetcher = ISMFetcher(
+                client=self.ism,
+                series_config=ISM_REPORT_SERIES,
+            )
+        elif source_id == "redbook":
+            fetcher = RedbookFetcher(
+                client=self.redbook,
+                series_config=REDBOOK_SERIES,
+            )
+        elif source_id == "sentix":
+            fetcher = SentixFetcher(
+                client=self.sentix,
+                series_config=SENTIX_SERIES,
+            )
         elif source_id == "oecd":
             fetcher = OECDFetcher(client=self.oecd.client)
         elif source_id == "worldbank":

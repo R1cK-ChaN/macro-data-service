@@ -60,6 +60,12 @@ def test_universe_covers_rates_fx_and_commodities() -> None:
     assert {"rate", "fx", "commodity"}.issubset(classes)
 
 
+def test_market_asset_class_filter_accepts_rate() -> None:
+    from macro_data.service.base import _VALID_MARKET_ASSET_CLASSES
+
+    assert "rate" in _VALID_MARKET_ASSET_CLASSES
+
+
 def test_universe_includes_fred_eia_and_ecb_sources() -> None:
     """Issue #1 P1 explicitly names FRED / ECB / EIA — all three must project."""
     sources = {e.source for e in MACRO_MARKET_UNIVERSE}

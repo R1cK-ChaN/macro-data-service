@@ -58,6 +58,11 @@ def _check_bis_available(client: BISClient) -> None:
         pytest.skip("BIS API unavailable")
 
 
+def _bis_version_kwargs(cfg: dict) -> dict[str, str]:
+    version = cfg.get("version")
+    return {"version": version} if version else {}
+
+
 # ── Layer 1: Catalog Discovery ────────────────────────────────────────
 
 class TestCatalogDiscovery:
@@ -116,13 +121,15 @@ class TestStructureValidation:
                 print(f"    {d.id}: {d.code_count} codes")
 
     def test_structure_for_each_hardcoded_dataflow(self, bis_client: BISClient) -> None:
-        seen: set[str] = set()
+        seen: set[tuple[str, str]] = set()
         for name, cfg in BIS_SERIES.items():
             df_id = cfg["dataflow"]
-            if df_id in seen:
+            version = cfg.get("version", "")
+            key = (df_id, version)
+            if key in seen:
                 continue
-            seen.add(df_id)
-            structure = bis_client.get_datastructure(df_id)
+            seen.add(key)
+            structure = bis_client.get_datastructure(df_id, version or None)
             assert len(structure.dimensions) >= 2, (
                 f"{df_id}: expected >=2 dimensions, got {len(structure.dimensions)}"
             )
@@ -166,6 +173,7 @@ class TestDatasetAccessibility:
             obs = bis_client.get_data(
                 cfg["dataflow"], cfg["key"],
                 series_id=cfg["series_id"], limit=1,
+                **_bis_version_kwargs(cfg),
             )
             assert len(obs) >= 1, f"{name}: expected >=1 observation, got {len(obs)}"
             print(f"    {name}: {obs[0].date} = {obs[0].value}")
@@ -217,16 +225,20 @@ class TestSizeEstimation:
 
     def test_estimate_size_for_all_hardcoded(self, bis_client: BISClient) -> None:
         _check_bis_available(bis_client)
-        seen: set[str] = set()
+        seen: set[tuple[str, str]] = set()
         print("\n  Dataflow              Series   Periods   Est. Obs")
         print("  " + "-" * 55)
         for name, cfg in BIS_SERIES.items():
             df_id = cfg["dataflow"]
-            if df_id in seen:
+            version = cfg.get("version", "")
+            key = (df_id, version)
+            if key in seen:
                 continue
-            seen.add(df_id)
+            seen.add(key)
             try:
-                est = bis_client.estimate_size(df_id)
+                est = bis_client.estimate_size(
+                    df_id, version=version or "1.0",
+                )
                 print(
                     f"  {df_id:<22} {est.total_series:>7}  {est.time_periods:>8}  "
                     f"{est.estimated_observations:>10,}"

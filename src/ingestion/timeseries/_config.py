@@ -21,6 +21,12 @@ __all__ = [
     "EUROSTAT_SERIES",
     "BIS_SERIES",
     "ECB_SERIES",
+    "BUNDESBANK_SERIES",
+    "MOF_JGB_SERIES",
+    "AISI_WEEKLY_STEEL_SERIES",
+    "ISM_REPORT_SERIES",
+    "REDBOOK_SERIES",
+    "SENTIX_SERIES",
     "OECD_DEFAULT_AGENCY_ID", "OECDSeriesConfig",
     "_slugify_oecd_token", "_generated_oecd_series_id", "_generated_oecd_config_key",
     "render_oecd_series_configs", "OECD_SERIES",
@@ -49,6 +55,7 @@ MACRO_SERIES = {
     "GDPC1": {"name": "Real GDP", "category": "growth", "freq": "quarterly"},
     "RSAFS": {"name": "Retail Sales", "category": "growth", "freq": "monthly"},
     "INDPRO": {"name": "Industrial Production", "category": "growth", "freq": "monthly"},
+    "WEI": {"name": "Weekly Economic Index", "category": "growth", "freq": "weekly"},
     "DFF": {"name": "Fed Funds Rate", "category": "rates", "freq": "daily"},
     "DGS2": {"name": "2Y Treasury Yield", "category": "rates", "freq": "daily"},
     "DGS10": {"name": "10Y Treasury Yield", "category": "rates", "freq": "daily"},
@@ -62,6 +69,9 @@ MACRO_SERIES = {
     "DTWEXBGS": {"name": "Broad Dollar Index", "category": "fx", "freq": "daily"},
     "DEXCHUS": {"name": "CNY/USD Exchange Rate", "category": "fx", "freq": "daily"},
     "BAMLH0A0HYM2": {"name": "High Yield OAS", "category": "credit", "freq": "daily"},
+    "RHORUSQ156N": {"name": "Homeownership Rate", "category": "housing", "freq": "quarterly"},
+    "RRVRUSQ156N": {"name": "Rental Vacancy Rate", "category": "housing", "freq": "quarterly"},
+    "RHVRUSQ156N": {"name": "Homeowner Vacancy Rate", "category": "housing", "freq": "quarterly"},
     # VIXCLS is required here (not just in _CONCEPT_MAP_DEFS) because
     # FredFetcher.fetch_series reads MACRO_SERIES directly — omitting it
     # would leave VIX_US empty after fred_daily / fred_full cycles, and
@@ -648,6 +658,9 @@ BIS_SERIES = {
     "eer_eu":    {"dataflow": "WS_EER",    "key": "M.R.B.XM", "series_id": "BIS_EER_EU", "category": "fx"},
     "credit_gap_us": {"dataflow": "WS_CREDIT_GAP", "key": "Q.US.P", "series_id": "BIS_CREDIT_GAP_US", "category": "credit"},
     "credit_gap_cn": {"dataflow": "WS_CREDIT_GAP", "key": "Q.CN.P", "series_id": "BIS_CREDIT_GAP_CN", "category": "credit"},
+    "tc_gov_us":     {"dataflow": "WS_TC", "version": "2.0", "key": "Q.US.G.A.N.770.A", "series_id": "BIS_TC_GOV_US", "category": "credit"},
+    "tc_hh_us":      {"dataflow": "WS_TC", "version": "2.0", "key": "Q.US.H.A.M.770.A", "series_id": "BIS_TC_HH_US", "category": "credit"},
+    "tc_nfc_us":     {"dataflow": "WS_TC", "version": "2.0", "key": "Q.US.N.A.M.770.A", "series_id": "BIS_TC_NFC_US", "category": "credit"},
     "property_us":   {"dataflow": "WS_SPP",  "key": "Q.US.R", "series_id": "BIS_PROPERTY_US", "category": "property"},
     "property_cn":   {"dataflow": "WS_SPP",  "key": "Q.CN.R", "series_id": "BIS_PROPERTY_CN", "category": "property"},
 }
@@ -664,6 +677,254 @@ ECB_SERIES = {
     "deposit_rate":  {"dataflow": "FM",  "key": "B.U2.EUR.4F.KR.DFR.LEV",        "series_id": "ECB_EA_DEPOSIT_RATE",  "category": "rates"},
     "eurusd":        {"dataflow": "EXR", "key": "M.USD.EUR.SP00.A",              "series_id": "ECB_EURUSD",           "category": "fx"},
     "eurusd_daily":  {"dataflow": "EXR", "key": "D.USD.EUR.SP00.A",              "series_id": "ECB_EURUSD_D",         "category": "fx"},
+}
+
+# ---------------------------------------------------------------------------
+# Bundesbank (SDMX)
+# ---------------------------------------------------------------------------
+
+BUNDESBANK_SERIES = {
+    "de_govt_2y": {
+        "dataflow": "BBSSY",
+        "key": "D.REN.EUR.A610.000000WT0202.A",
+        "series_id": "BUNDESBANK_DE_GOVT_2Y",
+        "name": "Germany 2Y Federal Securities Yield",
+        "category": "rates",
+    },
+    "de_govt_5y": {
+        "dataflow": "BBSSY",
+        "key": "D.REN.EUR.A620.000000WT0505.A",
+        "series_id": "BUNDESBANK_DE_GOVT_5Y",
+        "name": "Germany 5Y Federal Securities Yield",
+        "category": "rates",
+    },
+    "de_govt_7y": {
+        "dataflow": "BBSSY",
+        "key": "D.REN.EUR.A607.000000WT7070.A",
+        "series_id": "BUNDESBANK_DE_GOVT_7Y",
+        "name": "Germany 7Y Federal Securities Yield",
+        "category": "rates",
+    },
+    "de_govt_10y": {
+        "dataflow": "BBSSY",
+        "key": "D.REN.EUR.A630.000000WT1010.A",
+        "series_id": "BUNDESBANK_DE_GOVT_10Y",
+        "name": "Germany 10Y Federal Securities Yield",
+        "category": "rates",
+    },
+    "de_govt_15y": {
+        "dataflow": "BBSSY",
+        "key": "D.REN.EUR.A615.000000WT1515.A",
+        "series_id": "BUNDESBANK_DE_GOVT_15Y",
+        "name": "Germany 15Y Federal Securities Yield",
+        "category": "rates",
+    },
+    "de_govt_30y": {
+        "dataflow": "BBSSY",
+        "key": "D.REN.EUR.A640.000000WT3030.A",
+        "series_id": "BUNDESBANK_DE_GOVT_30Y",
+        "name": "Germany 30Y Federal Securities Yield",
+        "category": "rates",
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Japan MOF JGB interest rates (CSV)
+# ---------------------------------------------------------------------------
+
+_MOF_JGB_MATURITIES = (
+    "1Y", "2Y", "3Y", "4Y", "5Y", "6Y", "7Y", "8Y", "9Y",
+    "10Y", "15Y", "20Y", "25Y", "30Y", "40Y",
+)
+
+MOF_JGB_SERIES = {
+    f"jp_govt_{maturity.lower()}": {
+        "maturity": maturity,
+        "series_id": f"MOF_JP_GOVT_{maturity}",
+        "name": f"Japan {maturity} Government Bond Yield",
+        "category": "rates",
+    }
+    for maturity in _MOF_JGB_MATURITIES
+}
+
+# ---------------------------------------------------------------------------
+# AISI weekly raw steel production (HTML page)
+# ---------------------------------------------------------------------------
+
+AISI_WEEKLY_STEEL_SERIES = {
+    "raw_steel_production": {
+        "metric": "production_net_tons",
+        "series_id": "AISI_RAW_STEEL_PRODUCTION_US",
+        "name": "US Weekly Raw Steel Production",
+        "category": "industry",
+        "unit": "net_tons",
+    },
+    "raw_steel_wow": {
+        "metric": "wow_percent",
+        "series_id": "AISI_RAW_STEEL_WOW_US",
+        "name": "US Weekly Raw Steel Production WoW",
+        "category": "industry",
+        "unit": "percent",
+    },
+    "raw_steel_yoy": {
+        "metric": "yoy_percent",
+        "series_id": "AISI_RAW_STEEL_YOY_US",
+        "name": "US Weekly Raw Steel Production YoY",
+        "category": "industry",
+        "unit": "percent",
+    },
+}
+
+# ---------------------------------------------------------------------------
+# ISM PMI official report pages
+# ---------------------------------------------------------------------------
+
+_ISM_REPORT_METRICS: tuple[tuple[str, str, str, str], ...] = (
+    ("manufacturing", "pmi", "MFG_PMI", "Manufacturing PMI"),
+    ("manufacturing", "new_orders", "MFG_NEW_ORDERS", "Manufacturing New Orders"),
+    ("manufacturing", "production", "MFG_PRODUCTION", "Manufacturing Production"),
+    ("manufacturing", "employment", "MFG_EMPLOYMENT", "Manufacturing Employment"),
+    (
+        "manufacturing",
+        "supplier_deliveries",
+        "MFG_SUPPLIER_DELIVERIES",
+        "Manufacturing Supplier Deliveries",
+    ),
+    ("manufacturing", "inventories", "MFG_INVENTORIES", "Manufacturing Inventories"),
+    (
+        "manufacturing",
+        "customers_inventories",
+        "MFG_CUSTOMERS_INVENTORIES",
+        "Manufacturing Customers' Inventories",
+    ),
+    ("manufacturing", "prices", "MFG_PRICES", "Manufacturing Prices"),
+    (
+        "manufacturing",
+        "backlog_of_orders",
+        "MFG_BACKLOG_OF_ORDERS",
+        "Manufacturing Backlog of Orders",
+    ),
+    (
+        "manufacturing",
+        "new_export_orders",
+        "MFG_NEW_EXPORT_ORDERS",
+        "Manufacturing New Export Orders",
+    ),
+    ("manufacturing", "imports", "MFG_IMPORTS", "Manufacturing Imports"),
+    ("services", "pmi", "SERVICES_PMI", "Services PMI"),
+    (
+        "services",
+        "business_activity",
+        "SERVICES_BUSINESS_ACTIVITY",
+        "Services Business Activity",
+    ),
+    ("services", "new_orders", "SERVICES_NEW_ORDERS", "Services New Orders"),
+    ("services", "employment", "SERVICES_EMPLOYMENT", "Services Employment"),
+    (
+        "services",
+        "supplier_deliveries",
+        "SERVICES_SUPPLIER_DELIVERIES",
+        "Services Supplier Deliveries",
+    ),
+    ("services", "inventories", "SERVICES_INVENTORIES", "Services Inventories"),
+    ("services", "prices", "SERVICES_PRICES", "Services Prices"),
+    (
+        "services",
+        "backlog_of_orders",
+        "SERVICES_BACKLOG_OF_ORDERS",
+        "Services Backlog of Orders",
+    ),
+    (
+        "services",
+        "new_export_orders",
+        "SERVICES_NEW_EXPORT_ORDERS",
+        "Services New Export Orders",
+    ),
+    ("services", "imports", "SERVICES_IMPORTS", "Services Imports"),
+    (
+        "services",
+        "inventory_sentiment",
+        "SERVICES_INVENTORY_SENTIMENT",
+        "Services Inventory Sentiment",
+    ),
+)
+
+ISM_REPORT_SERIES = {
+    key: cfg
+    for survey, metric, series_token, name in _ISM_REPORT_METRICS
+    for key, cfg in (
+        (
+            f"{survey}_{metric}",
+            {
+                "survey": survey,
+                "metric": metric,
+                "measure": "index",
+                "series_id": f"ISM_{series_token}_US",
+                "name": f"US ISM {name}",
+                "category": "growth",
+                "unit": "index",
+            },
+        ),
+        (
+            f"{survey}_{metric}_mom",
+            {
+                "survey": survey,
+                "metric": metric,
+                "measure": "change",
+                "series_id": f"ISM_{series_token}_MOM_US",
+                "name": f"US ISM {name} MoM",
+                "category": "growth",
+                "unit": "percentage_points",
+            },
+        ),
+    )
+}
+
+# ---------------------------------------------------------------------------
+# Redbook Research weekly retail sales via authorized TE historical API
+# ---------------------------------------------------------------------------
+
+REDBOOK_SERIES = {
+    "redbook_retail_sales_yoy": {
+        "country": "united states",
+        "indicator": "redbook index",
+        "source_symbol": "UNITEDSTAREDIND",
+        "series_id": "REDBOOK_RETAIL_SALES_YOY_US",
+        "name": "US Redbook Retail Sales YoY",
+        "category": "consumer",
+        "unit": "percent",
+    },
+}
+
+SENTIX_SERIES = {
+    "sentix_us_headline": {
+        "series_id": "SENTIX_US_HEADLINE",
+        "name": "US Sentix Economic Index Headline",
+        "category": "sentiment",
+        "unit": "index",
+        "country": "USA",
+        "family": "SNTE",
+        "component_tickers": ("SNTEUSH0", "SNTEUSH6"),
+        "formula": "average",
+    },
+    "sentix_us_current": {
+        "series_id": "SENTIX_US_CURRENT",
+        "name": "US Sentix Economic Index Headline Current Situation",
+        "category": "sentiment",
+        "unit": "index",
+        "country": "USA",
+        "family": "SNTE",
+        "source_ticker": "SNTEUSH0",
+    },
+    "sentix_us_expectations": {
+        "series_id": "SENTIX_US_EXPECTATIONS",
+        "name": "US Sentix Economic Index Headline Expectations",
+        "category": "sentiment",
+        "unit": "index",
+        "country": "USA",
+        "family": "SNTE",
+        "source_ticker": "SNTEUSH6",
+    },
 }
 
 # ---------------------------------------------------------------------------

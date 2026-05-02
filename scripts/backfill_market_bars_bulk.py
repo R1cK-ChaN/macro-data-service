@@ -55,8 +55,8 @@ from ingestion.market._eodhd_universe import (  # noqa: E402
 )
 from ingestion.market.clients._eodhd import (  # noqa: E402
     EODHDMarketDataProvider,
-    _CORP_ACTION_BEARING_ASSET_CLASSES,
-)  # noqa: E402 — _reproject_corp_actions accessed via the provider class
+    _entry_carries_corp_actions,
+)  # noqa: E402
 from ingestion.market.clients._tiingo import (  # noqa: E402
     PRE2018_CUTOFF,
     check_ohlc_sanity,
@@ -144,7 +144,7 @@ def _persist_bar(
     here would surface false warnings on adjusted history (the case
     Codex flagged on AAPL pre-2018 bars).
     """
-    carries_corp_actions = entry.asset_class in _CORP_ACTION_BEARING_ASSET_CLASSES
+    carries_corp_actions = _entry_carries_corp_actions(entry)
     flags_json: dict[str, Any] = {}
     if not check_ohlc_sanity(bar):
         flags_json["ohlc_sanity"] = "failed"

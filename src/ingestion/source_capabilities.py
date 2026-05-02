@@ -520,15 +520,21 @@ class SourceCapabilityManager:
         from ingestion.scrapers.census import CensusClient
         from ingestion.scrapers.gov_report import _CN_SOURCES, _EU_SOURCES, _JP_SOURCES, _US_SOURCES
         from ingestion.series_config import (
+            AISI_WEEKLY_STEEL_SERIES,
             BEA_DATASETS,
+            BUNDESBANK_SERIES,
             BLS_SERIES,
             CENSUS_DATASETS,
             EIA_SERIES,
             FED_FEEDS,
             ILO_SERIES,
             IMF_VINTAGE_SERIES,
+            ISM_REPORT_SERIES,
             MACRO_SERIES,
             MACRO_WATCHLIST,
+            MOF_JGB_SERIES,
+            REDBOOK_SERIES,
+            SENTIX_SERIES,
             TREASURY_DATASETS,
             UNSD_SERIES,
             VINTAGE_SERIES,
@@ -1028,12 +1034,19 @@ class SourceCapabilityManager:
             return _limit_items(entities, query, limit)
 
         def _nyfed_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
-            items = [
-                ("SOFR", "SOFR", {}),
-                ("EFFR", "EFFR", {}),
-                ("OBFR", "OBFR", {}),
+            entities = [
+                _entity("nyfed_rates", "SOFR", "rate", "SOFR"),
+                _entity("nyfed_rates", "EFFR", "rate", "EFFR"),
+                _entity("nyfed_rates", "OBFR", "rate", "OBFR"),
+                _entity(
+                    "nyfed_rates",
+                    "GSCPI",
+                    "research_series",
+                    "Global Supply Chain Pressure Index",
+                    metadata={"series_id": "NYFED_GSCPI"},
+                ),
             ]
-            return _simple_entities("nyfed_rates", "rate", items)(query, limit)
+            return _limit_items(entities, query, limit)
 
         def _weibo_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
             items = [("weibo_hot_topics", "Weibo Hot Topics", {})]
@@ -1235,13 +1248,24 @@ class SourceCapabilityManager:
         )
         adapters["nyfed_rates"] = SourceCapabilityAdapter(
             source_id="nyfed_rates",
-            display_name="NYFed Rates",
+            display_name="NYFed Rates and Research",
             source_type="fixed-scope-complete",
-            entity_type="rate",
-            description="NYFed reference rate set",
+            entity_type="series",
+            description="NYFed reference rates and GSCPI research data",
             is_default_scheduled=True,
             discover=_nyfed_entities,
             sync_latest=lambda entity_ids, limit: _run_job("nyfed_rates"),
+        )
+        adapters["sentix"] = SourceCapabilityAdapter(
+            source_id="sentix",
+            display_name="sentix Economic Index",
+            source_type="fixed-scope-complete",
+            entity_type="series",
+            description="Configured sentix Economic Index API series",
+            notes="Requires sentix Data REST API credentials and SNTE subscription.",
+            is_default_scheduled=True,
+            discover=_configured_entities("sentix", "series", SENTIX_SERIES),
+            sync_latest=lambda entity_ids, limit: _run_job("sentix"),
         )
         adapters["gov_reports"] = SourceCapabilityAdapter(
             source_id="gov_reports",
@@ -1313,6 +1337,63 @@ class SourceCapabilityManager:
             is_default_scheduled=True,
             discover=_treasury_entities,
             sync_latest=lambda entity_ids, limit: _run_job("treasury_fiscal"),
+        )
+        adapters["bundesbank"] = SourceCapabilityAdapter(
+            source_id="bundesbank",
+            display_name="Bundesbank",
+            source_type="fixed-scope-complete",
+            entity_type="series",
+            description="Bundesbank current Federal securities yield series.",
+            supports_structure=False,
+            is_default_scheduled=True,
+            discover=_configured_entities("bundesbank", "series", BUNDESBANK_SERIES),
+            sync_latest=lambda entity_ids, limit: _run_job("bundesbank"),
+        )
+        adapters["mof_jp"] = SourceCapabilityAdapter(
+            source_id="mof_jp",
+            display_name="Japan Ministry of Finance",
+            source_type="fixed-scope-complete",
+            entity_type="series",
+            description="MOF Japan constant-maturity JGB interest-rate series.",
+            supports_structure=False,
+            is_default_scheduled=True,
+            discover=_configured_entities("mof_jp", "series", MOF_JGB_SERIES),
+            sync_latest=lambda entity_ids, limit: _run_job("mof_jp"),
+        )
+        adapters["aisi"] = SourceCapabilityAdapter(
+            source_id="aisi",
+            display_name="American Iron and Steel Institute",
+            source_type="fixed-scope-complete",
+            entity_type="series",
+            description="AISI weekly raw steel production metrics.",
+            supports_structure=False,
+            is_default_scheduled=True,
+            discover=_configured_entities(
+                "aisi", "series", AISI_WEEKLY_STEEL_SERIES,
+            ),
+            sync_latest=lambda entity_ids, limit: _run_job("aisi"),
+        )
+        adapters["ism"] = SourceCapabilityAdapter(
+            source_id="ism",
+            display_name="Institute for Supply Management",
+            source_type="fixed-scope-complete",
+            entity_type="series",
+            description="ISM Manufacturing and Services PMI official report metrics.",
+            supports_structure=False,
+            is_default_scheduled=True,
+            discover=_configured_entities("ism", "series", ISM_REPORT_SERIES),
+            sync_latest=lambda entity_ids, limit: _run_job("ism"),
+        )
+        adapters["redbook"] = SourceCapabilityAdapter(
+            source_id="redbook",
+            display_name="Redbook Research",
+            source_type="fixed-scope-complete",
+            entity_type="series",
+            description="US Redbook weekly retail-sales year-over-year index.",
+            supports_structure=False,
+            is_default_scheduled=True,
+            discover=_configured_entities("redbook", "series", REDBOOK_SERIES),
+            sync_latest=lambda entity_ids, limit: _run_job("redbook"),
         )
 
         if orchestrator is not None:

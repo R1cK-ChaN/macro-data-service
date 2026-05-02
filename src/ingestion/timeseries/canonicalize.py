@@ -159,6 +159,131 @@ def sdmx_content_hash(payload: dict[str, Any]) -> str:
     return _hash_canonical(canonicalize_sdmx_payload(payload))
 
 
+# ── MOF Japan JGB CSV ──────────────────────────────────────────────────────
+
+def canonicalize_mof_jp_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize per-series MOF JGB CSV observations."""
+    observations = payload.get("observations") or []
+    cleaned = [
+        {"date": row.get("date"), "value": row.get("value")}
+        for row in observations
+        if isinstance(row, dict)
+    ]
+    cleaned.sort(key=lambda row: (row.get("date") or "", str(row.get("value") or "")))
+    return json.dumps(
+        {"maturity": payload.get("maturity", ""), "observations": cleaned},
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def mof_jp_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_mof_jp_payload(payload))
+
+
+# ── AISI weekly raw steel HTML ─────────────────────────────────────────────
+
+def canonicalize_aisi_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize per-metric AISI weekly raw steel observations."""
+    observations = payload.get("observations") or []
+    cleaned = [
+        {"date": row.get("date"), "value": row.get("value")}
+        for row in observations
+        if isinstance(row, dict)
+    ]
+    cleaned.sort(key=lambda row: (row.get("date") or "", str(row.get("value") or "")))
+    return json.dumps(
+        {"metric": payload.get("metric", ""), "observations": cleaned},
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def aisi_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_aisi_payload(payload))
+
+
+# ── ISM PMI report HTML ───────────────────────────────────────────────────
+
+def canonicalize_ism_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize per-series ISM report observations."""
+    observations = payload.get("observations") or []
+    cleaned = [
+        {"date": row.get("date"), "value": row.get("value")}
+        for row in observations
+        if isinstance(row, dict)
+    ]
+    cleaned.sort(key=lambda row: (row.get("date") or "", str(row.get("value") or "")))
+    return json.dumps(
+        {
+            "survey": payload.get("survey", ""),
+            "metric": payload.get("metric", ""),
+            "measure": payload.get("measure", ""),
+            "observations": cleaned,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def ism_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_ism_payload(payload))
+
+
+# ── Redbook Research weekly retail sales ──────────────────────────────────
+
+def canonicalize_redbook_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize Redbook weekly retail-sales observations."""
+    observations = payload.get("observations") or []
+    cleaned = [
+        {"date": row.get("date"), "value": row.get("value")}
+        for row in observations
+        if isinstance(row, dict)
+    ]
+    cleaned.sort(key=lambda row: (row.get("date") or "", str(row.get("value") or "")))
+    return json.dumps(
+        {
+            "source_symbol": payload.get("source_symbol", ""),
+            "indicator": payload.get("indicator", ""),
+            "observations": cleaned,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def redbook_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_redbook_payload(payload))
+
+
+# ── sentix Economic Index ────────────────────────────────────────────────
+
+def canonicalize_sentix_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize sentix Economic Index observations."""
+    observations = payload.get("observations") or []
+    cleaned = [
+        {"date": row.get("date"), "value": row.get("value")}
+        for row in observations
+        if isinstance(row, dict)
+    ]
+    cleaned.sort(key=lambda row: (row.get("date") or "", str(row.get("value") or "")))
+    return json.dumps(
+        {
+            "series_id": payload.get("series_id", ""),
+            "source_ticker": payload.get("source_ticker", ""),
+            "component_tickers": payload.get("component_tickers", []),
+            "formula": payload.get("formula", ""),
+            "observations": cleaned,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def sentix_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_sentix_payload(payload))
+
+
 # ── Dispatch ──────────────────────────────────────────────────────────────
 
 _HASH_BY_SOURCE = {
@@ -167,10 +292,16 @@ _HASH_BY_SOURCE = {
     # SDMX-JSON family — BIS is excluded because its endpoint returns CSV.
     "imf": sdmx_content_hash,
     "ecb": sdmx_content_hash,
+    "bundesbank": sdmx_content_hash,
     "eurostat": sdmx_content_hash,
     "oecd": sdmx_content_hash,
     "unsd": sdmx_content_hash,
     "ilo": sdmx_content_hash,
+    "mof_jp": mof_jp_content_hash,
+    "aisi": aisi_content_hash,
+    "ism": ism_content_hash,
+    "redbook": redbook_content_hash,
+    "sentix": sentix_content_hash,
 }
 
 

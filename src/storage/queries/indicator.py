@@ -53,6 +53,7 @@ _FRED_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "GDPC1":        ("us.growth.gdp_real",             "Real GDP",                    "billions_usd", "quarterly", "saar"),
     "RSAFS":        ("us.growth.retail_sales",         "Retail Sales",                "millions_usd", "monthly",   "sa"),
     "INDPRO":       ("us.growth.industrial_production","Industrial Production",       "index",        "monthly",   "sa"),
+    "WEI":          ("us.growth.weekly_economic_index","Weekly Economic Index",        "percent",      "weekly",    "nsa"),
     "DFF":          ("us.rates.fed_funds",             "Fed Funds Rate",              "percent",      "daily",     "none"),
     "DGS2":         ("us.rates.treasury_2y",           "2Y Treasury Yield",           "percent",      "daily",     "none"),
     "DGS10":        ("us.rates.treasury_10y",          "10Y Treasury Yield",          "percent",      "daily",     "none"),
@@ -66,6 +67,9 @@ _FRED_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "DTWEXBGS":     ("us.fx.dollar_index_broad",       "Broad Dollar Index",          "index",        "daily",     "none"),
     "DEXCHUS":      ("us.fx.cny_usd",                  "CNY/USD Exchange Rate",       "ratio",        "daily",     "none"),
     "BAMLH0A0HYM2": ("us.credit.hy_oas",              "High Yield OAS",              "percent",      "daily",     "none"),
+    "RHORUSQ156N":  ("us.housing.homeownership_rate",  "Homeownership Rate",          "percent",      "quarterly", "nsa"),
+    "RRVRUSQ156N":  ("us.housing.rental_vacancy_rate", "Rental Vacancy Rate",         "percent",      "quarterly", "nsa"),
+    "RHVRUSQ156N":  ("us.housing.homeowner_vacancy_rate", "Homeowner Vacancy Rate",    "percent",      "quarterly", "nsa"),
     "VIXCLS":       ("us.markets.vix",                 "CBOE VIX",                    "index",        "daily",     "none"),
 }
 
@@ -90,6 +94,7 @@ _NYFED_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "NYFED_SOFR": ("us.rates.sofr", "Secured Overnight Financing Rate", "percent", "daily", "none"),
     "NYFED_EFFR": ("us.rates.effr", "Effective Federal Funds Rate",     "percent", "daily", "none"),
     "NYFED_OBFR": ("us.rates.obfr", "Overnight Bank Funding Rate",     "percent", "daily", "none"),
+    "NYFED_GSCPI": ("us.supply_chain.gscpi", "Global Supply Chain Pressure Index", "index", "monthly", "none"),
 }
 
 _RATEPROBABILITY_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
@@ -138,6 +143,9 @@ _BIS_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "BIS_EER_EU":    ("eu.fx.eer_real",          "EU Real Effective Exchange Rate",  "index", "monthly",    "none"),
     "BIS_CREDIT_GAP_US": ("us.credit.gap",       "US Credit-to-GDP Gap",           "percent", "quarterly", "none"),
     "BIS_CREDIT_GAP_CN": ("cn.credit.gap",       "CN Credit-to-GDP Gap",           "percent", "quarterly", "none"),
+    "BIS_TC_GOV_US":     ("us.credit.gov_leverage", "US General Government Leverage", "percent", "quarterly", "none"),
+    "BIS_TC_HH_US":      ("us.credit.household_leverage", "US Household Leverage",   "percent", "quarterly", "none"),
+    "BIS_TC_NFC_US":     ("us.credit.nfc_leverage", "US NFC Leverage",              "percent", "quarterly", "none"),
     "BIS_PROPERTY_US":   ("us.property.real",     "US Real Property Prices",        "index",   "quarterly", "none"),
     "BIS_PROPERTY_CN":   ("cn.property.real",     "CN Real Property Prices",        "index",   "quarterly", "none"),
 }
@@ -151,6 +159,253 @@ _ECB_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "ECB_EA_DEPOSIT_RATE": ("eu.rates.deposit_ecb",   "ECB Deposit Facility Rate", "percent",      "daily",   "none"),
     "ECB_EURUSD":          ("eu.fx.eurusd",           "EUR/USD Exchange Rate",     "ratio",        "monthly", "none"),
 }
+
+_BUNDESBANK_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
+    "BUNDESBANK_DE_GOVT_2Y":  ("de.rates.govt_2y",  "Germany 2Y Federal Securities Yield",  "percent", "daily", "none"),
+    "BUNDESBANK_DE_GOVT_5Y":  ("de.rates.govt_5y",  "Germany 5Y Federal Securities Yield",  "percent", "daily", "none"),
+    "BUNDESBANK_DE_GOVT_7Y":  ("de.rates.govt_7y",  "Germany 7Y Federal Securities Yield",  "percent", "daily", "none"),
+    "BUNDESBANK_DE_GOVT_10Y": ("de.rates.govt_10y", "Germany 10Y Federal Securities Yield", "percent", "daily", "none"),
+    "BUNDESBANK_DE_GOVT_15Y": ("de.rates.govt_15y", "Germany 15Y Federal Securities Yield", "percent", "daily", "none"),
+    "BUNDESBANK_DE_GOVT_30Y": ("de.rates.govt_30y", "Germany 30Y Federal Securities Yield", "percent", "daily", "none"),
+}
+
+_MOF_JGB_MATURITIES = (
+    "1Y", "2Y", "3Y", "4Y", "5Y", "6Y", "7Y", "8Y", "9Y",
+    "10Y", "15Y", "20Y", "25Y", "30Y", "40Y",
+)
+
+_MOF_JGB_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    f"MOF_JP_GOVT_{maturity}": (
+        f"jp.rates.govt_{maturity.lower()}",
+        f"Japan {maturity} Government Bond Yield",
+        "percent",
+        "daily",
+        "none",
+    )
+    for maturity in _MOF_JGB_MATURITIES
+}
+
+_MOF_JGB_CONCEPT_MAP_DEFS: tuple[tuple[str, str, str, str, int, str, str], ...] = tuple(
+    (
+        f"JP_GOVT_{maturity}",
+        "mof_jp",
+        f"MOF_JP_GOVT_{maturity}",
+        f"jp.rates.govt_{maturity.lower()}",
+        1,
+        "primary",
+        "MOF constant-maturity JGB interest rate",
+    )
+    for maturity in _MOF_JGB_MATURITIES
+)
+
+_AISI_STEEL_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    "AISI_RAW_STEEL_PRODUCTION_US": (
+        "us.industry.raw_steel_production",
+        "US Weekly Raw Steel Production",
+        "net_tons",
+        "weekly",
+        "none",
+    ),
+    "AISI_RAW_STEEL_WOW_US": (
+        "us.industry.raw_steel_production_wow",
+        "US Weekly Raw Steel Production WoW",
+        "percent",
+        "weekly",
+        "none",
+    ),
+    "AISI_RAW_STEEL_YOY_US": (
+        "us.industry.raw_steel_production_yoy",
+        "US Weekly Raw Steel Production YoY",
+        "percent",
+        "weekly",
+        "none",
+    ),
+}
+
+_AISI_STEEL_CONCEPT_MAP_DEFS: tuple[tuple[str, str, str, str, int, str, str], ...] = (
+    (
+        "RAW_STEEL_PRODUCTION_US",
+        "aisi",
+        "AISI_RAW_STEEL_PRODUCTION_US",
+        "us.industry.raw_steel_production",
+        1,
+        "primary",
+        "AISI weekly raw steel production",
+    ),
+    (
+        "RAW_STEEL_PRODUCTION_WOW_US",
+        "aisi",
+        "AISI_RAW_STEEL_WOW_US",
+        "us.industry.raw_steel_production_wow",
+        1,
+        "primary",
+        "AISI weekly raw steel production week-over-week change",
+    ),
+    (
+        "RAW_STEEL_PRODUCTION_YOY_US",
+        "aisi",
+        "AISI_RAW_STEEL_YOY_US",
+        "us.industry.raw_steel_production_yoy",
+        1,
+        "primary",
+        "AISI weekly raw steel production year-over-year change",
+    ),
+)
+
+_ISM_REPORT_METRICS: tuple[tuple[str, str, str, str], ...] = (
+    ("manufacturing", "pmi", "MFG_PMI", "Manufacturing PMI"),
+    ("manufacturing", "new_orders", "MFG_NEW_ORDERS", "Manufacturing New Orders"),
+    ("manufacturing", "production", "MFG_PRODUCTION", "Manufacturing Production"),
+    ("manufacturing", "employment", "MFG_EMPLOYMENT", "Manufacturing Employment"),
+    ("manufacturing", "supplier_deliveries", "MFG_SUPPLIER_DELIVERIES", "Manufacturing Supplier Deliveries"),
+    ("manufacturing", "inventories", "MFG_INVENTORIES", "Manufacturing Inventories"),
+    ("manufacturing", "customers_inventories", "MFG_CUSTOMERS_INVENTORIES", "Manufacturing Customers' Inventories"),
+    ("manufacturing", "prices", "MFG_PRICES", "Manufacturing Prices"),
+    ("manufacturing", "backlog_of_orders", "MFG_BACKLOG_OF_ORDERS", "Manufacturing Backlog of Orders"),
+    ("manufacturing", "new_export_orders", "MFG_NEW_EXPORT_ORDERS", "Manufacturing New Export Orders"),
+    ("manufacturing", "imports", "MFG_IMPORTS", "Manufacturing Imports"),
+    ("services", "pmi", "SERVICES_PMI", "Services PMI"),
+    ("services", "business_activity", "SERVICES_BUSINESS_ACTIVITY", "Services Business Activity"),
+    ("services", "new_orders", "SERVICES_NEW_ORDERS", "Services New Orders"),
+    ("services", "employment", "SERVICES_EMPLOYMENT", "Services Employment"),
+    ("services", "supplier_deliveries", "SERVICES_SUPPLIER_DELIVERIES", "Services Supplier Deliveries"),
+    ("services", "inventories", "SERVICES_INVENTORIES", "Services Inventories"),
+    ("services", "prices", "SERVICES_PRICES", "Services Prices"),
+    ("services", "backlog_of_orders", "SERVICES_BACKLOG_OF_ORDERS", "Services Backlog of Orders"),
+    ("services", "new_export_orders", "SERVICES_NEW_EXPORT_ORDERS", "Services New Export Orders"),
+    ("services", "imports", "SERVICES_IMPORTS", "Services Imports"),
+    ("services", "inventory_sentiment", "SERVICES_INVENTORY_SENTIMENT", "Services Inventory Sentiment"),
+)
+
+_ISM_SA_METRICS = {
+    ("manufacturing", "pmi"),
+    ("manufacturing", "new_orders"),
+    ("manufacturing", "production"),
+    ("manufacturing", "employment"),
+    ("manufacturing", "supplier_deliveries"),
+    ("manufacturing", "inventories"),
+    ("services", "pmi"),
+    ("services", "business_activity"),
+    ("services", "new_orders"),
+    ("services", "employment"),
+    ("services", "supplier_deliveries"),
+}
+
+
+def _ism_family_id(survey: str, metric: str, measure: str) -> str:
+    survey_part = "mfg" if survey == "manufacturing" else "services"
+    suffix = "_mom" if measure == "change" else ""
+    return f"us.growth.ism_{survey_part}_{metric}{suffix}"
+
+
+_ISM_REPORT_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    series_id: (
+        _ism_family_id(survey, metric, measure),
+        f"US ISM {name}{' MoM' if measure == 'change' else ''}",
+        "percentage_points" if measure == "change" else "index",
+        "monthly",
+        "sa" if (survey, metric) in _ISM_SA_METRICS else "nsa",
+    )
+    for survey, metric, token, name in _ISM_REPORT_METRICS
+    for measure, series_id in (
+        ("index", f"ISM_{token}_US"),
+        ("change", f"ISM_{token}_MOM_US"),
+    )
+}
+
+_ISM_REPORT_CONCEPT_MAP_DEFS: tuple[tuple[str, str, str, str, int, str, str], ...] = tuple(
+    (
+        f"ISM_{token}_{'MOM_' if measure == 'change' else ''}US",
+        "ism",
+        series_id,
+        _ism_family_id(survey, metric, measure),
+        1,
+        "primary",
+        f"ISM {name}{' month-over-month point change' if measure == 'change' else ''}",
+    )
+    for survey, metric, token, name in _ISM_REPORT_METRICS
+    for measure, series_id in (
+        ("index", f"ISM_{token}_US"),
+        ("change", f"ISM_{token}_MOM_US"),
+    )
+)
+
+_REDBOOK_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    "REDBOOK_RETAIL_SALES_YOY_US": (
+        "us.consumer.redbook_retail_sales_yoy",
+        "US Redbook Retail Sales YoY",
+        "percent",
+        "weekly",
+        "nsa",
+    ),
+}
+
+_REDBOOK_CONCEPT_MAP_DEFS: tuple[tuple[str, str, str, str, int, str, str], ...] = (
+    (
+        "REDBOOK_RETAIL_SALES_YOY_US",
+        "redbook",
+        "REDBOOK_RETAIL_SALES_YOY_US",
+        "us.consumer.redbook_retail_sales_yoy",
+        1,
+        "primary",
+        "Redbook Research weekly retail-sales year-over-year index",
+    ),
+)
+
+_SENTIX_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    "SENTIX_US_HEADLINE": (
+        "us.sentiment.sentix_headline",
+        "US Sentix Economic Index Headline",
+        "index",
+        "monthly",
+        "none",
+    ),
+    "SENTIX_US_CURRENT": (
+        "us.sentiment.sentix_current",
+        "US Sentix Economic Index Headline Current Situation",
+        "index",
+        "monthly",
+        "none",
+    ),
+    "SENTIX_US_EXPECTATIONS": (
+        "us.sentiment.sentix_expectations",
+        "US Sentix Economic Index Headline Expectations",
+        "index",
+        "monthly",
+        "none",
+    ),
+}
+
+_SENTIX_CONCEPT_MAP_DEFS: tuple[tuple[str, str, str, str, int, str, str], ...] = (
+    (
+        "SENTIX_US_HEADLINE",
+        "sentix",
+        "SENTIX_US_HEADLINE",
+        "us.sentiment.sentix_headline",
+        1,
+        "primary",
+        "sentix Economic Index USA headline, derived from headline current and expectations tickers",
+    ),
+    (
+        "SENTIX_US_CURRENT",
+        "sentix",
+        "SENTIX_US_CURRENT",
+        "us.sentiment.sentix_current",
+        1,
+        "primary",
+        "sentix Economic Index USA headline current situation ticker SNTEUSH0",
+    ),
+    (
+        "SENTIX_US_EXPECTATIONS",
+        "sentix",
+        "SENTIX_US_EXPECTATIONS",
+        "us.sentiment.sentix_expectations",
+        1,
+        "primary",
+        "sentix Economic Index USA headline expectations ticker SNTEUSH6",
+    ),
+)
 
 _OECD_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
@@ -233,6 +488,12 @@ _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
     ("istat",           "istat",           "Italian National Institute of Statistics","government_agency", "IT", "https://www.istat.it",                                      "https://www.istat.it/en/press-release"),
     ("bis",             "bis",             "Bank for International Settlements","data_aggregator",  "CH", "https://www.bis.org",                                           "https://stats.bis.org/api/v2"),
     ("ecb",             "ecb",             "European Central Bank",             "central_bank",     "EU", "https://www.ecb.europa.eu",                                      "https://data-api.ecb.europa.eu/service/data"),
+    ("bundesbank",      "bundesbank",      "Deutsche Bundesbank",               "central_bank",     "DE", "https://www.bundesbank.de",                                      "https://api.statistiken.bundesbank.de/rest"),
+    ("mof_jp",          "mof_jp",          "Japan Ministry of Finance",         "government_agency", "JP", "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/index.htm", "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/historical/jgbcme_all.csv"),
+    ("aisi",            "aisi",            "American Iron and Steel Institute", "data_aggregator",  "US", "https://www.steel.org/industry-data/",                            "https://www.steel.org/industry-data/"),
+    ("ism",             "ism",             "Institute for Supply Management",  "data_aggregator",  "US", "https://www.ismworld.org/supply-management-news-and-reports/reports/ism-pmi-reports/", "https://www.ismworld.org/supply-management-news-and-reports/reports/ism-pmi-reports/"),
+    ("redbook",         "redbook",         "Redbook Research Inc.",            "data_aggregator",  "US", "https://www.redbookresearch.com/",                              "https://api.tradingeconomics.com/historical/country/united%20states/indicator/redbook%20index"),
+    ("sentix",          "sentix",          "sentix GmbH",                     "data_aggregator",  "US", "https://www.sentix.de/",                                       "https://api.sentix.de/v1/data/timeseries"),
     ("oecd",            "oecd",            "Organisation for Economic Co-operation", "data_aggregator", "XX", "https://www.oecd.org",                                      "https://sdmx.oecd.org/public/rest/v2"),
     ("worldbank",       "worldbank",       "World Bank",                        "data_aggregator",  "XX", "https://www.worldbank.org",                                      "https://api.worldbank.org/v2"),
     ("bls",             "bls",             "Bureau of Labor Statistics",         "government_agency", "US", "https://www.bls.gov",                                            "https://api.bls.gov/publicAPI/v2"),
@@ -775,6 +1036,12 @@ class _IndicatorQueriesMixin:
             ("eurostat", _EUROSTAT_FAMILY_MAP),
             ("bis", _BIS_FAMILY_MAP),
             ("ecb", _ECB_FAMILY_MAP),
+            ("bundesbank", _BUNDESBANK_FAMILY_MAP),
+            ("mof_jp", _MOF_JGB_FAMILY_MAP),
+            ("aisi", _AISI_STEEL_FAMILY_MAP),
+            ("ism", _ISM_REPORT_FAMILY_MAP),
+            ("redbook", _REDBOOK_FAMILY_MAP),
+            ("sentix", _SENTIX_FAMILY_MAP),
             ("oecd", _OECD_FAMILY_MAP),
             ("worldbank", _WORLDBANK_FAMILY_MAP),
             ("bls", _BLS_FAMILY_MAP),
@@ -902,7 +1169,13 @@ class _IndicatorQueriesMixin:
         ("GDP_REAL_US",         "fred",           "GDPC1",          "us.growth.gdp_real",            1, "primary",     "SAAR, chained 2017$"),
         ("RETAIL_SALES_US",     "fred",           "RSAFS",          "us.growth.retail_sales",        1, "primary",     "SA"),
         ("INDPRO_US",           "fred",           "INDPRO",         "us.growth.industrial_production",1,"primary",    "SA, index"),
+        ("WEI_US",              "fred",           "WEI",            "us.growth.weekly_economic_index",1,"primary",    "Weekly Economic Index, NSA"),
         ("GDP_GROWTH_WB_US",    "worldbank",      "WB_GDP_GROWTH_US","us.growth.gdp_growth_wb",      1, "primary",     "Annual % growth"),
+        ("GSCPI_US",            "nyfed",          "NYFED_GSCPI",    "us.supply_chain.gscpi",          1, "primary",     "NY Fed Global Supply Chain Pressure Index"),
+        *_AISI_STEEL_CONCEPT_MAP_DEFS,
+        *_ISM_REPORT_CONCEPT_MAP_DEFS,
+        *_REDBOOK_CONCEPT_MAP_DEFS,
+        *_SENTIX_CONCEPT_MAP_DEFS,
         #
         # ── US Rates ─────────────────────────────────────────────────
         ("POLICY_RATE_US",      "nyfed",          "NYFED_EFFR",     "us.rates.effr",                 1, "primary",     "NY Fed EFFR"),
@@ -933,9 +1206,15 @@ class _IndicatorQueriesMixin:
         ("HY_OAS_US",           "fred",           "BAMLH0A0HYM2",  "us.credit.hy_oas",              1, "primary",     "ICE BofA HY OAS"),
         ("VIX_US",              "fred",           "VIXCLS",         "us.markets.vix",                1, "primary",     "CBOE VIX close, regime-classified via obs_enrichment"),
         ("CREDIT_GAP_US",       "bis",            "BIS_CREDIT_GAP_US","us.credit.gap",               1, "primary",     "Credit-to-GDP gap"),
+        ("GOV_LEVERAGE_US",     "bis",            "BIS_TC_GOV_US",  "us.credit.gov_leverage",        1, "primary",     "BIS Total Credit, general government debt/GDP"),
+        ("HOUSEHOLD_LEVERAGE_US","bis",           "BIS_TC_HH_US",   "us.credit.household_leverage",  1, "primary",     "BIS Total Credit, household debt/GDP"),
+        ("NFC_LEVERAGE_US",     "bis",            "BIS_TC_NFC_US",  "us.credit.nfc_leverage",        1, "primary",     "BIS Total Credit, NFC debt/GDP"),
         #
         # ── US Property ──────────────────────────────────────────────
         ("PROPERTY_US",         "bis",            "BIS_PROPERTY_US","us.property.real",              1, "primary",     "Real property prices"),
+        ("HOMEOWNERSHIP_RATE_US","fred",           "RHORUSQ156N",    "us.housing.homeownership_rate", 1, "primary",     "Census HVS, NSA"),
+        ("RENTAL_VACANCY_RATE_US","fred",          "RRVRUSQ156N",    "us.housing.rental_vacancy_rate",1, "primary",     "Census HVS, NSA"),
+        ("HOMEOWNER_VACANCY_RATE_US","fred",       "RHVRUSQ156N",    "us.housing.homeowner_vacancy_rate",1,"primary",   "Census HVS, NSA"),
         #
         # ── US Fiscal ────────────────────────────────────────────────
         ("DEBT_US",             "treasury_fiscal","TREAS_DEBT_TOTAL","us.fiscal.debt_outstanding",   1, "primary",     "Daily total debt"),
@@ -976,6 +1255,15 @@ class _IndicatorQueriesMixin:
         ("GDP_REAL_JP",         "imf",            "IMF_JP_GDP",     "jp.growth.gdp_real",            1, "primary",     "Real GDP LCU"),
         ("POLICY_RATE_JP",      "bis",            "BIS_POLICY_JP",  "jp.rates.policy_bis",           1, "primary",     "BOJ policy rate"),
         ("CLI_JP",              "oecd",           "OECD_CLI_JP",    "jp.leading.cli",                1, "primary",     "Composite leading indicator"),
+        *_MOF_JGB_CONCEPT_MAP_DEFS,
+        #
+        # ── Germany ─────────────────────────────────────────────────
+        ("DE_GOVT_2Y",          "bundesbank",     "BUNDESBANK_DE_GOVT_2Y", "de.rates.govt_2y",       1, "primary",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_5Y",          "bundesbank",     "BUNDESBANK_DE_GOVT_5Y", "de.rates.govt_5y",       1, "primary",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_7Y",          "bundesbank",     "BUNDESBANK_DE_GOVT_7Y", "de.rates.govt_7y",       1, "primary",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_10Y",         "bundesbank",     "BUNDESBANK_DE_GOVT_10Y", "de.rates.govt_10y",     1, "primary",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_15Y",         "bundesbank",     "BUNDESBANK_DE_GOVT_15Y", "de.rates.govt_15y",     1, "primary",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_30Y",         "bundesbank",     "BUNDESBANK_DE_GOVT_30Y", "de.rates.govt_30y",     1, "primary",     "Bundesbank current Federal securities yield"),
         #
         # ── Euro Area ────────────────────────────────────────────────
         ("CPI_EU",              "eurostat",       "ESTAT_HICP",     "eu.inflation.hicp",             1, "primary",     "Eurostat HICP YoY"),
@@ -1205,14 +1493,27 @@ class _IndicatorQueriesMixin:
             ]
 
     def list_concepts(self, *, country_code: str | None = None) -> list[str]:
-        """Return distinct concept_ids, optionally filtered by country suffix."""
+        """Return distinct concept_ids, optionally filtered by obs-family country."""
         with self._connection(commit=False) as connection:
             if country_code:
-                suffix = f"_{country_code.upper()}"
+                country = country_code.upper()
                 rows = connection.execute(
-                    "SELECT DISTINCT concept_id FROM concept_map "
-                    "WHERE concept_id LIKE ? ORDER BY concept_id",
-                    (f"%{suffix}",),
+                    """
+                    SELECT DISTINCT cm.concept_id
+                    FROM concept_map cm
+                    LEFT JOIN obs_family f ON f.family_id = cm.obs_family_id
+                    WHERE f.country_code = ?
+                       OR (
+                           f.family_id IS NULL
+                           AND (
+                               lower(cm.obs_family_id) LIKE ?
+                               OR cm.concept_id LIKE ? ESCAPE '\\'
+                               OR cm.concept_id LIKE ? ESCAPE '\\'
+                           )
+                       )
+                    ORDER BY cm.concept_id
+                    """,
+                    (country, f"{country.lower()}.%", f"{country}\\_%", f"%\\_{country}"),
                 ).fetchall()
             else:
                 rows = connection.execute(
@@ -1287,6 +1588,12 @@ class _IndicatorQueriesMixin:
             "eurostat": ("indicators", "source = ?", ("eurostat",), "scraped_at"),
             "bis": ("indicators", "source = ?", ("bis",), "scraped_at"),
             "ecb": ("indicators", "source = ?", ("ecb",), "scraped_at"),
+            "bundesbank": ("indicators", "source = ?", ("bundesbank",), "scraped_at"),
+            "mof_jp": ("indicators", "source = ?", ("mof_jp",), "scraped_at"),
+            "aisi": ("indicators", "source = ?", ("aisi",), "scraped_at"),
+            "ism": ("indicators", "source = ?", ("ism",), "scraped_at"),
+            "redbook": ("indicators", "source = ?", ("redbook",), "scraped_at"),
+            "sentix": ("indicators", "source = ?", ("sentix",), "scraped_at"),
             "oecd": ("indicators", "source = ?", ("oecd",), "scraped_at"),
             "worldbank": ("indicators", "source = ?", ("worldbank",), "scraped_at"),
             "nyfed_rates": ("indicators", "source = ?", ("nyfed",), "scraped_at"),

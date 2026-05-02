@@ -65,6 +65,11 @@ def _skip_on_api_error(func):
     return wrapper
 
 
+def _bis_version_kwargs(cfg: dict) -> dict[str, str]:
+    version = cfg.get("version")
+    return {"version": version} if version else {}
+
+
 # ── Fixtures ──────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
@@ -129,13 +134,15 @@ class TestStructureVerification:
         print(f"\n  BIS CBPOL: {len(structure.dimensions)} dims, IDs={list(dim_ids)}")
 
     def test_bis_structure_all_hardcoded(self, new_bis: NewBIS) -> None:
-        seen: set[str] = set()
+        seen: set[tuple[str, str]] = set()
         for name, cfg in BIS_SERIES.items():
             df_id = cfg["dataflow"]
-            if df_id in seen:
+            version = cfg.get("version", "")
+            key = (df_id, version)
+            if key in seen:
                 continue
-            seen.add(df_id)
-            structure = new_bis.get_datastructure(df_id)
+            seen.add(key)
+            structure = new_bis.get_datastructure(df_id, version or None)
             assert len(structure.dimensions) >= 2, f"{df_id}: expected >=2 dims"
             print(f"    {df_id}: {len(structure.dimensions)} dims ✓")
 
@@ -208,6 +215,7 @@ class TestDatasetCompleteness:
             obs = new_bis.get_data(
                 cfg["dataflow"], cfg["key"],
                 series_id=cfg["series_id"], limit=1,
+                **_bis_version_kwargs(cfg),
             )
             assert len(obs) >= 1, f"BIS {name}: expected >=1 obs, got {len(obs)}"
             print(f"    BIS {name}: {obs[0].date} = {obs[0].value} ✓")
@@ -299,6 +307,7 @@ class TestDataIntegrity:
             obs = new_bis.get_data(
                 cfg["dataflow"], cfg["key"],
                 series_id=cfg["series_id"], limit=5,
+                **_bis_version_kwargs(cfg),
             )
             for o in obs:
                 assert o.series_id == cfg["series_id"]
@@ -418,17 +427,19 @@ class TestSeriesCountValidation:
             print(f"  {df_id:<12} {est.total_series:<10} {dsd_product:<12} ✓")
 
     def test_bis_series_count_per_dataflow(self, new_bis: NewBIS) -> None:
-        seen: set[str] = set()
+        seen: set[tuple[str, str]] = set()
         print("\n  BIS series-count validation:")
         print(f"  {'Dataflow':<18} {'Probe':<10} {'DSD-est':<12} {'Status'}")
         print(f"  {'─' * 18} {'─' * 10} {'─' * 12} {'─' * 10}")
         for name, cfg in BIS_SERIES.items():
             df_id = cfg["dataflow"]
-            if df_id in seen:
+            version = cfg.get("version", "")
+            key = (df_id, version)
+            if key in seen:
                 continue
-            seen.add(df_id)
-            est = new_bis.estimate_size(df_id)
-            structure = new_bis.get_datastructure(df_id)
+            seen.add(key)
+            est = new_bis.estimate_size(df_id, version=version or "1.0")
+            structure = new_bis.get_datastructure(df_id, version or None)
             dsd_product = 1
             for d in structure.dimensions:
                 if not d.is_time and d.code_count > 0:
@@ -590,6 +601,7 @@ class TestAggregateReport:
                 obs = new_bis.get_data(
                     cfg["dataflow"], cfg["key"],
                     series_id=cfg["series_id"], limit=5,
+                    **_bis_version_kwargs(cfg),
                 )
                 ok = len(obs) >= 1
                 checks.append(CheckResult(
@@ -642,14 +654,19 @@ class TestAggregateReport:
             ("ecb", new_ecb, ECB_SERIES),
             ("bis", new_bis, BIS_SERIES),
         ]:
-            seen: set[str] = set()
+            seen: set[tuple[str, str]] = set()
             for cfg_name, cfg in series_cfg.items():
                 df_id = cfg["dataflow"]
-                if df_id in seen:
+                version = cfg.get("version", "") if provider_name == "bis" else ""
+                key = (df_id, version)
+                if key in seen:
                     continue
-                seen.add(df_id)
+                seen.add(key)
                 try:
-                    est = client.estimate_size(df_id)
+                    if provider_name == "bis":
+                        est = client.estimate_size(df_id, version=version or "1.0")
+                    else:
+                        est = client.estimate_size(df_id)
                     ok = est.total_series > 0
                     checks.append(CheckResult(
                         check_name=f"{provider_name}_{df_id}_series_count",

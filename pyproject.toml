@@ -15,6 +15,7 @@ dependencies = [
     "markdownify",
     "mmh3>=4.1.0",
     "numpy>=1.24",
+    "olefile",
     "openai>=1.10.0",
     "playwright",
     "playwright-stealth",

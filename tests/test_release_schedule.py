@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from ingestion.release_schedule import (
     _next_day_of_month,
     _next_weekday_of_month,
+    _next_business_day_of_month,
     _next_quarter_lag,
     _next_daily,
     _next_weekly,
@@ -92,6 +93,42 @@ class TestNextWeekdayOfMonth:
         assert result.weekday() == 4
 
 
+class TestNextBusinessDayOfMonth:
+    def test_fourth_business_day_future(self):
+        ref = datetime(2026, 4, 1, tzinfo=timezone.utc)
+        result = _next_business_day_of_month({"ordinal": 4}, ref)
+        assert result is not None
+        assert result.date().isoformat() == "2026-04-06"
+
+    def test_fourth_business_day_past(self):
+        ref = datetime(2026, 4, 7, tzinfo=timezone.utc)
+        result = _next_business_day_of_month({"ordinal": 4}, ref)
+        assert result is not None
+        assert result.date().isoformat() == "2026-05-06"
+
+    def test_fourth_business_day_uses_us_federal_holiday_calendar(self):
+        ref = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        result = _next_business_day_of_month(
+            {"ordinal": 4, "calendar": "us_federal"}, ref,
+        )
+        assert result is not None
+        assert result.date().isoformat() == "2026-01-07"
+
+    def test_local_release_time_converts_to_utc(self):
+        ref = datetime(2026, 5, 1, tzinfo=timezone.utc)
+        result = _next_business_day_of_month(
+            {
+                "ordinal": 4,
+                "calendar": "us_federal",
+                "time": "10:00",
+                "timezone": "America/New_York",
+            },
+            ref,
+        )
+        assert result is not None
+        assert result.isoformat() == "2026-05-06T14:00:00+00:00"
+
+
 class TestNextQuarterLag:
     def test_after_quarter_end(self):
         """ref Apr 1, lag=30 -> Apr 30 (Q1 end = Mar 31, + 30 = Apr 30)"""
@@ -126,6 +163,24 @@ class TestNextDaily:
         assert result.weekday() == 0  # Mon
         assert result.day == 23
 
+    def test_local_release_time_same_day(self):
+        ref = datetime(2026, 5, 1, 0, 1, tzinfo=timezone.utc)  # 09:01 JST Friday
+        result = _next_daily(
+            {"calendar": "japan", "time": "09:30", "timezone": "Asia/Tokyo"},
+            ref,
+        )
+        assert result is not None
+        assert result.isoformat() == "2026-05-01T00:30:00+00:00"
+
+    def test_local_release_time_skips_japan_public_holidays(self):
+        ref = datetime(2026, 5, 1, 0, 31, tzinfo=timezone.utc)  # after Friday release
+        result = _next_daily(
+            {"calendar": "japan", "time": "09:30", "timezone": "Asia/Tokyo"},
+            ref,
+        )
+        assert result is not None
+        assert result.isoformat() == "2026-05-07T00:30:00+00:00"
+
 
 class TestNextWeekly:
     def test_thursday_same_week(self):
@@ -143,6 +198,29 @@ class TestNextWeekly:
         assert result is not None
         assert result.day == 26  # next Thu
         assert result.weekday() == 3
+
+    def test_local_release_time_same_week(self):
+        ref = datetime(2026, 3, 16, 15, 0, tzinfo=timezone.utc)  # Mon 11:00 NY
+        result = _next_weekly(
+            {"weekday": 0, "time": "14:00", "timezone": "America/New_York"},
+            ref,
+        )
+        assert result is not None
+        assert result.isoformat() == "2026-03-16T18:00:00+00:00"
+
+    def test_local_release_time_rolls_across_us_holiday(self):
+        ref = datetime(2026, 5, 22, 20, 0, tzinfo=timezone.utc)
+        result = _next_weekly(
+            {
+                "calendar": "us_federal",
+                "weekday": 0,
+                "time": "14:00",
+                "timezone": "America/New_York",
+            },
+            ref,
+        )
+        assert result is not None
+        assert result.isoformat() == "2026-05-26T18:00:00+00:00"
 
 
 class TestNextFixedDates:

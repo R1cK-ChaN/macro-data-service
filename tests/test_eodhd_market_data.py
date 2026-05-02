@@ -116,9 +116,9 @@ def test_client_without_api_key_returns_empty_list() -> None:
 def test_seed_universe_upserts_global_instruments(store: SQLiteEngineStore) -> None:
     provider = EODHDMarketDataProvider(client=_mock_client(_sample_rows()))
     count = provider.seed_universe(store)
-    # 6 original (indices/ETF/equities) + 10 FX + 5 spot metals + 5 crypto
-    # added by issue #67 slice 1.
-    assert count == len(EODHD_GLOBAL_UNIVERSE) == 26
+    # 6 original (indices/ETF/equities) + 1 MOVE index + 10 GBOND rates
+    # + 10 FX + 5 spot metals + 5 crypto.
+    assert count == len(EODHD_GLOBAL_UNIVERSE) == 37
 
     nikkei = store.get_market_instrument("JP_NIKKEI225")
     assert nikkei is not None
@@ -143,6 +143,17 @@ def test_seed_universe_upserts_global_instruments(store: SQLiteEngineStore) -> N
     assert gold is not None
     assert gold.asset_class == "commodity"
     assert gold.provider_symbols_json == {"eodhd": "XAUUSD.FOREX"}
+
+    move = store.get_market_instrument("US_MOVE")
+    assert move is not None
+    assert move.asset_class == "index"
+    assert move.provider_symbols_json == {"eodhd": "MOVE.INDX"}
+
+    de10y = store.get_market_instrument("RATES_DE_10Y_GBOND")
+    assert de10y is not None
+    assert de10y.asset_class == "rate"
+    assert de10y.exchange_code == "GBOND"
+    assert de10y.provider_symbols_json == {"eodhd": "DE10Y.GBOND"}
 
 
 def test_refresh_market_history_persists_bars_and_flags(store: SQLiteEngineStore) -> None:
@@ -270,13 +281,11 @@ def test_universe_no_instrument_id_clash_with_macro_lane() -> None:
     assert eodhd_ids.isdisjoint(macro_ids)
 
 
-def test_refresh_market_history_no_corp_acts_flag_for_fx_crypto_metal(
+def test_refresh_market_history_clear_corp_acts_flag_for_continuous_quotes(
     store: SQLiteEngineStore,
 ) -> None:
-    """FX, crypto, and spot-metal bars must not carry the
-    ``has_missing_corp_acts`` or ``has_pre2018_delisted`` flags — these
-    are equity-only signals and surfacing them on continuous-tape
-    instruments would emit bogus warnings to downstream agents."""
+    """FX, crypto, spot-metal, and GBOND-rate bars carry clean
+    corp-action and equity-delisting quality flags."""
     provider = EODHDMarketDataProvider(
         client=_mock_client(_sample_rows()),
         request_sleep=0,
@@ -287,18 +296,20 @@ def test_refresh_market_history_no_corp_acts_flag_for_fx_crypto_metal(
         ("FX_EURUSD", "EURUSD.FOREX"),
         ("CRYPTO_BTC_USD", "BTC-USD.CC"),
         ("COMMOD_GOLD_SPOT", "XAUUSD.FOREX"),
+        ("RATES_DE_10Y_GBOND", "DE10Y.GBOND"),
+        ("US_MOVE", "MOVE.INDX"),
     ):
         provider.refresh_market_history(store, ticker)
         bars = store.list_market_price_bars(instrument_id)
         assert len(bars) == 3, f"no bars persisted for {instrument_id}"
-        assert all(not b.has_missing_corp_acts for b in bars), (
-            f"{instrument_id} bars should not be flagged corp_acts_missing"
+        assert all(b.has_missing_corp_acts is False for b in bars), (
+            f"{instrument_id} bars carry clear corp-action flags"
         )
-        assert all(not b.has_pre2018_delisted for b in bars), (
-            f"{instrument_id} bars should not be flagged pre2018_delisted"
+        assert all(b.has_pre2018_delisted is False for b in bars), (
+            f"{instrument_id} bars carry clear delisting flags"
         )
         assert all("corp_acts_missing" not in b.quality_flags_json for b in bars), (
-            f"{instrument_id} bars must not carry the corp_acts_missing JSON flag"
+            f"{instrument_id} bars carry empty corp-action JSON flags"
         )
 
     # Sanity: equity rows still flagged as before so the gate doesn't
@@ -308,6 +319,35 @@ def test_refresh_market_history_no_corp_acts_flag_for_fx_crypto_metal(
     assert all(b.has_missing_corp_acts for b in nikkei_bars), (
         "Index bars should still be flagged corp_acts_missing pending issue #67 slice 2"
     )
+
+
+def test_refresh_market_history_uses_rate_policy_for_gbond_yields(
+    store: SQLiteEngineStore,
+) -> None:
+    payload = [
+        {"date": "2020-01-02", "open": -0.55, "high": -0.50, "low": -0.60,
+         "close": -0.57, "adjusted_close": -0.57, "volume": 0},
+        {"date": "2020-01-03", "open": -0.01, "high": 0.03, "low": -0.02,
+         "close": 0.01, "adjusted_close": 0.01, "volume": 0},
+    ]
+    provider = EODHDMarketDataProvider(
+        client=_mock_client(payload),
+        request_sleep=0,
+    )
+    provider.seed_universe(store)
+    stats = provider.refresh_market_history(store, "DE10Y.GBOND")
+    assert stats.count == 2
+
+    bars = store.list_market_price_bars("RATES_DE_10Y_GBOND")
+    assert [b.date for b in bars] == ["2020-01-02", "2020-01-03"]
+    assert all(b.has_break_detected is False for b in bars)
+    assert all("ohlc_sanity" not in b.quality_flags_json for b in bars)
+    assert store.get_market_instrument("RATES_DE_10Y_GBOND").history_status == (
+        "provider_continuous"
+    )
+
+    rows = provider.get_market_history(store, "DE10Y.GBOND")
+    assert rows[-1]["agent_summary"].startswith("DE10Y yield closed at 0.010%")
 
 
 def test_refresh_market_history_break_detection_runs_for_continuous_tapes(
@@ -352,11 +392,14 @@ def test_corp_action_bearing_classes_include_etf_variants() -> None:
     quality flag."""
     from ingestion.market.clients._eodhd import (
         _CORP_ACTION_BEARING_ASSET_CLASSES,
+        _entry_carries_corp_actions,
     )
 
     assert "bond_etf" in _CORP_ACTION_BEARING_ASSET_CLASSES
     assert "commodity_etf" in _CORP_ACTION_BEARING_ASSET_CLASSES
     assert "equity_etf" in _CORP_ACTION_BEARING_ASSET_CLASSES
+    assert _entry_carries_corp_actions(EODHD_UNIVERSE_BY_TICKER["N225.INDX"]) is True
+    assert _entry_carries_corp_actions(EODHD_UNIVERSE_BY_TICKER["MOVE.INDX"]) is False
     # Negative invariants — non-corp-action-bearing classes must stay out.
     assert "fx" not in _CORP_ACTION_BEARING_ASSET_CLASSES
     assert "crypto" not in _CORP_ACTION_BEARING_ASSET_CLASSES
@@ -364,14 +407,35 @@ def test_corp_action_bearing_classes_include_etf_variants() -> None:
 
 
 def test_universe_new_asset_classes_present() -> None:
-    """Slice 1 adds 10 FX, 5 spot metals (asset_class=commodity), 5
-    crypto. Guard against accidental drops on future edits."""
+    """Guard against accidental drops on the EODHD workbook and global rows."""
     classes = [e.asset_class for e in EODHD_GLOBAL_UNIVERSE]
+    assert classes.count("index") == 4
+    assert classes.count("rate") == 10
     assert classes.count("fx") == 10
     assert classes.count("crypto") == 5
     # 5 spot metals; original universe had no commodity rows so the count
     # equals the slice-1 contribution.
     assert classes.count("commodity") == 5
+
+
+def test_universe_includes_workbook_move_and_gbond_tickers() -> None:
+    expected = {
+        "MOVE.INDX": ("US_MOVE", "index"),
+        "CN10Y.GBOND": ("RATES_CN_10Y_GBOND", "rate"),
+        "DE2Y.GBOND": ("RATES_DE_2Y_GBOND", "rate"),
+        "DE5Y.GBOND": ("RATES_DE_5Y_GBOND", "rate"),
+        "DE10Y.GBOND": ("RATES_DE_10Y_GBOND", "rate"),
+        "DE30Y.GBOND": ("RATES_DE_30Y_GBOND", "rate"),
+        "JP2Y.GBOND": ("RATES_JP_2Y_GBOND", "rate"),
+        "JP3Y.GBOND": ("RATES_JP_3Y_GBOND", "rate"),
+        "JP5Y.GBOND": ("RATES_JP_5Y_GBOND", "rate"),
+        "JP10Y.GBOND": ("RATES_JP_10Y_GBOND", "rate"),
+        "JP30Y.GBOND": ("RATES_JP_30Y_GBOND", "rate"),
+    }
+    for ticker, (instrument_id, asset_class) in expected.items():
+        entry = EODHD_UNIVERSE_BY_TICKER[ticker]
+        assert entry.instrument_id == instrument_id
+        assert entry.asset_class == asset_class
 
 
 def test_orchestrator_registers_eodhd_market_source(store: SQLiteEngineStore) -> None:

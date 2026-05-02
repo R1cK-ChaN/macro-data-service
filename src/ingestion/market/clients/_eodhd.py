@@ -84,12 +84,10 @@ class RefreshStats:
 
 
 # Asset classes that can carry corporate actions (dividends/splits) and
-# can be "delisted". FX, crypto, and spot metals are continuous-tape
-# instruments — there are no splits, no dividends, and the "pre-2018
-# delisted" probe doesn't apply. Bars for these asset classes must NOT
-# carry has_missing_corp_acts / has_pre2018_delisted flags, otherwise
-# downstream agents will surface bogus quality warnings on every FX /
-# crypto / spot-metal bar.
+# can be "delisted". FX, crypto, spot metals, GBOND rates, and quote-only
+# volatility indexes such as MOVE have empty corp-action and equity-delisting
+# semantics. Bars for these instruments carry clear has_missing_corp_acts /
+# has_pre2018_delisted flags so downstream agents surface clean quality context.
 #
 # bond_etf / commodity_etf are kept in the bearing set: bond ETFs make
 # regular distributions, and commodity ETFs do split. Indices are kept
@@ -100,6 +98,14 @@ class RefreshStats:
 _CORP_ACTION_BEARING_ASSET_CLASSES = frozenset({
     "equity", "equity_etf", "bond_etf", "commodity_etf", "index",
 })
+_QUOTE_ONLY_EODHD_TICKERS = frozenset({"MOVE.INDX"})
+
+
+def _entry_carries_corp_actions(entry: EODHDUniverseEntry) -> bool:
+    return (
+        entry.asset_class in _CORP_ACTION_BEARING_ASSET_CLASSES
+        and entry.eodhd_ticker not in _QUOTE_ONLY_EODHD_TICKERS
+    )
 
 
 class EODHDMarketDataProvider:
@@ -253,25 +259,28 @@ class EODHDMarketDataProvider:
         # don't "delist" in the equity sense — gate the equity-only flags
         # to corp-action-bearing asset classes so non-equity bars don't
         # surface bogus warnings to downstream agents.
-        carries_corp_actions = entry.asset_class in _CORP_ACTION_BEARING_ASSET_CLASSES
+        carries_corp_actions = _entry_carries_corp_actions(entry)
         # Break detection: run when adjustments are present (so the series
         # is comparable across corporate actions) OR when the series has
-        # no corporate actions to begin with — for FX/crypto/spot-metal
+        # no corporate actions to begin with. For FX/crypto/spot-metal
         # tapes a provider splice or scale jump still needs to surface as
         # has_break_detected, even though adjusted_close equals close
-        # because there's nothing to adjust for.
-        break_dates = (
-            detect_history_breaks(bars, threshold=self.break_threshold)
-            if adjustment_applied or not carries_corp_actions
-            else []
-        )
+        # because there's nothing to adjust for. Rate yields can cross zero,
+        # so they use rate-specific sanity and leave break detection to a
+        # basis-point-aware detector.
+        if entry.asset_class == "rate":
+            break_dates = []
+        elif adjustment_applied or not carries_corp_actions:
+            break_dates = detect_history_breaks(bars, threshold=self.break_threshold)
+        else:
+            break_dates = []
         break_set = set(break_dates)
 
         segment_id = f"{entry.instrument_id}:eodhd:{entry.eodhd_ticker}"
         count = 0
         for bar in bars:
             flags_json: dict[str, Any] = {}
-            if not check_ohlc_sanity(bar):
+            if not _check_eodhd_bar_sanity(entry, bar):
                 flags_json["ohlc_sanity"] = "failed"
             if not adjustment_applied:
                 flags_json["adjustment_check"] = "raw_only"
@@ -735,7 +744,25 @@ def _agent_summary(
         "stitched": "its history was stitched from multiple ticker segments",
         "manual_review": "its history is flagged for manual review",
     }.get(instrument.history_status, f"history_status={instrument.history_status}")
+    if instrument.asset_class == "rate":
+        return (
+            f"{instrument.primary_ticker} yield closed at {close:.3f}% "
+            f"on {bar.date}. {status_phrase[0].upper()}{status_phrase[1:]}."
+        )
     return (
         f"{instrument.primary_ticker} closed at {close:.2f} {instrument.currency} "
         f"on {bar.date}. {status_phrase[0].upper()}{status_phrase[1:]}."
     )
+
+
+def _check_eodhd_bar_sanity(
+    entry: EODHDUniverseEntry,
+    bar: EODHDDailyBar,
+) -> bool:
+    if entry.asset_class == "rate":
+        return (
+            bar.low <= bar.high
+            and bar.low <= bar.open <= bar.high
+            and bar.low <= bar.close <= bar.high
+        )
+    return check_ohlc_sanity(bar)

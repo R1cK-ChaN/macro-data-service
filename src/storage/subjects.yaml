@@ -87,6 +87,133 @@ subjects:
       title_regex:
         - '\bretail sales\b'
 
+  - id: econ.us.redbook
+    display: "US Redbook Retail Sales"
+    aliases:
+      redbook_series: [REDBOOK_RETAIL_SALES_YOY_US]
+      calendar_indicator: ["Redbook YoY", "Redbook Index", "Redbook"]
+      title_regex:
+        - '\bredbook\b'
+        - '\bredbook index\b'
+        - '\bweekly retail sales\b'
+
+  - id: econ.us.sentix
+    display: "US Sentix Economic Index"
+    aliases:
+      sentix_series:
+        - SENTIX_US_HEADLINE
+        - SENTIX_US_CURRENT
+        - SENTIX_US_EXPECTATIONS
+      calendar_indicator: ["Sentix Investor Confidence", "Sentix Economic Index", "Sentix Investors Sentiment"]
+      title_regex:
+        - '\bsentix\b'
+        - '\bsentix economic index\b'
+        - '\bsentix\b.*\binvestor confidence\b'
+
+  - id: econ.us.wei
+    display: "US Weekly Economic Index"
+    aliases:
+      fred_series: [WEI]
+      title_regex:
+        - '\bweekly economic index\b'
+        - '(?-i:\bWEI\b)'
+
+  - id: econ.us.gscpi
+    display: "Global Supply Chain Pressure Index"
+    aliases:
+      ny_fed_series: [GSCPI, NYFED_GSCPI]
+      title_regex:
+        - '\bglobal supply chain pressure index\b'
+        - '(?-i:\bGSCPI\b)'
+
+  - id: econ.us.ism_pmi
+    display: "US ISM PMI"
+    aliases:
+      ism_series:
+        - ISM_MFG_PMI_US
+        - ISM_MFG_PMI_MOM_US
+        - ISM_MFG_NEW_ORDERS_US
+        - ISM_MFG_NEW_ORDERS_MOM_US
+        - ISM_MFG_PRODUCTION_US
+        - ISM_MFG_PRODUCTION_MOM_US
+        - ISM_MFG_EMPLOYMENT_US
+        - ISM_MFG_EMPLOYMENT_MOM_US
+        - ISM_MFG_SUPPLIER_DELIVERIES_US
+        - ISM_MFG_SUPPLIER_DELIVERIES_MOM_US
+        - ISM_MFG_INVENTORIES_US
+        - ISM_MFG_INVENTORIES_MOM_US
+        - ISM_MFG_CUSTOMERS_INVENTORIES_US
+        - ISM_MFG_CUSTOMERS_INVENTORIES_MOM_US
+        - ISM_MFG_PRICES_US
+        - ISM_MFG_PRICES_MOM_US
+        - ISM_MFG_BACKLOG_OF_ORDERS_US
+        - ISM_MFG_BACKLOG_OF_ORDERS_MOM_US
+        - ISM_MFG_NEW_EXPORT_ORDERS_US
+        - ISM_MFG_NEW_EXPORT_ORDERS_MOM_US
+        - ISM_MFG_IMPORTS_US
+        - ISM_MFG_IMPORTS_MOM_US
+        - ISM_SERVICES_PMI_US
+        - ISM_SERVICES_PMI_MOM_US
+        - ISM_SERVICES_BUSINESS_ACTIVITY_US
+        - ISM_SERVICES_BUSINESS_ACTIVITY_MOM_US
+        - ISM_SERVICES_NEW_ORDERS_US
+        - ISM_SERVICES_NEW_ORDERS_MOM_US
+        - ISM_SERVICES_EMPLOYMENT_US
+        - ISM_SERVICES_EMPLOYMENT_MOM_US
+        - ISM_SERVICES_SUPPLIER_DELIVERIES_US
+        - ISM_SERVICES_SUPPLIER_DELIVERIES_MOM_US
+        - ISM_SERVICES_INVENTORIES_US
+        - ISM_SERVICES_INVENTORIES_MOM_US
+        - ISM_SERVICES_PRICES_US
+        - ISM_SERVICES_PRICES_MOM_US
+        - ISM_SERVICES_BACKLOG_OF_ORDERS_US
+        - ISM_SERVICES_BACKLOG_OF_ORDERS_MOM_US
+        - ISM_SERVICES_NEW_EXPORT_ORDERS_US
+        - ISM_SERVICES_NEW_EXPORT_ORDERS_MOM_US
+        - ISM_SERVICES_IMPORTS_US
+        - ISM_SERVICES_IMPORTS_MOM_US
+        - ISM_SERVICES_INVENTORY_SENTIMENT_US
+        - ISM_SERVICES_INVENTORY_SENTIMENT_MOM_US
+      calendar_indicator: ["ISM Manufacturing PMI", "ISM Services PMI", "ISM Non-Manufacturing PMI"]
+      title_regex:
+        - '\bISM\b.*\bPMI\b'
+        - '\bmanufacturing PMI\b'
+        - '\bservices PMI\b'
+        - '\bnon[- ]manufacturing PMI\b'
+
+  - id: industry.us.steel
+    display: "US Raw Steel Production"
+    aliases:
+      aisi_series:
+        - AISI_RAW_STEEL_PRODUCTION_US
+        - AISI_RAW_STEEL_WOW_US
+        - AISI_RAW_STEEL_YOY_US
+      title_regex:
+        - '\braw steel production\b'
+        - '\bsteel output\b'
+        - '\bsteel production\b'
+
+  - id: housing.us.homeownership
+    display: "US Homeownership Rate"
+    aliases:
+      fred_series: [RHORUSQ156N]
+      title_regex:
+        - '\bhomeownership rate\b'
+
+  - id: housing.us.rental_vacancy
+    display: "US Rental Vacancy Rate"
+    aliases:
+      fred_series: [RRVRUSQ156N]
+      title_regex:
+        - '\brental vacancy rate\b'
+
+  - id: housing.us.homeowner_vacancy
+    display: "US Homeowner Vacancy Rate"
+    aliases:
+      fred_series: [RHVRUSQ156N]
+      title_regex:
+        - '\bhomeowner vacancy rate\b'
+
   # ----- Central bank rates -----
 
   - id: rate.us.fed_funds
@@ -140,6 +267,45 @@ subjects:
         - '\b10[- ]?year (?:treasury|yield|note)\b'
         - '\bten[- ]year (?:treasury|yield|note)\b'
         - '\b10Y\b'
+
+  - id: rate.de.govt
+    display: "Germany Government Yields"
+    aliases:
+      bundesbank_series:
+        - BUNDESBANK_DE_GOVT_2Y
+        - BUNDESBANK_DE_GOVT_5Y
+        - BUNDESBANK_DE_GOVT_7Y
+        - BUNDESBANK_DE_GOVT_10Y
+        - BUNDESBANK_DE_GOVT_15Y
+        - BUNDESBANK_DE_GOVT_30Y
+      calendar_indicator: []
+      title_regex:
+        - '\b(?:german|germany)\s+(?:government\s+)?(?:bond|bund)\s+yield'
+        - '\bBund(?:esanleihe)?\b'
+
+  - id: rate.jp.govt
+    display: "Japan Government Yields"
+    aliases:
+      mof_jp_series:
+        - MOF_JP_GOVT_1Y
+        - MOF_JP_GOVT_2Y
+        - MOF_JP_GOVT_3Y
+        - MOF_JP_GOVT_4Y
+        - MOF_JP_GOVT_5Y
+        - MOF_JP_GOVT_6Y
+        - MOF_JP_GOVT_7Y
+        - MOF_JP_GOVT_8Y
+        - MOF_JP_GOVT_9Y
+        - MOF_JP_GOVT_10Y
+        - MOF_JP_GOVT_15Y
+        - MOF_JP_GOVT_20Y
+        - MOF_JP_GOVT_25Y
+        - MOF_JP_GOVT_30Y
+        - MOF_JP_GOVT_40Y
+      calendar_indicator: []
+      title_regex:
+        - '\b(?:japan|japanese)\s+(?:government\s+)?bond\s+yield'
+        - '\bJGB(?:s)?\b'
 
   # ----- Reference rates (NY Fed) -----
 

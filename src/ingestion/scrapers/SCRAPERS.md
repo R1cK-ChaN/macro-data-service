@@ -460,6 +460,7 @@ Markets API (`markets.newyorkfed.org`).
 | `fetch_effr(last_n=5)` | `list[NYFedRate]` | Last N EFFR observations |
 | `fetch_obfr(last_n=5)` | `list[NYFedRate]` | Last N OBFR observations |
 | `fetch_all_rates(last_n=5)` | `list[NYFedRate]` | All three rate types with 0.5 s delay between |
+| `fetch_gscpi(last_n=30)` | `list[NYFedGSCPI]` | NY Fed Global Supply Chain Pressure Index workbook observations |
 
 **`NYFedRate` fields:**
 
@@ -476,8 +477,17 @@ Markets API (`markets.newyorkfed.org`).
 | `target_rate_from` | `float \| None` | `4.25` (EFFR only) |
 | `target_rate_to` | `float \| None` | `4.50` (EFFR only) |
 
+**`NYFedGSCPI` fields:**
+
+| Field | Type | Example |
+|-------|------|---------|
+| `date` | `str` | `"2026-03-31"` |
+| `value` | `float` | `0.6769936396` |
+
 **Storage:** Upserted into `indicators` table as `NYFED_SOFR`,
-`NYFED_EFFR`, `NYFED_OBFR` series (source `nyfed`), value = rate.
+`NYFED_EFFR`, `NYFED_OBFR`, and `NYFED_GSCPI` series (source `nyfed`).
+Rate-series values are percent rates; `NYFED_GSCPI` values are the NY Fed
+standard-deviation index levels from `gscpi_data.xlsx`.
 
 ---
 
@@ -1106,6 +1116,9 @@ JP, CN, and GB.
 | `BIS_EER_EU` | WS_EER | M.R.B.XM | EU Real Effective Exchange Rate |
 | `BIS_CREDIT_GAP_US` | WS_CREDIT_GAP | Q.US.P | US Credit-to-GDP Gap |
 | `BIS_CREDIT_GAP_CN` | WS_CREDIT_GAP | Q.CN.P | CN Credit-to-GDP Gap |
+| `BIS_TC_GOV_US` | WS_TC v2.0 | Q.US.G.A.N.770.A | US General Government Leverage |
+| `BIS_TC_HH_US` | WS_TC v2.0 | Q.US.H.A.M.770.A | US Household Leverage |
+| `BIS_TC_NFC_US` | WS_TC v2.0 | Q.US.N.A.M.770.A | US Non-Financial Corporation Leverage |
 | `BIS_PROPERTY_US` | WS_SPP | Q.R.US | US Real Property Prices |
 | `BIS_PROPERTY_CN` | WS_SPP | Q.R.CN | CN Real Property Prices |
 

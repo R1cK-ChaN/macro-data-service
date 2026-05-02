@@ -144,8 +144,9 @@ class ResolvedObservation:
 @dataclass(frozen=True)
 class ReleaseScheduleRecord:
     concept_id: str           # PK, FK to concept_map
-    rule_type: str            # "day_of_month", "weekday_of_month", "quarter_lag",
-                              # "daily", "weekly", "fixed_dates", "approximate_window"
+    rule_type: str            # "day_of_month", "weekday_of_month",
+                              # "business_day_of_month", "quarter_lag", "daily",
+                              # "weekly", "fixed_dates", "approximate_window"
     rule_json: dict[str, Any] # type-specific params
     frequency: str            # "daily", "weekly", "monthly", "quarterly", "annual"
     release_time_utc: str     # "12:30", "14:00", "" if unknown

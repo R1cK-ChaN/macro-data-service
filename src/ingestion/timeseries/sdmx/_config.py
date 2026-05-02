@@ -70,3 +70,9 @@ OECD_CONFIG = SDMXProviderConfig(
     base_url="https://sdmx.oecd.org/public/rest",
     default_agency="OECD.SDD.STES",
 )
+
+BUNDESBANK_CONFIG = SDMXProviderConfig(
+    provider_name="Bundesbank",
+    base_url="https://api.statistiken.bundesbank.de/rest",
+    default_agency="BBK",
+)

@@ -8,6 +8,7 @@ from ._base_client import SDMXClient
 from ._base_ingestion_client import SDMXIngestionClient
 from ._config import (
     BIS_CONFIG,
+    BUNDESBANK_CONFIG,
     ECB_CONFIG,
     EUROSTAT_CONFIG,
     ILO_CONFIG,
@@ -19,6 +20,8 @@ from ._config import (
 from ._errors import (
     BISAPIError,
     BISRateLimitError,
+    BundesbankAPIError,
+    BundesbankRateLimitError,
     ECBAPIError,
     ECBRateLimitError,
     EurostatAPIError,
@@ -62,6 +65,8 @@ __all__ = [
     "SDMXRateLimitError",
     "BISAPIError",
     "BISRateLimitError",
+    "BundesbankAPIError",
+    "BundesbankRateLimitError",
     "ECBAPIError",
     "ECBRateLimitError",
     "EurostatAPIError",
@@ -76,6 +81,7 @@ __all__ = [
     "UNSDRateLimitError",
     # Configs
     "BIS_CONFIG",
+    "BUNDESBANK_CONFIG",
     "ECB_CONFIG",
     "EUROSTAT_CONFIG",
     "ILO_CONFIG",

@@ -27,6 +27,9 @@ class EurostatRateLimitError(EurostatAPIError, SDMXRateLimitError): pass  # noqa
 class ECBAPIError(SDMXAPIError): pass          # noqa: E701
 class ECBRateLimitError(ECBAPIError, SDMXRateLimitError): pass  # noqa: E701
 
+class BundesbankAPIError(SDMXAPIError): pass   # noqa: E701
+class BundesbankRateLimitError(BundesbankAPIError, SDMXRateLimitError): pass  # noqa: E701
+
 class UNSDAPIError(SDMXAPIError): pass         # noqa: E701
 class UNSDRateLimitError(UNSDAPIError, SDMXRateLimitError): pass  # noqa: E701
 

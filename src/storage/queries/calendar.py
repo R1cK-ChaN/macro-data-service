@@ -39,6 +39,159 @@ from storage.models.indicator import (
     ReleaseStatusRecord,
 )
 
+_MOF_JGB_MATURITIES = (
+    "1Y", "2Y", "3Y", "4Y", "5Y", "6Y", "7Y", "8Y", "9Y",
+    "10Y", "15Y", "20Y", "25Y", "30Y", "40Y",
+)
+
+_MOF_JGB_RELEASE_SCHEDULE_DEFS: tuple[tuple[str, str, dict[str, Any], str, str, str, str, str], ...] = tuple(
+    (
+        f"JP_GOVT_{maturity}",
+        "daily",
+        {"calendar": "japan", "time": "09:30", "timezone": "Asia/Tokyo"},
+        "daily",
+        "00:30",
+        "Asia/Tokyo",
+        "pattern",
+        "MOF JGB interest rates next business day 09:30 JST",
+    )
+    for maturity in _MOF_JGB_MATURITIES
+)
+
+_AISI_STEEL_RELEASE_SCHEDULE_DEFS: tuple[tuple[str, str, dict[str, Any], str, str, str, str, str], ...] = (
+    (
+        "RAW_STEEL_PRODUCTION_US",
+        "weekly",
+        {
+            "calendar": "us_federal",
+            "weekday": 0,
+            "time": "14:00",
+            "timezone": "America/New_York",
+        },
+        "weekly",
+        "14:00",
+        "America/New_York",
+        "pattern",
+        "AISI weekly raw steel production usually updates Monday afternoon",
+    ),
+    (
+        "RAW_STEEL_PRODUCTION_WOW_US",
+        "weekly",
+        {
+            "calendar": "us_federal",
+            "weekday": 0,
+            "time": "14:00",
+            "timezone": "America/New_York",
+        },
+        "weekly",
+        "14:00",
+        "America/New_York",
+        "pattern",
+        "AISI weekly raw steel production usually updates Monday afternoon",
+    ),
+    (
+        "RAW_STEEL_PRODUCTION_YOY_US",
+        "weekly",
+        {
+            "calendar": "us_federal",
+            "weekday": 0,
+            "time": "14:00",
+            "timezone": "America/New_York",
+        },
+        "weekly",
+        "14:00",
+        "America/New_York",
+        "pattern",
+        "AISI weekly raw steel production usually updates Monday afternoon",
+    ),
+)
+
+_ISM_REPORT_METRICS: tuple[tuple[str, str, str], ...] = (
+    ("manufacturing", "MFG_PMI", "Manufacturing PMI"),
+    ("manufacturing", "MFG_NEW_ORDERS", "Manufacturing New Orders"),
+    ("manufacturing", "MFG_PRODUCTION", "Manufacturing Production"),
+    ("manufacturing", "MFG_EMPLOYMENT", "Manufacturing Employment"),
+    ("manufacturing", "MFG_SUPPLIER_DELIVERIES", "Manufacturing Supplier Deliveries"),
+    ("manufacturing", "MFG_INVENTORIES", "Manufacturing Inventories"),
+    ("manufacturing", "MFG_CUSTOMERS_INVENTORIES", "Manufacturing Customers' Inventories"),
+    ("manufacturing", "MFG_PRICES", "Manufacturing Prices"),
+    ("manufacturing", "MFG_BACKLOG_OF_ORDERS", "Manufacturing Backlog of Orders"),
+    ("manufacturing", "MFG_NEW_EXPORT_ORDERS", "Manufacturing New Export Orders"),
+    ("manufacturing", "MFG_IMPORTS", "Manufacturing Imports"),
+    ("services", "SERVICES_PMI", "Services PMI"),
+    ("services", "SERVICES_BUSINESS_ACTIVITY", "Services Business Activity"),
+    ("services", "SERVICES_NEW_ORDERS", "Services New Orders"),
+    ("services", "SERVICES_EMPLOYMENT", "Services Employment"),
+    ("services", "SERVICES_SUPPLIER_DELIVERIES", "Services Supplier Deliveries"),
+    ("services", "SERVICES_INVENTORIES", "Services Inventories"),
+    ("services", "SERVICES_PRICES", "Services Prices"),
+    ("services", "SERVICES_BACKLOG_OF_ORDERS", "Services Backlog of Orders"),
+    ("services", "SERVICES_NEW_EXPORT_ORDERS", "Services New Export Orders"),
+    ("services", "SERVICES_IMPORTS", "Services Imports"),
+    ("services", "SERVICES_INVENTORY_SENTIMENT", "Services Inventory Sentiment"),
+)
+
+_ISM_REPORT_RELEASE_SCHEDULE_DEFS: tuple[tuple[str, str, dict[str, Any], str, str, str, str, str], ...] = tuple(
+    (
+        f"ISM_{token}_{'MOM_' if measure == 'change' else ''}US",
+        "business_day_of_month",
+        {
+            "calendar": "us_federal",
+            "ordinal": 1 if survey == "manufacturing" else 3,
+            "time": "10:00",
+            "timezone": "America/New_York",
+        },
+        "monthly",
+        "10:00",
+        "America/New_York",
+        "pattern",
+        f"ISM {name} official report release",
+    )
+    for survey, token, name in _ISM_REPORT_METRICS
+    for measure in ("index", "change")
+)
+
+_REDBOOK_RELEASE_SCHEDULE_DEFS: tuple[tuple[str, str, dict[str, Any], str, str, str, str, str], ...] = (
+    (
+        "REDBOOK_RETAIL_SALES_YOY_US",
+        "weekly",
+        {
+            "calendar": "us_federal",
+            "weekday": 1,
+            "time": "08:55",
+            "timezone": "America/New_York",
+        },
+        "weekly",
+        "08:55",
+        "America/New_York",
+        "pattern",
+        "Redbook weekly index public release Tuesday morning",
+    ),
+)
+
+_SENTIX_RELEASE_SCHEDULE_DEFS: tuple[tuple[str, str, dict[str, Any], str, str, str, str, str], ...] = tuple(
+    (
+        concept_id,
+        "weekday_of_month",
+        {
+            "ordinal": 1,
+            "weekday": 4,
+            "time": "10:00",
+            "timezone": "Europe/Berlin",
+        },
+        "monthly",
+        "10:00",
+        "Europe/Berlin",
+        "pattern",
+        "sentix Economic Index monthly first-week cycle",
+    )
+    for concept_id in (
+        "SENTIX_US_HEADLINE",
+        "SENTIX_US_CURRENT",
+        "SENTIX_US_EXPECTATIONS",
+    )
+)
+
 
 def _calendar_corp_raw_at_or_before_with_conn(
     connection: sqlite3.Connection,
@@ -1759,7 +1912,13 @@ class _CalendarQueriesMixin:
         ("GDP_REAL_US",         "quarter_lag",      {"lag_days": 30},                       "quarterly","12:30", "America/New_York", "pattern", "BEA advance GDP ~T+30"),
         ("RETAIL_SALES_US",     "day_of_month",     {"day": 15, "tolerance_days": 3},       "monthly",  "12:30", "America/New_York", "pattern", "Census ~15th"),
         ("INDPRO_US",           "day_of_month",     {"day": 16, "tolerance_days": 3},       "monthly",  "13:15", "America/New_York", "pattern", "Fed ~16th"),
+        ("WEI_US",              "weekly",           {"weekday": 3},                         "weekly",   "",      "",                 "pattern", "FRED WEI weekly Thursday"),
         ("GDP_GROWTH_WB_US",    "approximate_window", {"month_offset": 6, "window_days": 60}, "annual",  "",     "",                 "approximate", "World Bank annual"),
+        ("GSCPI_US",            "business_day_of_month", {"ordinal": 4, "calendar": "us_federal", "time": "10:00", "timezone": "America/New_York"}, "monthly",  "10:00", "America/New_York", "pattern", "NY Fed GSCPI fourth business day"),
+        *_AISI_STEEL_RELEASE_SCHEDULE_DEFS,
+        *_ISM_REPORT_RELEASE_SCHEDULE_DEFS,
+        *_REDBOOK_RELEASE_SCHEDULE_DEFS,
+        *_SENTIX_RELEASE_SCHEDULE_DEFS,
         # ── US Rates ──────────────────────────────────────────────────
         ("POLICY_RATE_US",      "daily",            {},                                     "daily",    "",      "",                 "pattern", "NY Fed EFFR daily"),
         ("SOFR_US",             "daily",            {},                                     "daily",    "",      "",                 "pattern", "SOFR daily"),
@@ -1780,8 +1939,14 @@ class _CalendarQueriesMixin:
         # ── US Credit ─────────────────────────────────────────────────
         ("HY_OAS_US",           "daily",            {},                                     "daily",    "",      "",                 "pattern", "ICE BofA daily"),
         ("CREDIT_GAP_US",       "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
+        ("GOV_LEVERAGE_US",     "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS Total Credit quarterly lag"),
+        ("HOUSEHOLD_LEVERAGE_US","approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",   "",                 "approximate", "BIS Total Credit quarterly lag"),
+        ("NFC_LEVERAGE_US",     "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS Total Credit quarterly lag"),
         # ── US Property ───────────────────────────────────────────────
         ("PROPERTY_US",         "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
+        ("HOMEOWNERSHIP_RATE_US","quarter_lag",      {"lag_days": 28},                       "quarterly","10:00", "America/New_York", "pattern", "Census HVS quarterly"),
+        ("RENTAL_VACANCY_RATE_US","quarter_lag",     {"lag_days": 28},                       "quarterly","10:00", "America/New_York", "pattern", "Census HVS quarterly"),
+        ("HOMEOWNER_VACANCY_RATE_US","quarter_lag",  {"lag_days": 28},                       "quarterly","10:00", "America/New_York", "pattern", "Census HVS quarterly"),
         # ── US Fiscal ─────────────────────────────────────────────────
         ("DEBT_US",             "daily",            {},                                     "daily",    "",      "",                 "pattern", "Treasury daily"),
         ("AVG_INTEREST_RATE_US","day_of_month",     {"day": 1, "tolerance_days": 5},        "monthly",  "",      "",                 "pattern", "Treasury ~1st"),
@@ -1815,6 +1980,14 @@ class _CalendarQueriesMixin:
         ("GDP_REAL_JP",         "approximate_window", {"month_offset": 3, "window_days": 30}, "quarterly","",    "",                 "approximate", "IMF quarterly lag"),
         ("POLICY_RATE_JP",      "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
         ("CLI_JP",              "monthly_lag",      {"lag_months": 2, "day": 10, "tolerance_days": 15}, "monthly","",  "",           "approximate", "OECD CLI ~2 month lag"),
+        *_MOF_JGB_RELEASE_SCHEDULE_DEFS,
+        # ── Germany Rates ────────────────────────────────────────────
+        ("DE_GOVT_2Y",          "daily",            {},                                     "daily",    "",      "",                 "pattern",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_5Y",          "daily",            {},                                     "daily",    "",      "",                 "pattern",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_7Y",          "daily",            {},                                     "daily",    "",      "",                 "pattern",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_10Y",         "daily",            {},                                     "daily",    "",      "",                 "pattern",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_15Y",         "daily",            {},                                     "daily",    "",      "",                 "pattern",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_30Y",         "daily",            {},                                     "daily",    "",      "",                 "pattern",     "Bundesbank current Federal securities yield"),
         # ── Euro Area ─────────────────────────────────────────────────
         ("CPI_EU",              "monthly_lag",      {"lag_months": 1, "day": 15, "tolerance_days": 10}, "monthly","",  "",           "pattern",     "Eurostat HICP flash ~15th"),
         ("GDP_EU",              "monthly_lag",      {"lag_months": 1, "day": 15, "tolerance_days": 10}, "monthly","",  "",           "pattern",     "Eurostat GDP ~45 day lag"),

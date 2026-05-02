@@ -79,6 +79,12 @@ def test_tagger_title_regex(store: SQLiteEngineStore) -> None:
     assert hits == [("econ.cpi", TITLE_CONFIDENCE)]
     hits = tagger.tag_text("Nonfarm payrolls beat forecasts")
     assert ("econ.us.nfp", TITLE_CONFIDENCE) in hits
+    hits = tagger.tag_text("WEI improves as weekly activity firms")
+    assert ("econ.us.wei", TITLE_CONFIDENCE) in hits
+    hits = tagger.tag_text("Wei says China demand remains soft")
+    assert ("econ.us.wei", TITLE_CONFIDENCE) not in hits
+    hits = tagger.tag_text("GSCPI points to firmer supply chain pressure")
+    assert ("econ.us.gscpi", TITLE_CONFIDENCE) in hits
 
 
 def test_tagger_structured_alias(store: SQLiteEngineStore) -> None:
@@ -93,6 +99,9 @@ def test_tagger_structured_alias(store: SQLiteEngineStore) -> None:
     # NY Fed series (information-layer addition)
     assert tagger.tag_alias("ny_fed_series", "SOFR") == [
         ("rate.us.sofr", STRUCTURED_CONFIDENCE)
+    ]
+    assert tagger.tag_alias("ny_fed_series", "NYFED_GSCPI") == [
+        ("econ.us.gscpi", STRUCTURED_CONFIDENCE)
     ]
     # Calendar indicator (case-insensitive)
     assert tagger.tag_alias("calendar_indicator", "core cpi") == [
@@ -116,6 +125,72 @@ def test_tagger_structured_dedups_across_alias_types(
     assert hits == [("econ.cpi", STRUCTURED_CONFIDENCE)]
 
 
+def test_tagger_structured_resolves_bundesbank_series(
+    store: SQLiteEngineStore,
+) -> None:
+    sync_from_yaml(store)
+    with store._connection(commit=False) as c:
+        tagger = SubjectTagger(c)
+    assert tagger.tag_structured(
+        bundesbank_series="BUNDESBANK_DE_GOVT_10Y",
+    ) == [("rate.de.govt", STRUCTURED_CONFIDENCE)]
+
+
+def test_tagger_structured_resolves_mof_jp_series(
+    store: SQLiteEngineStore,
+) -> None:
+    sync_from_yaml(store)
+    with store._connection(commit=False) as c:
+        tagger = SubjectTagger(c)
+    assert tagger.tag_structured(
+        mof_jp_series="MOF_JP_GOVT_10Y",
+    ) == [("rate.jp.govt", STRUCTURED_CONFIDENCE)]
+
+
+def test_tagger_structured_resolves_aisi_series(
+    store: SQLiteEngineStore,
+) -> None:
+    sync_from_yaml(store)
+    with store._connection(commit=False) as c:
+        tagger = SubjectTagger(c)
+    assert tagger.tag_structured(
+        aisi_series="AISI_RAW_STEEL_PRODUCTION_US",
+    ) == [("industry.us.steel", STRUCTURED_CONFIDENCE)]
+
+
+def test_tagger_structured_resolves_ism_series(
+    store: SQLiteEngineStore,
+) -> None:
+    sync_from_yaml(store)
+    with store._connection(commit=False) as c:
+        tagger = SubjectTagger(c)
+    assert tagger.tag_structured(
+        ism_series="ISM_SERVICES_PMI_US",
+    ) == [("econ.us.ism_pmi", STRUCTURED_CONFIDENCE)]
+
+
+def test_tagger_structured_resolves_redbook_series(
+    store: SQLiteEngineStore,
+) -> None:
+    sync_from_yaml(store)
+    with store._connection(commit=False) as c:
+        tagger = SubjectTagger(c)
+    assert tagger.tag_structured(
+        redbook_series="REDBOOK_RETAIL_SALES_YOY_US",
+    ) == [("econ.us.redbook", STRUCTURED_CONFIDENCE)]
+
+
+def test_tagger_structured_resolves_sentix_series(
+    store: SQLiteEngineStore,
+) -> None:
+    sync_from_yaml(store)
+    with store._connection(commit=False) as c:
+        tagger = SubjectTagger(c)
+    assert tagger.tag_structured(
+        sentix_series="SENTIX_US_HEADLINE",
+    ) == [("econ.us.sentix", STRUCTURED_CONFIDENCE)]
+
+
 @pytest.mark.parametrize(
     "concept_id, expected_subject",
     [
@@ -125,6 +200,11 @@ def test_tagger_structured_dedups_across_alias_types(
         ("UNEMP_US", "econ.unemployment"),
         ("GDP_REAL_US", "econ.gdp"),
         ("RETAIL_SALES_US", "econ.retail_sales"),
+        ("WEI_US", "econ.us.wei"),
+        ("GSCPI_US", "econ.us.gscpi"),
+        ("HOMEOWNERSHIP_RATE_US", "housing.us.homeownership"),
+        ("RENTAL_VACANCY_RATE_US", "housing.us.rental_vacancy"),
+        ("HOMEOWNER_VACANCY_RATE_US", "housing.us.homeowner_vacancy"),
         ("TREASURY_2Y_US", "rate.us.2y"),
         ("TREASURY_10Y_US", "rate.us.10y"),
         ("DOLLAR_INDEX_US", "fx.dxy"),
@@ -137,6 +217,18 @@ def test_tagger_structured_dedups_across_alias_types(
         # NY Fed bridges (the dual-form alias fix)
         ("SOFR_US", "rate.us.sofr"),
         ("OBFR_US", "rate.us.obfr"),
+        # Bundesbank bridges
+        ("DE_GOVT_10Y", "rate.de.govt"),
+        # Japan MOF bridges
+        ("JP_GOVT_10Y", "rate.jp.govt"),
+        # AISI bridges
+        ("RAW_STEEL_PRODUCTION_US", "industry.us.steel"),
+        # ISM bridges
+        ("ISM_MFG_PMI_US", "econ.us.ism_pmi"),
+        # Redbook bridges
+        ("REDBOOK_RETAIL_SALES_YOY_US", "econ.us.redbook"),
+        # Sentix bridges
+        ("SENTIX_US_HEADLINE", "econ.us.sentix"),
     ],
 )
 def test_resolve_subjects_for_concept_bridges_vocabularies(
