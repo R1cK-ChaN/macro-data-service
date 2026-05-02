@@ -169,6 +169,29 @@ _REDBOOK_RELEASE_SCHEDULE_DEFS: tuple[tuple[str, str, dict[str, Any], str, str, 
     ),
 )
 
+_SENTIX_RELEASE_SCHEDULE_DEFS: tuple[tuple[str, str, dict[str, Any], str, str, str, str, str], ...] = tuple(
+    (
+        concept_id,
+        "weekday_of_month",
+        {
+            "ordinal": 1,
+            "weekday": 4,
+            "time": "10:00",
+            "timezone": "Europe/Berlin",
+        },
+        "monthly",
+        "10:00",
+        "Europe/Berlin",
+        "pattern",
+        "sentix Economic Index monthly first-week cycle",
+    )
+    for concept_id in (
+        "SENTIX_US_HEADLINE",
+        "SENTIX_US_CURRENT",
+        "SENTIX_US_EXPECTATIONS",
+    )
+)
+
 
 def _calendar_corp_raw_at_or_before_with_conn(
     connection: sqlite3.Connection,
@@ -1895,6 +1918,7 @@ class _CalendarQueriesMixin:
         *_AISI_STEEL_RELEASE_SCHEDULE_DEFS,
         *_ISM_REPORT_RELEASE_SCHEDULE_DEFS,
         *_REDBOOK_RELEASE_SCHEDULE_DEFS,
+        *_SENTIX_RELEASE_SCHEDULE_DEFS,
         # ── US Rates ──────────────────────────────────────────────────
         ("POLICY_RATE_US",      "daily",            {},                                     "daily",    "",      "",                 "pattern", "NY Fed EFFR daily"),
         ("SOFR_US",             "daily",            {},                                     "daily",    "",      "",                 "pattern", "SOFR daily"),

@@ -180,6 +180,17 @@ def test_tagger_structured_resolves_redbook_series(
     ) == [("econ.us.redbook", STRUCTURED_CONFIDENCE)]
 
 
+def test_tagger_structured_resolves_sentix_series(
+    store: SQLiteEngineStore,
+) -> None:
+    sync_from_yaml(store)
+    with store._connection(commit=False) as c:
+        tagger = SubjectTagger(c)
+    assert tagger.tag_structured(
+        sentix_series="SENTIX_US_HEADLINE",
+    ) == [("econ.us.sentix", STRUCTURED_CONFIDENCE)]
+
+
 @pytest.mark.parametrize(
     "concept_id, expected_subject",
     [
@@ -216,6 +227,8 @@ def test_tagger_structured_resolves_redbook_series(
         ("ISM_MFG_PMI_US", "econ.us.ism_pmi"),
         # Redbook bridges
         ("REDBOOK_RETAIL_SALES_YOY_US", "econ.us.redbook"),
+        # Sentix bridges
+        ("SENTIX_US_HEADLINE", "econ.us.sentix"),
     ],
 )
 def test_resolve_subjects_for_concept_bridges_vocabularies(

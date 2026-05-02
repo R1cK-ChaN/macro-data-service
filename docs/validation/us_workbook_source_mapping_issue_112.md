@@ -2,7 +2,7 @@
 
 Date: 2026-05-01
 Issue: #112
-Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings; NY Fed GSCPI mapping; Bundesbank Germany yield mappings; Japan MOF JGB yield mappings; AISI weekly steel mappings; ISM official PMI report mappings; Redbook weekly retail-sales mappings
+Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings; NY Fed GSCPI mapping; Bundesbank Germany yield mappings; Japan MOF JGB yield mappings; AISI weekly steel mappings; ISM official PMI report mappings; Redbook weekly retail-sales mappings; sentix Economic Index US mappings
 
 The inspected US workbook is a coverage sample for finding omitted fields. Source
 grouping here follows the indicator's economic meaning, official publisher,
@@ -150,5 +150,19 @@ release-schedule seeding, subject alias resolution, source discovery,
 country-scoped validation, New York release-time conversion, and the
 orchestrator save path into `indicators` and `obs_raw`.
 
-Remaining source groups for later slices: Sentix US, SOFR-OIS, and exact
-Wind/Bloomberg parity.
+## sentix Economic Index US Rows
+
+| Indicator/source group | Authorized feed | Source ticker(s) | Series id | Concept id | Obs family |
+| --- | --- | --- | --- | --- | --- |
+| US sentix investor-confidence headline | sentix Data REST API, SNTE Economic Index package | `SNTEUSH0`, `SNTEUSH6` average | `SENTIX_US_HEADLINE` | `SENTIX_US_HEADLINE` | `us.sentiment.sentix_headline` |
+| US sentix headline current situation | sentix Data REST API, SNTE Economic Index package | `SNTEUSH0` | `SENTIX_US_CURRENT` | `SENTIX_US_CURRENT` | `us.sentiment.sentix_current` |
+| US sentix headline expectations | sentix Data REST API, SNTE Economic Index package | `SNTEUSH6` | `SENTIX_US_EXPECTATIONS` | `SENTIX_US_EXPECTATIONS` | `us.sentiment.sentix_expectations` |
+
+Focused tests cover official ticker parsing, JWT-auth request shape, sanitized
+request errors, headline derivation from current/expectations, fetcher output,
+raw snapshot hashing, obs-family seeding, concept-map seeding, release-schedule
+seeding, subject alias resolution, source discovery, country-scoped validation,
+and the orchestrator save path into `indicators` and `obs_raw`.
+
+Remaining source groups for later slices: SOFR-OIS and exact Wind/Bloomberg
+parity.

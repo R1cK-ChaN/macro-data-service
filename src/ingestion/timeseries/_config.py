@@ -26,6 +26,7 @@ __all__ = [
     "AISI_WEEKLY_STEEL_SERIES",
     "ISM_REPORT_SERIES",
     "REDBOOK_SERIES",
+    "SENTIX_SERIES",
     "OECD_DEFAULT_AGENCY_ID", "OECDSeriesConfig",
     "_slugify_oecd_token", "_generated_oecd_series_id", "_generated_oecd_config_key",
     "render_oecd_series_configs", "OECD_SERIES",
@@ -892,6 +893,37 @@ REDBOOK_SERIES = {
         "name": "US Redbook Retail Sales YoY",
         "category": "consumer",
         "unit": "percent",
+    },
+}
+
+SENTIX_SERIES = {
+    "sentix_us_headline": {
+        "series_id": "SENTIX_US_HEADLINE",
+        "name": "US Sentix Economic Index Headline",
+        "category": "sentiment",
+        "unit": "index",
+        "country": "USA",
+        "family": "SNTE",
+        "component_tickers": ("SNTEUSH0", "SNTEUSH6"),
+        "formula": "average",
+    },
+    "sentix_us_current": {
+        "series_id": "SENTIX_US_CURRENT",
+        "name": "US Sentix Economic Index Headline Current Situation",
+        "category": "sentiment",
+        "unit": "index",
+        "country": "USA",
+        "family": "SNTE",
+        "source_ticker": "SNTEUSH0",
+    },
+    "sentix_us_expectations": {
+        "series_id": "SENTIX_US_EXPECTATIONS",
+        "name": "US Sentix Economic Index Headline Expectations",
+        "category": "sentiment",
+        "unit": "index",
+        "country": "USA",
+        "family": "SNTE",
+        "source_ticker": "SNTEUSH6",
     },
 }
 

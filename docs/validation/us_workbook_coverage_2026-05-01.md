@@ -16,9 +16,9 @@ Coverage definitions:
 - missing: no configured source path found in repo scan
 
 Field counts:
-- connected: 113
+- connected: 116
 - partial: 282
-- missing: 6
+- missing: 3
 - total extracted unique fields: 401
 
 Input source labels:
@@ -32,13 +32,14 @@ fetcher output, and schedule/vintage handling are wired.
 
 ## Evidence From Repo
 
-- Source capability adapters are registered for FRED, BLS, EIA, Treasury Fiscal, NY Fed rates/research, Japan MOF JGB rates, AISI weekly steel, ISM official PMI reports, Redbook Research weekly retail sales, market watchlist, OECD, World Bank, Eurostat, ECB, IMF, BIS, Census, and BEA. Exact Wind/Bloomberg source parity requires licensed adapters.
+- Source capability adapters are registered for FRED, BLS, EIA, Treasury Fiscal, NY Fed rates/research, Japan MOF JGB rates, AISI weekly steel, ISM official PMI reports, Redbook Research weekly retail sales, sentix Economic Index, market watchlist, OECD, World Bank, Eurostat, ECB, IMF, BIS, Census, and BEA. Exact Wind/Bloomberg source parity requires licensed adapters.
 - FRED configured macro series include CPI/core CPI/core PCE, NFP, unemployment, claims, GDP, real GDP, retail sales, industrial production, 2Y/10Y/30Y Treasury, 10Y real yield, 10Y-2Y spread, Fed balance sheet, M2, reverse repo, TGA, broad dollar, CNY/USD, HY OAS, and VIX.
 - BLS configured series include headline CPI/core/food/energy/shelter, PPI/core PPI, NFP/private payrolls, average hourly earnings, average weekly hours, unemployment, LFPR, JOLTS openings/hires/quits, ECI, productivity, and unit labor costs.
 - BEA configs cover NIPA GDP summary/contributions/real GDP/PCE/personal income plus ITA current-account and goods-balance datasets; latest sync for arbitrary BEA datasets remains a follow-up.
 - The market watchlist covers DXY, USD/JPY, USD/CNY, VIX, 5Y/10Y/30Y Treasury proxies, and WTI.
 - ISM official report coverage includes Manufacturing and Services PMI headline, subcomponent indexes, and month-over-month point changes.
 - Redbook Research weekly retail-sales YoY is configured through the authorized Trading Economics historical feed with Redbook source attribution.
+- sentix Economic Index US headline, current situation, and expectations are configured through the official sentix Data REST API.
 
 ## Coverage By Sheet
 
@@ -51,7 +52,7 @@ fetcher output, and schedule/vintage handling are wired.
 | 季度数据 | 8 | 3 | 0 |
 | 德国国债 | 6 | 0 | 0 |
 | 日本国债 | 7 | 0 | 0 |
-| 月度数据 | 11 | 29 | 3 |
+| 月度数据 | 14 | 29 | 0 |
 | 汇率 | 5 | 12 | 0 |
 | 流动性SOFR-OIS | 1 | 0 | 1 |
 | 美债 | 5 | 6 | 0 |
@@ -70,6 +71,7 @@ fetcher output, and schedule/vintage handling are wired.
 | BLS CPI/labor detail | partial | BLS connector and headline series exist; detailed CPI weights/components, seasonal food/energy components, payroll industries, race unemployment, U1-U6, and detailed JOLTS ids need config mapping. |
 | ISM PMI | connected | ISM Manufacturing and Services PMI report metrics are configured through official ISM report pages. |
 | Redbook weekly retail sales | connected | Redbook Research weekly YoY index is configured through the authorized Trading Economics historical feed. |
+| Sentix US investor confidence | connected | sentix official SNTE US headline current/expectations tickers and derived headline path are configured through the sentix Data REST API. |
 | Treasury curve | partial | 2Y/5Y proxy/10Y/30Y/10Y real/10Y-2Y are configured; additional maturities and TIPS tenors need series additions. |
 | FX | partial | DXY, broad dollar, EUR/USD, USD/CNY, and USD/JPY are covered; dollar sub-indexes and additional FX pairs need configured series/watchlist entries. |
 | Global sovereign yields | partial | Germany yield series are configured through Bundesbank BBSSY. Japan yield series are configured through MOF JGB interest-rate CSV. China official parity path remains open. |
@@ -93,7 +95,7 @@ Current coverage status remains a repo-configuration finding. A field marked mis
 | Redbook weekly YoY | Redbook Research via authorized Trading Economics historical feed | Connected in issue #112 slice 9 through Redbook weekly retail-sales YoY config, obs-family, concept-map, release-schedule, subject aliases, and raw snapshots. |
 | Weekly raw steel production | AISI weekly raw steel production page | Connected in issue #112 slice 7 through AISI official weekly raw steel production page for weekly value, WoW, and YoY fields, obs-family, concept-map, release-schedule, subject aliases, and raw snapshots. |
 | ISM manufacturing/services subcomponents | ISM official PMI report pages | Connected in issue #112 slice 8 through official report parsing for Manufacturing and Services headline, subcomponent indexes, point changes, obs-family, concept-map, release-schedule, subject aliases, and raw snapshots. |
-| Sentix US current/expectations/headline | Sentix official account or authorized data vendor | Decide authorized source and add connector/config. |
+| Sentix US current/expectations/headline | sentix official SNTE Economic Index via sentix Data REST API | Connected in issue #112 slice 10 through `SNTEUSH0`, `SNTEUSH6`, derived headline, obs-family, concept-map, release-schedule, subject aliases, and raw snapshots. |
 | SOFR-OIS / `USSOC BGN Curncy` | Bloomberg BGN or licensed SOFR OIS curve vendor | Store as a rates-market quote/curve series with raw snapshots. |
 
 EODHD remains a market/quote source for exchange, FX, index, GBOND, and related quote-style observations. Canonical economic ingestion uses official sources with vintage/as-of support where available, or repo-owned raw snapshots from first ingestion onward.
@@ -110,4 +112,4 @@ The liquidity fields in the coverage sample are connected through existing FRED/
 
 Full field-level map: `docs/validation/us_workbook_coverage_2026-05-01.csv`
 
-Recommended implementation sequence: decide authorized Sentix US source. Licensed-source decisions remain for Sentix US, SOFR-OIS, and exact Wind/Bloomberg parity.
+Recommended implementation sequence: decide licensed SOFR-OIS curve path. Licensed-source decisions remain for SOFR-OIS and exact Wind/Bloomberg parity.

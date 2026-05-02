@@ -97,6 +97,19 @@ subjects:
         - '\bredbook index\b'
         - '\bweekly retail sales\b'
 
+  - id: econ.us.sentix
+    display: "US Sentix Economic Index"
+    aliases:
+      sentix_series:
+        - SENTIX_US_HEADLINE
+        - SENTIX_US_CURRENT
+        - SENTIX_US_EXPECTATIONS
+      calendar_indicator: ["Sentix Investor Confidence", "Sentix Economic Index", "Sentix Investors Sentiment"]
+      title_regex:
+        - '\bsentix\b'
+        - '\bsentix economic index\b'
+        - '\bsentix\b.*\binvestor confidence\b'
+
   - id: econ.us.wei
     display: "US Weekly Economic Index"
     aliases:

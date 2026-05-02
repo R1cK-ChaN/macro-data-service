@@ -226,9 +226,9 @@ Wind/workbook label,美国:ISM:非制造业PMI:进口:环比增加,美国ISM制�
 Wind/workbook label,美国:M2:季调:同比,月度数据!R4C78,connected,fred:M2SL,M2 base series is configured; growth transforms can be computed downstream.
 Wind/workbook label,美国:M2:季调:环比,月度数据!R4C77,connected,fred:M2SL,M2 base series is configured; growth transforms can be computed downstream.
 Wind/workbook label,美国:PCE:当月同比,月度数据!R4C37,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source paths exist; this exact field needs scheduled timeseries sync.
-Wind/workbook label,美国:Sentix投资信心指数,月度数据!R4C66,missing,,Sentix source connector is absent.
-Wind/workbook label,美国:Sentix投资信心指数:核心现状指数,月度数据!R4C67,missing,,Sentix source connector is absent.
-Wind/workbook label,美国:Sentix投资信心指数:核心预期指数,月度数据!R4C68,missing,,Sentix source connector is absent.
+Wind/workbook label,美国:Sentix投资信心指数,月度数据!R4C66,connected,sentix:SENTIX_US_HEADLINE,sentix official SNTE US headline path is configured through the sentix Data REST API.
+Wind/workbook label,美国:Sentix投资信心指数:核心现状指数,月度数据!R4C67,connected,sentix:SENTIX_US_CURRENT,sentix official SNTE US headline current-situation ticker SNTEUSH0 is configured.
+Wind/workbook label,美国:Sentix投资信心指数:核心预期指数,月度数据!R4C68,connected,sentix:SENTIX_US_EXPECTATIONS,sentix official SNTE US headline expectations ticker SNTEUSH6 is configured.
 Wind/workbook label,美国:个人总支出:个人消费支出:季调:折年数:环比,月度数据!R4C4,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source paths exist; this exact field needs scheduled timeseries sync.
 Wind/workbook label,美国:个人总收入:季调:折年数:环比,月度数据!R4C2,partial,bea:NIPA/ITA; imf:IMF_GLOBAL_TRADE,Equivalent official source paths exist; this exact field needs scheduled timeseries sync.
 Wind/workbook label,美国:中小企业乐观指数:季调,月度数据!R4C74,partial,fred source available,FRED source exists; NFIB series is absent from configured MACRO_SERIES.

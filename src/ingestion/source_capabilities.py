@@ -534,6 +534,7 @@ class SourceCapabilityManager:
             MACRO_WATCHLIST,
             MOF_JGB_SERIES,
             REDBOOK_SERIES,
+            SENTIX_SERIES,
             TREASURY_DATASETS,
             UNSD_SERIES,
             VINTAGE_SERIES,
@@ -1254,6 +1255,17 @@ class SourceCapabilityManager:
             is_default_scheduled=True,
             discover=_nyfed_entities,
             sync_latest=lambda entity_ids, limit: _run_job("nyfed_rates"),
+        )
+        adapters["sentix"] = SourceCapabilityAdapter(
+            source_id="sentix",
+            display_name="sentix Economic Index",
+            source_type="fixed-scope-complete",
+            entity_type="series",
+            description="Configured sentix Economic Index API series",
+            notes="Requires sentix Data REST API credentials and SNTE subscription.",
+            is_default_scheduled=True,
+            discover=_configured_entities("sentix", "series", SENTIX_SERIES),
+            sync_latest=lambda entity_ids, limit: _run_job("sentix"),
         )
         adapters["gov_reports"] = SourceCapabilityAdapter(
             source_id="gov_reports",

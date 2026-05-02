@@ -256,6 +256,34 @@ def redbook_content_hash(payload: dict[str, Any]) -> str:
     return _hash_canonical(canonicalize_redbook_payload(payload))
 
 
+# ── sentix Economic Index ────────────────────────────────────────────────
+
+def canonicalize_sentix_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize sentix Economic Index observations."""
+    observations = payload.get("observations") or []
+    cleaned = [
+        {"date": row.get("date"), "value": row.get("value")}
+        for row in observations
+        if isinstance(row, dict)
+    ]
+    cleaned.sort(key=lambda row: (row.get("date") or "", str(row.get("value") or "")))
+    return json.dumps(
+        {
+            "series_id": payload.get("series_id", ""),
+            "source_ticker": payload.get("source_ticker", ""),
+            "component_tickers": payload.get("component_tickers", []),
+            "formula": payload.get("formula", ""),
+            "observations": cleaned,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def sentix_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_sentix_payload(payload))
+
+
 # ── Dispatch ──────────────────────────────────────────────────────────────
 
 _HASH_BY_SOURCE = {
@@ -273,6 +301,7 @@ _HASH_BY_SOURCE = {
     "aisi": aisi_content_hash,
     "ism": ism_content_hash,
     "redbook": redbook_content_hash,
+    "sentix": sentix_content_hash,
 }
 
 

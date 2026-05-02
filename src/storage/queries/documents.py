@@ -944,6 +944,7 @@ class _DocumentsQueriesMixin:
         "aisi_series": "aisi",
         "ism_series": "ism",
         "redbook_series": "redbook",
+        "sentix_series": "sentix",
         "ny_fed_series": "nyfed",
         "fedwatch_series": "rateprobability",
         "imf_series": "imf",

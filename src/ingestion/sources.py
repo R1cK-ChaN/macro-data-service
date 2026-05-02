@@ -36,6 +36,7 @@ from ingestion.timeseries.sdmx.providers.eurostat import EurostatClient
 from ingestion.timeseries.scrapers.aisi import AISIClient
 from ingestion.timeseries.scrapers.ism import ISMClient
 from ingestion.timeseries.scrapers.redbook import RedbookClient
+from ingestion.timeseries.scrapers.sentix import SentixClient
 from ingestion.timeseries.scrapers.fred import FredClient
 from ingestion.timeseries.sdmx.providers.imf import IMFClient
 from ingestion.timeseries.sdmx._errors import OECDRateLimitError
@@ -135,6 +136,7 @@ from ingestion.timeseries._config import (  # noqa: E402
     OECD_SERIES,
     OECDSeriesConfig,
     REDBOOK_SERIES,
+    SENTIX_SERIES,
     TREASURY_DATASETS,
     UNSD_SERIES,
     VINTAGE_SERIES,
@@ -213,6 +215,7 @@ SOURCE_FAMILIES: dict[str, str] = {
     "aisi": "economic_data",
     "ism": "economic_data",
     "redbook": "economic_data",
+    "sentix": "economic_data",
     "oecd": "economic_data",
     "worldbank": "economic_data",
     "worldbank_catalog": "economic_data",
@@ -321,6 +324,7 @@ class IngestionOrchestrator:
         aisi: AISIClient | None = None,
         ism: ISMClient | None = None,
         redbook: RedbookClient | None = None,
+        sentix: SentixClient | None = None,
         oecd: OECDIngestionClient | None = None,
         worldbank: WorldBankIngestionClient | None = None,
         validation_engine: Any | None = None,
@@ -354,6 +358,7 @@ class IngestionOrchestrator:
         self.aisi = aisi or AISIClient()
         self.ism = ism or ISMClient()
         self.redbook = redbook or RedbookClient()
+        self.sentix = sentix or SentixClient()
         self.oecd = oecd or OECDIngestionClient()
         self.worldbank = worldbank or WorldBankIngestionClient()
         self._obs_seeded = False
@@ -459,6 +464,7 @@ class IngestionOrchestrator:
             self._build_aisi_source(),
             self._build_ism_source(),
             self._build_redbook_source(),
+            self._build_sentix_source(),
             self._build_oecd_source(),
             self._build_worldbank_source(),
             self._build_worldbank_catalog_source(),
@@ -494,6 +500,7 @@ class IngestionOrchestrator:
             "aisi",
             "ism",
             "redbook",
+            "sentix",
             "oecd",
             "worldbank",
             "worldbank_catalog",
@@ -1160,6 +1167,13 @@ class IngestionOrchestrator:
             RedbookFetcher(client=self.redbook, series_config=REDBOOK_SERIES),
         )
 
+    def _build_sentix_source(self) -> IngestionSourceDefinition:
+        from ingestion.fetchers._sentix import SentixFetcher
+        return self._build_fetcher_source(
+            "sentix",
+            SentixFetcher(client=self.sentix, series_config=SENTIX_SERIES),
+        )
+
     def _build_oecd_source(self) -> IngestionSourceDefinition:
         from ingestion.fetchers._oecd import OECDFetcher
         return self._build_fetcher_source(
@@ -1207,6 +1221,7 @@ class IngestionOrchestrator:
         "aisi": "aisi",
         "ism": "ism",
         "redbook": "redbook",
+        "sentix": "sentix",
         "oecd": "oecd",
         "worldbank": "worldbank",
     }
@@ -1222,6 +1237,7 @@ class IngestionOrchestrator:
         from ingestion.fetchers._nyfed import NYFedFetcher
         from ingestion.fetchers._oecd import OECDFetcher
         from ingestion.fetchers._redbook import RedbookFetcher
+        from ingestion.fetchers._sentix import SentixFetcher
         from ingestion.fetchers._sdmx import SDMXFetcher
         from ingestion.fetchers._treasury import TreasuryFetcher
         from ingestion.fetchers._worldbank import WorldBankFetcher
@@ -1274,6 +1290,11 @@ class IngestionOrchestrator:
             fetcher = RedbookFetcher(
                 client=self.redbook,
                 series_config=REDBOOK_SERIES,
+            )
+        elif source_id == "sentix":
+            fetcher = SentixFetcher(
+                client=self.sentix,
+                series_config=SENTIX_SERIES,
             )
         elif source_id == "oecd":
             fetcher = OECDFetcher(client=self.oecd.client)

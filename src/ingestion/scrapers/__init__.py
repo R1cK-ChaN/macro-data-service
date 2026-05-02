@@ -148,6 +148,18 @@ from .redbook import (
     RedbookObservation,
     parse_redbook_historical_rows,
 )
+from .sentix import (
+    SENTIX_API_BASE_URL,
+    SENTIX_AUTH_PATH,
+    SENTIX_HOMEPAGE_URL,
+    SENTIX_TIMESERIES_PATH,
+    SentixAPIError,
+    SentixAuthError,
+    SentixClient,
+    SentixObservation,
+    SentixSeriesRow,
+    parse_sentix_timeseries,
+)
 from .wsj import WSJArticle, WSJArticleClient, WSJNewsClient
 from .gov_report import GovReportClient, GovReportItem
 from .mof_jgb import MOFJGBClient, MOFJGBObservation, parse_jgb_interest_rate_csv
@@ -260,6 +272,10 @@ __all__ = [
     "RedbookAuthError",
     "RedbookHistoricalRow",
     "RedbookObservation",
+    "SentixAPIError",
+    "SentixAuthError",
+    "SentixObservation",
+    "SentixSeriesRow",
     "RedditTrendPost",
     "ScrapedIndicator",
     "ScrapedMarketQuote",
@@ -319,6 +335,7 @@ __all__ = [
     "MOFJGBClient",
     "OECDClient",
     "RedbookClient",
+    "SentixClient",
     "TreasuryFiscalClient",
     "UNSDClient",
     "WorldBankClient",
@@ -331,6 +348,11 @@ __all__ = [
     "discover_current_report_urls",
     "parse_ism_report_page",
     "parse_redbook_historical_rows",
+    "parse_sentix_timeseries",
+    "SENTIX_API_BASE_URL",
+    "SENTIX_AUTH_PATH",
+    "SENTIX_HOMEPAGE_URL",
+    "SENTIX_TIMESERIES_PATH",
     "parse_weekly_raw_steel_page",
     "parse_jgb_interest_rate_csv",
 ]

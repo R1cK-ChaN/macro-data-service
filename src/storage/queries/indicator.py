@@ -353,6 +353,60 @@ _REDBOOK_CONCEPT_MAP_DEFS: tuple[tuple[str, str, str, str, int, str, str], ...] 
     ),
 )
 
+_SENTIX_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    "SENTIX_US_HEADLINE": (
+        "us.sentiment.sentix_headline",
+        "US Sentix Economic Index Headline",
+        "index",
+        "monthly",
+        "none",
+    ),
+    "SENTIX_US_CURRENT": (
+        "us.sentiment.sentix_current",
+        "US Sentix Economic Index Headline Current Situation",
+        "index",
+        "monthly",
+        "none",
+    ),
+    "SENTIX_US_EXPECTATIONS": (
+        "us.sentiment.sentix_expectations",
+        "US Sentix Economic Index Headline Expectations",
+        "index",
+        "monthly",
+        "none",
+    ),
+}
+
+_SENTIX_CONCEPT_MAP_DEFS: tuple[tuple[str, str, str, str, int, str, str], ...] = (
+    (
+        "SENTIX_US_HEADLINE",
+        "sentix",
+        "SENTIX_US_HEADLINE",
+        "us.sentiment.sentix_headline",
+        1,
+        "primary",
+        "sentix Economic Index USA headline, derived from headline current and expectations tickers",
+    ),
+    (
+        "SENTIX_US_CURRENT",
+        "sentix",
+        "SENTIX_US_CURRENT",
+        "us.sentiment.sentix_current",
+        1,
+        "primary",
+        "sentix Economic Index USA headline current situation ticker SNTEUSH0",
+    ),
+    (
+        "SENTIX_US_EXPECTATIONS",
+        "sentix",
+        "SENTIX_US_EXPECTATIONS",
+        "us.sentiment.sentix_expectations",
+        1,
+        "primary",
+        "sentix Economic Index USA headline expectations ticker SNTEUSH6",
+    ),
+)
+
 _OECD_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
     "OECD_CLI_US":           ("us.leading.cli",             "US Composite Leading Indicator",  "index",   "monthly", "none"),
@@ -439,6 +493,7 @@ _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
     ("aisi",            "aisi",            "American Iron and Steel Institute", "data_aggregator",  "US", "https://www.steel.org/industry-data/",                            "https://www.steel.org/industry-data/"),
     ("ism",             "ism",             "Institute for Supply Management",  "data_aggregator",  "US", "https://www.ismworld.org/supply-management-news-and-reports/reports/ism-pmi-reports/", "https://www.ismworld.org/supply-management-news-and-reports/reports/ism-pmi-reports/"),
     ("redbook",         "redbook",         "Redbook Research Inc.",            "data_aggregator",  "US", "https://www.redbookresearch.com/",                              "https://api.tradingeconomics.com/historical/country/united%20states/indicator/redbook%20index"),
+    ("sentix",          "sentix",          "sentix GmbH",                     "data_aggregator",  "US", "https://www.sentix.de/",                                       "https://api.sentix.de/v1/data/timeseries"),
     ("oecd",            "oecd",            "Organisation for Economic Co-operation", "data_aggregator", "XX", "https://www.oecd.org",                                      "https://sdmx.oecd.org/public/rest/v2"),
     ("worldbank",       "worldbank",       "World Bank",                        "data_aggregator",  "XX", "https://www.worldbank.org",                                      "https://api.worldbank.org/v2"),
     ("bls",             "bls",             "Bureau of Labor Statistics",         "government_agency", "US", "https://www.bls.gov",                                            "https://api.bls.gov/publicAPI/v2"),
@@ -986,6 +1041,7 @@ class _IndicatorQueriesMixin:
             ("aisi", _AISI_STEEL_FAMILY_MAP),
             ("ism", _ISM_REPORT_FAMILY_MAP),
             ("redbook", _REDBOOK_FAMILY_MAP),
+            ("sentix", _SENTIX_FAMILY_MAP),
             ("oecd", _OECD_FAMILY_MAP),
             ("worldbank", _WORLDBANK_FAMILY_MAP),
             ("bls", _BLS_FAMILY_MAP),
@@ -1119,6 +1175,7 @@ class _IndicatorQueriesMixin:
         *_AISI_STEEL_CONCEPT_MAP_DEFS,
         *_ISM_REPORT_CONCEPT_MAP_DEFS,
         *_REDBOOK_CONCEPT_MAP_DEFS,
+        *_SENTIX_CONCEPT_MAP_DEFS,
         #
         # ── US Rates ─────────────────────────────────────────────────
         ("POLICY_RATE_US",      "nyfed",          "NYFED_EFFR",     "us.rates.effr",                 1, "primary",     "NY Fed EFFR"),
@@ -1536,6 +1593,7 @@ class _IndicatorQueriesMixin:
             "aisi": ("indicators", "source = ?", ("aisi",), "scraped_at"),
             "ism": ("indicators", "source = ?", ("ism",), "scraped_at"),
             "redbook": ("indicators", "source = ?", ("redbook",), "scraped_at"),
+            "sentix": ("indicators", "source = ?", ("sentix",), "scraped_at"),
             "oecd": ("indicators", "source = ?", ("oecd",), "scraped_at"),
             "worldbank": ("indicators", "source = ?", ("worldbank",), "scraped_at"),
             "nyfed_rates": ("indicators", "source = ?", ("nyfed",), "scraped_at"),
