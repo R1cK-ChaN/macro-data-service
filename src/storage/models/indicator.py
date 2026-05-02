@@ -145,6 +145,10 @@ class ResolvedObservation:
     alternates: int = 0         # how many other sources also had this date
     vintage: str = "initial"    # "initial", "revised", or "unknown"
     revision_count: int = 0     # number of vintage entries for this obs date
+    # ``native`` (timeseries via indicators view / indicator_vintages) or
+    # ``calendar`` (issue #114 P3 fallback — synthesised from
+    # ``cal_econ_event.actual`` when the latest projection is sparse).
+    provenance: str = "native"
 
 
 @dataclass(frozen=True)

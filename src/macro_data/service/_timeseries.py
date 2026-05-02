@@ -146,7 +146,8 @@ class TimeseriesOpsMixin(LocalMacroDataServiceBase):
             return {"error": "concept_id is required"}
         self._store.seed_concept_map()
         date = (arguments.get("date") or "").strip() or None
-        obs = self._store.resolve_indicator(concept_id, date=date)
+        as_of = (arguments.get("as_of") or "").strip() or None
+        obs = self._store.resolve_indicator(concept_id, date=date, as_of=as_of)
         if obs is None:
             return {"resolved": None, "concept_id": concept_id}
         from dataclasses import asdict
@@ -158,7 +159,10 @@ class TimeseriesOpsMixin(LocalMacroDataServiceBase):
             return {"error": "concept_id is required"}
         self._store.seed_concept_map()
         limit = int(arguments.get("limit", 12))
-        results = self._store.resolve_indicator_history(concept_id, limit=limit)
+        as_of = (arguments.get("as_of") or "").strip() or None
+        results = self._store.resolve_indicator_history(
+            concept_id, limit=limit, as_of=as_of,
+        )
         from dataclasses import asdict
         return {
             "concept_id": concept_id,
