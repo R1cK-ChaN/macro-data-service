@@ -199,6 +199,29 @@ class TestNextWeekly:
         assert result.day == 26  # next Thu
         assert result.weekday() == 3
 
+    def test_local_release_time_same_week(self):
+        ref = datetime(2026, 3, 16, 15, 0, tzinfo=timezone.utc)  # Mon 11:00 NY
+        result = _next_weekly(
+            {"weekday": 0, "time": "14:00", "timezone": "America/New_York"},
+            ref,
+        )
+        assert result is not None
+        assert result.isoformat() == "2026-03-16T18:00:00+00:00"
+
+    def test_local_release_time_rolls_across_us_holiday(self):
+        ref = datetime(2026, 5, 22, 20, 0, tzinfo=timezone.utc)
+        result = _next_weekly(
+            {
+                "calendar": "us_federal",
+                "weekday": 0,
+                "time": "14:00",
+                "timezone": "America/New_York",
+            },
+            ref,
+        )
+        assert result is not None
+        assert result.isoformat() == "2026-05-26T18:00:00+00:00"
+
 
 class TestNextFixedDates:
     def test_returns_first_future(self):

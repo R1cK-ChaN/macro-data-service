@@ -520,6 +520,7 @@ class SourceCapabilityManager:
         from ingestion.scrapers.census import CensusClient
         from ingestion.scrapers.gov_report import _CN_SOURCES, _EU_SOURCES, _JP_SOURCES, _US_SOURCES
         from ingestion.series_config import (
+            AISI_WEEKLY_STEEL_SERIES,
             BEA_DATASETS,
             BUNDESBANK_SERIES,
             BLS_SERIES,
@@ -1344,6 +1345,19 @@ class SourceCapabilityManager:
             is_default_scheduled=True,
             discover=_configured_entities("mof_jp", "series", MOF_JGB_SERIES),
             sync_latest=lambda entity_ids, limit: _run_job("mof_jp"),
+        )
+        adapters["aisi"] = SourceCapabilityAdapter(
+            source_id="aisi",
+            display_name="American Iron and Steel Institute",
+            source_type="fixed-scope-complete",
+            entity_type="series",
+            description="AISI weekly raw steel production metrics.",
+            supports_structure=False,
+            is_default_scheduled=True,
+            discover=_configured_entities(
+                "aisi", "series", AISI_WEEKLY_STEEL_SERIES,
+            ),
+            sync_latest=lambda entity_ids, limit: _run_job("aisi"),
         )
 
         if orchestrator is not None:

@@ -167,6 +167,8 @@ def _japan_public_holidays(year: int) -> set[date]:
 def _is_business_day(day: date, calendar_name: str) -> bool:
     if day.weekday() >= 5:
         return False
+    if calendar_name in {"us_federal", "us_fed", "federal_reserve"}:
+        return day not in _observed_fed_holidays(day.year)
     if calendar_name in {"japan", "jp", "japan_public", "jp_public"}:
         return day not in _japan_public_holidays(day.year)
     return True
@@ -312,6 +314,35 @@ def _next_daily(rule: dict[str, Any], ref: datetime) -> datetime | None:
 
 def _next_weekly(rule: dict[str, Any], ref: datetime) -> datetime | None:
     target_weekday = int(rule.get("weekday", 3))  # 0=Mon
+    time_text = str(rule.get("time", "") or rule.get("release_time", "")).strip()
+    calendar_name = str(rule.get("calendar", "") or "").lower()
+    if time_text or calendar_name:
+        tz_name = str(rule.get("timezone", "UTC") or "UTC")
+        tz = ZoneInfo(tz_name)
+        ref_utc = ref if ref.tzinfo is not None else ref.replace(tzinfo=timezone.utc)
+        local_ref = ref_utc.astimezone(tz)
+        start_date = local_ref.date() - timedelta(days=7)
+        candidates: list[datetime] = []
+        for offset in range(22):
+            target_date = start_date + timedelta(days=offset)
+            if target_date.weekday() != target_weekday:
+                continue
+            release_date = target_date
+            for _ in range(7):
+                if _is_business_day(release_date, calendar_name):
+                    local_candidate = datetime(
+                        release_date.year,
+                        release_date.month,
+                        release_date.day,
+                        tzinfo=tz,
+                    )
+                    release = _apply_rule_time(local_candidate, rule)
+                    if release > ref_utc:
+                        candidates.append(release)
+                    break
+                release_date += timedelta(days=1)
+        return min(candidates) if candidates else None
+
     days_ahead = target_weekday - ref.weekday()
     if days_ahead <= 0:
         days_ahead += 7

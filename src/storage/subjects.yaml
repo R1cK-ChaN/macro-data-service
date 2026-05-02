@@ -103,6 +103,18 @@ subjects:
         - '\bglobal supply chain pressure index\b'
         - '(?-i:\bGSCPI\b)'
 
+  - id: industry.us.steel
+    display: "US Raw Steel Production"
+    aliases:
+      aisi_series:
+        - AISI_RAW_STEEL_PRODUCTION_US
+        - AISI_RAW_STEEL_WOW_US
+        - AISI_RAW_STEEL_YOY_US
+      title_regex:
+        - '\braw steel production\b'
+        - '\bsteel output\b'
+        - '\bsteel production\b'
+
   - id: housing.us.homeownership
     display: "US Homeownership Rate"
     aliases:

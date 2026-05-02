@@ -941,6 +941,7 @@ class _DocumentsQueriesMixin:
         "eia_series": "eia",
         "bundesbank_series": "bundesbank",
         "mof_jp_series": "mof_jp",
+        "aisi_series": "aisi",
         "ny_fed_series": "nyfed",
         "fedwatch_series": "rateprobability",
         "imf_series": "imf",

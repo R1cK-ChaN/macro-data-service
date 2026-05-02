@@ -58,6 +58,54 @@ _MOF_JGB_RELEASE_SCHEDULE_DEFS: tuple[tuple[str, str, dict[str, Any], str, str, 
     for maturity in _MOF_JGB_MATURITIES
 )
 
+_AISI_STEEL_RELEASE_SCHEDULE_DEFS: tuple[tuple[str, str, dict[str, Any], str, str, str, str, str], ...] = (
+    (
+        "RAW_STEEL_PRODUCTION_US",
+        "weekly",
+        {
+            "calendar": "us_federal",
+            "weekday": 0,
+            "time": "14:00",
+            "timezone": "America/New_York",
+        },
+        "weekly",
+        "14:00",
+        "America/New_York",
+        "pattern",
+        "AISI weekly raw steel production usually updates Monday afternoon",
+    ),
+    (
+        "RAW_STEEL_PRODUCTION_WOW_US",
+        "weekly",
+        {
+            "calendar": "us_federal",
+            "weekday": 0,
+            "time": "14:00",
+            "timezone": "America/New_York",
+        },
+        "weekly",
+        "14:00",
+        "America/New_York",
+        "pattern",
+        "AISI weekly raw steel production usually updates Monday afternoon",
+    ),
+    (
+        "RAW_STEEL_PRODUCTION_YOY_US",
+        "weekly",
+        {
+            "calendar": "us_federal",
+            "weekday": 0,
+            "time": "14:00",
+            "timezone": "America/New_York",
+        },
+        "weekly",
+        "14:00",
+        "America/New_York",
+        "pattern",
+        "AISI weekly raw steel production usually updates Monday afternoon",
+    ),
+)
+
 
 def _calendar_corp_raw_at_or_before_with_conn(
     connection: sqlite3.Connection,
@@ -1781,6 +1829,7 @@ class _CalendarQueriesMixin:
         ("WEI_US",              "weekly",           {"weekday": 3},                         "weekly",   "",      "",                 "pattern", "FRED WEI weekly Thursday"),
         ("GDP_GROWTH_WB_US",    "approximate_window", {"month_offset": 6, "window_days": 60}, "annual",  "",     "",                 "approximate", "World Bank annual"),
         ("GSCPI_US",            "business_day_of_month", {"ordinal": 4, "calendar": "us_federal", "time": "10:00", "timezone": "America/New_York"}, "monthly",  "10:00", "America/New_York", "pattern", "NY Fed GSCPI fourth business day"),
+        *_AISI_STEEL_RELEASE_SCHEDULE_DEFS,
         # ── US Rates ──────────────────────────────────────────────────
         ("POLICY_RATE_US",      "daily",            {},                                     "daily",    "",      "",                 "pattern", "NY Fed EFFR daily"),
         ("SOFR_US",             "daily",            {},                                     "daily",    "",      "",                 "pattern", "SOFR daily"),

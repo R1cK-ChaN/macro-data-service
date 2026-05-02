@@ -125,6 +125,12 @@ from .worldbank import (
     WorldBankSource,
     WorldBankTopic,
 )
+from .aisi import (
+    AISIClient,
+    AISIObservation,
+    AISIWeeklySteelReport,
+    parse_weekly_raw_steel_page,
+)
 from .wsj import WSJArticle, WSJArticleClient, WSJNewsClient
 from .gov_report import GovReportClient, GovReportItem
 from .mof_jgb import MOFJGBClient, MOFJGBObservation, parse_jgb_interest_rate_csv
@@ -145,6 +151,8 @@ from .weibo import WeiboTrendClient, WeiboTrendItem
 
 __all__ = [
     # Data classes
+    "AISIObservation",
+    "AISIWeeklySteelReport",
     "BEAAPIError",
     "BEADataset",
     "BEAObservation",
@@ -270,6 +278,7 @@ __all__ = [
     "WeiboTrendItem",
     "WSJArticleClient",
     # Structured Data APIs
+    "AISIClient",
     "BEAClient",
     "CensusClient",
     "BLSClient",
@@ -292,5 +301,6 @@ __all__ = [
     # Rate Probabilities & Reference Rates
     "NYFedRatesClient",
     "RateProbabilityClient",
+    "parse_weekly_raw_steel_page",
     "parse_jgb_interest_rate_csv",
 ]

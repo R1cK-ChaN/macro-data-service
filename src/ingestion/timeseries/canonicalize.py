@@ -181,6 +181,28 @@ def mof_jp_content_hash(payload: dict[str, Any]) -> str:
     return _hash_canonical(canonicalize_mof_jp_payload(payload))
 
 
+# ── AISI weekly raw steel HTML ─────────────────────────────────────────────
+
+def canonicalize_aisi_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize per-metric AISI weekly raw steel observations."""
+    observations = payload.get("observations") or []
+    cleaned = [
+        {"date": row.get("date"), "value": row.get("value")}
+        for row in observations
+        if isinstance(row, dict)
+    ]
+    cleaned.sort(key=lambda row: (row.get("date") or "", str(row.get("value") or "")))
+    return json.dumps(
+        {"metric": payload.get("metric", ""), "observations": cleaned},
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def aisi_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_aisi_payload(payload))
+
+
 # ── Dispatch ──────────────────────────────────────────────────────────────
 
 _HASH_BY_SOURCE = {
@@ -195,6 +217,7 @@ _HASH_BY_SOURCE = {
     "unsd": sdmx_content_hash,
     "ilo": sdmx_content_hash,
     "mof_jp": mof_jp_content_hash,
+    "aisi": aisi_content_hash,
 }
 
 

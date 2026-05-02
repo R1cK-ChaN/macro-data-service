@@ -2,7 +2,7 @@
 
 Date: 2026-05-01
 Issue: #112
-Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings; NY Fed GSCPI mapping; Bundesbank Germany yield mappings; Japan MOF JGB yield mappings
+Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings; NY Fed GSCPI mapping; Bundesbank Germany yield mappings; Japan MOF JGB yield mappings; AISI weekly steel mappings
 
 The inspected US workbook is a coverage sample for finding omitted fields. Source
 grouping here follows the indicator's economic meaning, official publisher,
@@ -109,5 +109,19 @@ raw snapshot hashing, obs-family seeding, concept-map seeding, release-schedule
 seeding, subject alias resolution, source discovery, country-scoped validation,
 and the orchestrator save path into `indicators` and `obs_raw`.
 
-Remaining source groups for later slices: AISI weekly steel, ISM subcomponents,
-Redbook, Sentix US, SOFR-OIS, and exact Wind/Bloomberg parity.
+## AISI Weekly Steel Rows
+
+| Indicator/source group | AISI page metric | Series id | Concept id | Obs family |
+| --- | --- | --- | --- | --- |
+| US raw steel production weekly value | `production_net_tons` | `AISI_RAW_STEEL_PRODUCTION_US` | `RAW_STEEL_PRODUCTION_US` | `us.industry.raw_steel_production` |
+| US raw steel production WoW | `wow_percent` | `AISI_RAW_STEEL_WOW_US` | `RAW_STEEL_PRODUCTION_WOW_US` | `us.industry.raw_steel_production_wow` |
+| US raw steel production YoY | `yoy_percent` | `AISI_RAW_STEEL_YOY_US` | `RAW_STEEL_PRODUCTION_YOY_US` | `us.industry.raw_steel_production_yoy` |
+
+Focused tests cover official page parsing, client raw payloads, fetcher output,
+raw snapshot hashing, obs-family seeding, concept-map seeding, release-schedule
+seeding, subject alias resolution, source discovery, country-scoped validation,
+US-holiday-aware weekly release timing, and the orchestrator save path into
+`indicators` and `obs_raw`.
+
+Remaining source groups for later slices: ISM subcomponents, Redbook, Sentix US,
+SOFR-OIS, and exact Wind/Bloomberg parity.

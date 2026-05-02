@@ -199,6 +199,60 @@ _MOF_JGB_CONCEPT_MAP_DEFS: tuple[tuple[str, str, str, str, int, str, str], ...] 
     for maturity in _MOF_JGB_MATURITIES
 )
 
+_AISI_STEEL_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    "AISI_RAW_STEEL_PRODUCTION_US": (
+        "us.industry.raw_steel_production",
+        "US Weekly Raw Steel Production",
+        "net_tons",
+        "weekly",
+        "none",
+    ),
+    "AISI_RAW_STEEL_WOW_US": (
+        "us.industry.raw_steel_production_wow",
+        "US Weekly Raw Steel Production WoW",
+        "percent",
+        "weekly",
+        "none",
+    ),
+    "AISI_RAW_STEEL_YOY_US": (
+        "us.industry.raw_steel_production_yoy",
+        "US Weekly Raw Steel Production YoY",
+        "percent",
+        "weekly",
+        "none",
+    ),
+}
+
+_AISI_STEEL_CONCEPT_MAP_DEFS: tuple[tuple[str, str, str, str, int, str, str], ...] = (
+    (
+        "RAW_STEEL_PRODUCTION_US",
+        "aisi",
+        "AISI_RAW_STEEL_PRODUCTION_US",
+        "us.industry.raw_steel_production",
+        1,
+        "primary",
+        "AISI weekly raw steel production",
+    ),
+    (
+        "RAW_STEEL_PRODUCTION_WOW_US",
+        "aisi",
+        "AISI_RAW_STEEL_WOW_US",
+        "us.industry.raw_steel_production_wow",
+        1,
+        "primary",
+        "AISI weekly raw steel production week-over-week change",
+    ),
+    (
+        "RAW_STEEL_PRODUCTION_YOY_US",
+        "aisi",
+        "AISI_RAW_STEEL_YOY_US",
+        "us.industry.raw_steel_production_yoy",
+        1,
+        "primary",
+        "AISI weekly raw steel production year-over-year change",
+    ),
+)
+
 _OECD_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
     "OECD_CLI_US":           ("us.leading.cli",             "US Composite Leading Indicator",  "index",   "monthly", "none"),
@@ -282,6 +336,7 @@ _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
     ("ecb",             "ecb",             "European Central Bank",             "central_bank",     "EU", "https://www.ecb.europa.eu",                                      "https://data-api.ecb.europa.eu/service/data"),
     ("bundesbank",      "bundesbank",      "Deutsche Bundesbank",               "central_bank",     "DE", "https://www.bundesbank.de",                                      "https://api.statistiken.bundesbank.de/rest"),
     ("mof_jp",          "mof_jp",          "Japan Ministry of Finance",         "government_agency", "JP", "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/index.htm", "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/historical/jgbcme_all.csv"),
+    ("aisi",            "aisi",            "American Iron and Steel Institute", "data_aggregator",  "US", "https://www.steel.org/industry-data/",                            "https://www.steel.org/industry-data/"),
     ("oecd",            "oecd",            "Organisation for Economic Co-operation", "data_aggregator", "XX", "https://www.oecd.org",                                      "https://sdmx.oecd.org/public/rest/v2"),
     ("worldbank",       "worldbank",       "World Bank",                        "data_aggregator",  "XX", "https://www.worldbank.org",                                      "https://api.worldbank.org/v2"),
     ("bls",             "bls",             "Bureau of Labor Statistics",         "government_agency", "US", "https://www.bls.gov",                                            "https://api.bls.gov/publicAPI/v2"),
@@ -826,6 +881,7 @@ class _IndicatorQueriesMixin:
             ("ecb", _ECB_FAMILY_MAP),
             ("bundesbank", _BUNDESBANK_FAMILY_MAP),
             ("mof_jp", _MOF_JGB_FAMILY_MAP),
+            ("aisi", _AISI_STEEL_FAMILY_MAP),
             ("oecd", _OECD_FAMILY_MAP),
             ("worldbank", _WORLDBANK_FAMILY_MAP),
             ("bls", _BLS_FAMILY_MAP),
@@ -956,6 +1012,7 @@ class _IndicatorQueriesMixin:
         ("WEI_US",              "fred",           "WEI",            "us.growth.weekly_economic_index",1,"primary",    "Weekly Economic Index, NSA"),
         ("GDP_GROWTH_WB_US",    "worldbank",      "WB_GDP_GROWTH_US","us.growth.gdp_growth_wb",      1, "primary",     "Annual % growth"),
         ("GSCPI_US",            "nyfed",          "NYFED_GSCPI",    "us.supply_chain.gscpi",          1, "primary",     "NY Fed Global Supply Chain Pressure Index"),
+        *_AISI_STEEL_CONCEPT_MAP_DEFS,
         #
         # ── US Rates ─────────────────────────────────────────────────
         ("POLICY_RATE_US",      "nyfed",          "NYFED_EFFR",     "us.rates.effr",                 1, "primary",     "NY Fed EFFR"),

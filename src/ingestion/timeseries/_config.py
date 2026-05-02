@@ -23,6 +23,7 @@ __all__ = [
     "ECB_SERIES",
     "BUNDESBANK_SERIES",
     "MOF_JGB_SERIES",
+    "AISI_WEEKLY_STEEL_SERIES",
     "OECD_DEFAULT_AGENCY_ID", "OECDSeriesConfig",
     "_slugify_oecd_token", "_generated_oecd_series_id", "_generated_oecd_config_key",
     "render_oecd_series_configs", "OECD_SERIES",
@@ -741,6 +742,34 @@ MOF_JGB_SERIES = {
         "category": "rates",
     }
     for maturity in _MOF_JGB_MATURITIES
+}
+
+# ---------------------------------------------------------------------------
+# AISI weekly raw steel production (HTML page)
+# ---------------------------------------------------------------------------
+
+AISI_WEEKLY_STEEL_SERIES = {
+    "raw_steel_production": {
+        "metric": "production_net_tons",
+        "series_id": "AISI_RAW_STEEL_PRODUCTION_US",
+        "name": "US Weekly Raw Steel Production",
+        "category": "industry",
+        "unit": "net_tons",
+    },
+    "raw_steel_wow": {
+        "metric": "wow_percent",
+        "series_id": "AISI_RAW_STEEL_WOW_US",
+        "name": "US Weekly Raw Steel Production WoW",
+        "category": "industry",
+        "unit": "percent",
+    },
+    "raw_steel_yoy": {
+        "metric": "yoy_percent",
+        "series_id": "AISI_RAW_STEEL_YOY_US",
+        "name": "US Weekly Raw Steel Production YoY",
+        "category": "industry",
+        "unit": "percent",
+    },
 }
 
 # ---------------------------------------------------------------------------

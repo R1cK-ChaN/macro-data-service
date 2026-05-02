@@ -33,6 +33,7 @@ VALID_UNITS: frozenset[str] = frozenset({
     "lcu",
     "usd",
     "hours",
+    "net_tons",
 })
 
 VALID_SEASONAL_ADJUSTMENTS: frozenset[str] = frozenset({
@@ -71,6 +72,7 @@ VALID_SOURCE_IDS: frozenset[str] = frozenset({
     "ecb",
     "bundesbank",
     "mof_jp",
+    "aisi",
     "oecd",
     "worldbank",
     "bls",
