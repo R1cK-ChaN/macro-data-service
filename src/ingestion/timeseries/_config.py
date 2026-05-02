@@ -22,6 +22,7 @@ __all__ = [
     "BIS_SERIES",
     "ECB_SERIES",
     "BUNDESBANK_SERIES",
+    "MOF_JGB_SERIES",
     "OECD_DEFAULT_AGENCY_ID", "OECDSeriesConfig",
     "_slugify_oecd_token", "_generated_oecd_series_id", "_generated_oecd_config_key",
     "render_oecd_series_configs", "OECD_SERIES",
@@ -721,6 +722,25 @@ BUNDESBANK_SERIES = {
         "name": "Germany 30Y Federal Securities Yield",
         "category": "rates",
     },
+}
+
+# ---------------------------------------------------------------------------
+# Japan MOF JGB interest rates (CSV)
+# ---------------------------------------------------------------------------
+
+_MOF_JGB_MATURITIES = (
+    "1Y", "2Y", "3Y", "4Y", "5Y", "6Y", "7Y", "8Y", "9Y",
+    "10Y", "15Y", "20Y", "25Y", "30Y", "40Y",
+)
+
+MOF_JGB_SERIES = {
+    f"jp_govt_{maturity.lower()}": {
+        "maturity": maturity,
+        "series_id": f"MOF_JP_GOVT_{maturity}",
+        "name": f"Japan {maturity} Government Bond Yield",
+        "category": "rates",
+    }
+    for maturity in _MOF_JGB_MATURITIES
 }
 
 # ---------------------------------------------------------------------------

@@ -40,6 +40,7 @@ from ingestion.timeseries.sdmx.providers.oecd import OECDClient
 from ingestion.trends.scrapers.reddit import RedditTrendClient, RedditTrendPost
 from ingestion.trends.scrapers.weibo import WeiboTrendClient, WeiboTrendItem
 from ingestion.timeseries.scrapers.worldbank import WorldBankClient, WorldBankRateLimitError
+from ingestion.timeseries.scrapers.mof_jgb import MOFJGBClient
 from ingestion.timeseries.scrapers.nyfed import NYFedRatesClient
 from ingestion.timeseries.scrapers.rateprobability import RateProbabilityClient
 from ingestion.timeseries.scrapers.treasury_fiscal import TreasuryFiscalClient
@@ -125,6 +126,7 @@ from ingestion.timeseries._config import (  # noqa: E402
     IMF_SERIES,
     IMF_VINTAGE_SERIES,
     MACRO_SERIES,
+    MOF_JGB_SERIES,
     OECD_SERIES,
     OECDSeriesConfig,
     TREASURY_DATASETS,
@@ -201,6 +203,7 @@ SOURCE_FAMILIES: dict[str, str] = {
     "bis": "economic_data",
     "ecb": "economic_data",
     "bundesbank": "economic_data",
+    "mof_jp": "economic_data",
     "oecd": "economic_data",
     "worldbank": "economic_data",
     "worldbank_catalog": "economic_data",
@@ -305,6 +308,7 @@ class IngestionOrchestrator:
         bis: BISIngestionClient | None = None,
         ecb: ECBIngestionClient | None = None,
         bundesbank: BundesbankIngestionClient | None = None,
+        mof_jp: MOFJGBClient | None = None,
         oecd: OECDIngestionClient | None = None,
         worldbank: WorldBankIngestionClient | None = None,
         validation_engine: Any | None = None,
@@ -334,6 +338,7 @@ class IngestionOrchestrator:
         self.bis = bis or BISIngestionClient()
         self.ecb = ecb or ECBIngestionClient()
         self.bundesbank = bundesbank or BundesbankIngestionClient()
+        self.mof_jp = mof_jp or MOFJGBClient()
         self.oecd = oecd or OECDIngestionClient()
         self.worldbank = worldbank or WorldBankIngestionClient()
         self._obs_seeded = False
@@ -435,6 +440,7 @@ class IngestionOrchestrator:
             self._build_bis_source(),
             self._build_ecb_source(),
             self._build_bundesbank_source(),
+            self._build_mof_jp_source(),
             self._build_oecd_source(),
             self._build_worldbank_source(),
             self._build_worldbank_catalog_source(),
@@ -466,6 +472,7 @@ class IngestionOrchestrator:
             "bis",
             "ecb",
             "bundesbank",
+            "mof_jp",
             "oecd",
             "worldbank",
             "worldbank_catalog",
@@ -1105,6 +1112,12 @@ class IngestionOrchestrator:
             SDMXFetcher(self.bundesbank.client, "bundesbank", BUNDESBANK_SERIES),
         )
 
+    def _build_mof_jp_source(self) -> IngestionSourceDefinition:
+        from ingestion.fetchers._mof_jgb import MOFJGBFetcher
+        return self._build_fetcher_source(
+            "mof_jp", MOFJGBFetcher(client=self.mof_jp, series_config=MOF_JGB_SERIES),
+        )
+
     def _build_oecd_source(self) -> IngestionSourceDefinition:
         from ingestion.fetchers._oecd import OECDFetcher
         return self._build_fetcher_source(
@@ -1148,6 +1161,7 @@ class IngestionOrchestrator:
         "bis": "bis",
         "ecb": "ecb",
         "bundesbank": "bundesbank",
+        "mof_jp": "mof_jp",
         "oecd": "oecd",
         "worldbank": "worldbank",
     }
@@ -1157,6 +1171,7 @@ class IngestionOrchestrator:
         from ingestion.fetchers._bls import BLSFetcher
         from ingestion.fetchers._eia import EIAFetcher
         from ingestion.fetchers._fred import FredFetcher
+        from ingestion.fetchers._mof_jgb import MOFJGBFetcher
         from ingestion.fetchers._nyfed import NYFedFetcher
         from ingestion.fetchers._oecd import OECDFetcher
         from ingestion.fetchers._sdmx import SDMXFetcher
@@ -1195,6 +1210,8 @@ class IngestionOrchestrator:
             fetcher = SDMXFetcher(
                 self.bundesbank.client, "bundesbank", BUNDESBANK_SERIES,
             )
+        elif source_id == "mof_jp":
+            fetcher = MOFJGBFetcher(client=self.mof_jp, series_config=MOF_JGB_SERIES)
         elif source_id == "oecd":
             fetcher = OECDFetcher(client=self.oecd.client)
         elif source_id == "worldbank":

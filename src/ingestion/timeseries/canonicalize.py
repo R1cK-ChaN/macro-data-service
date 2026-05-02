@@ -159,6 +159,28 @@ def sdmx_content_hash(payload: dict[str, Any]) -> str:
     return _hash_canonical(canonicalize_sdmx_payload(payload))
 
 
+# ── MOF Japan JGB CSV ──────────────────────────────────────────────────────
+
+def canonicalize_mof_jp_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize per-series MOF JGB CSV observations."""
+    observations = payload.get("observations") or []
+    cleaned = [
+        {"date": row.get("date"), "value": row.get("value")}
+        for row in observations
+        if isinstance(row, dict)
+    ]
+    cleaned.sort(key=lambda row: (row.get("date") or "", str(row.get("value") or "")))
+    return json.dumps(
+        {"maturity": payload.get("maturity", ""), "observations": cleaned},
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def mof_jp_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_mof_jp_payload(payload))
+
+
 # ── Dispatch ──────────────────────────────────────────────────────────────
 
 _HASH_BY_SOURCE = {
@@ -172,6 +194,7 @@ _HASH_BY_SOURCE = {
     "oecd": sdmx_content_hash,
     "unsd": sdmx_content_hash,
     "ilo": sdmx_content_hash,
+    "mof_jp": mof_jp_content_hash,
 }
 
 

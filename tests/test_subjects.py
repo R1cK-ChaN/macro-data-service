@@ -136,6 +136,17 @@ def test_tagger_structured_resolves_bundesbank_series(
     ) == [("rate.de.govt", STRUCTURED_CONFIDENCE)]
 
 
+def test_tagger_structured_resolves_mof_jp_series(
+    store: SQLiteEngineStore,
+) -> None:
+    sync_from_yaml(store)
+    with store._connection(commit=False) as c:
+        tagger = SubjectTagger(c)
+    assert tagger.tag_structured(
+        mof_jp_series="MOF_JP_GOVT_10Y",
+    ) == [("rate.jp.govt", STRUCTURED_CONFIDENCE)]
+
+
 @pytest.mark.parametrize(
     "concept_id, expected_subject",
     [
@@ -164,6 +175,8 @@ def test_tagger_structured_resolves_bundesbank_series(
         ("OBFR_US", "rate.us.obfr"),
         # Bundesbank bridges
         ("DE_GOVT_10Y", "rate.de.govt"),
+        # Japan MOF bridges
+        ("JP_GOVT_10Y", "rate.jp.govt"),
     ],
 )
 def test_resolve_subjects_for_concept_bridges_vocabularies(

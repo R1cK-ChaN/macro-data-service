@@ -817,7 +817,8 @@ def _run_diagnose_sources(args: argparse.Namespace, service) -> int:
     # Sources that use fetcher adapters (the ones we care about)
     _PROBE_SOURCES = [
         "fred_daily", "bls", "nyfed_rates", "eia", "treasury_fiscal",
-        "imf", "eurostat", "bis", "ecb", "bundesbank", "oecd", "worldbank",
+        "imf", "eurostat", "bis", "ecb", "bundesbank", "mof_jp", "oecd",
+        "worldbank",
     ]
     results = []
     for name in _PROBE_SOURCES:

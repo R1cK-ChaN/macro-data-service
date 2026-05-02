@@ -163,6 +163,24 @@ class TestNextDaily:
         assert result.weekday() == 0  # Mon
         assert result.day == 23
 
+    def test_local_release_time_same_day(self):
+        ref = datetime(2026, 5, 1, 0, 1, tzinfo=timezone.utc)  # 09:01 JST Friday
+        result = _next_daily(
+            {"calendar": "japan", "time": "09:30", "timezone": "Asia/Tokyo"},
+            ref,
+        )
+        assert result is not None
+        assert result.isoformat() == "2026-05-01T00:30:00+00:00"
+
+    def test_local_release_time_skips_japan_public_holidays(self):
+        ref = datetime(2026, 5, 1, 0, 31, tzinfo=timezone.utc)  # after Friday release
+        result = _next_daily(
+            {"calendar": "japan", "time": "09:30", "timezone": "Asia/Tokyo"},
+            ref,
+        )
+        assert result is not None
+        assert result.isoformat() == "2026-05-07T00:30:00+00:00"
+
 
 class TestNextWeekly:
     def test_thursday_same_week(self):

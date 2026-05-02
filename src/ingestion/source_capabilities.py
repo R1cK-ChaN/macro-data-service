@@ -530,6 +530,7 @@ class SourceCapabilityManager:
             IMF_VINTAGE_SERIES,
             MACRO_SERIES,
             MACRO_WATCHLIST,
+            MOF_JGB_SERIES,
             TREASURY_DATASETS,
             UNSD_SERIES,
             VINTAGE_SERIES,
@@ -1332,6 +1333,17 @@ class SourceCapabilityManager:
             is_default_scheduled=True,
             discover=_configured_entities("bundesbank", "series", BUNDESBANK_SERIES),
             sync_latest=lambda entity_ids, limit: _run_job("bundesbank"),
+        )
+        adapters["mof_jp"] = SourceCapabilityAdapter(
+            source_id="mof_jp",
+            display_name="Japan Ministry of Finance",
+            source_type="fixed-scope-complete",
+            entity_type="series",
+            description="MOF Japan constant-maturity JGB interest-rate series.",
+            supports_structure=False,
+            is_default_scheduled=True,
+            discover=_configured_entities("mof_jp", "series", MOF_JGB_SERIES),
+            sync_latest=lambda entity_ids, limit: _run_job("mof_jp"),
         )
 
         if orchestrator is not None:

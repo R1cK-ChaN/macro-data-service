@@ -127,6 +127,7 @@ from .worldbank import (
 )
 from .wsj import WSJArticle, WSJArticleClient, WSJNewsClient
 from .gov_report import GovReportClient, GovReportItem
+from .mof_jgb import MOFJGBClient, MOFJGBObservation, parse_jgb_interest_rate_csv
 from .nyfed import NYFedGSCPI, NYFedRate, NYFedRatesClient
 from .rateprobability import (
     FedMeetingProbability,
@@ -212,6 +213,7 @@ __all__ = [
     "IMFObservation",
     "IMFRateLimitError",
     "IMFVintageObservation",
+    "MOFJGBObservation",
     "NYFedGSCPI",
     "NYFedRate",
     "OECDAPIError",
@@ -279,6 +281,7 @@ __all__ = [
     "FredClient",
     "ILOClient",
     "IMFClient",
+    "MOFJGBClient",
     "OECDClient",
     "TreasuryFiscalClient",
     "UNSDClient",
@@ -289,4 +292,5 @@ __all__ = [
     # Rate Probabilities & Reference Rates
     "NYFedRatesClient",
     "RateProbabilityClient",
+    "parse_jgb_interest_rate_csv",
 ]

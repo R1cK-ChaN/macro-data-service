@@ -193,6 +193,30 @@ subjects:
         - '\b(?:german|germany)\s+(?:government\s+)?(?:bond|bund)\s+yield'
         - '\bBund(?:esanleihe)?\b'
 
+  - id: rate.jp.govt
+    display: "Japan Government Yields"
+    aliases:
+      mof_jp_series:
+        - MOF_JP_GOVT_1Y
+        - MOF_JP_GOVT_2Y
+        - MOF_JP_GOVT_3Y
+        - MOF_JP_GOVT_4Y
+        - MOF_JP_GOVT_5Y
+        - MOF_JP_GOVT_6Y
+        - MOF_JP_GOVT_7Y
+        - MOF_JP_GOVT_8Y
+        - MOF_JP_GOVT_9Y
+        - MOF_JP_GOVT_10Y
+        - MOF_JP_GOVT_15Y
+        - MOF_JP_GOVT_20Y
+        - MOF_JP_GOVT_25Y
+        - MOF_JP_GOVT_30Y
+        - MOF_JP_GOVT_40Y
+      calendar_indicator: []
+      title_regex:
+        - '\b(?:japan|japanese)\s+(?:government\s+)?bond\s+yield'
+        - '\bJGB(?:s)?\b'
+
   # ----- Reference rates (NY Fed) -----
 
   # NY Fed rates store two alias forms for the same series: the natural

@@ -39,6 +39,25 @@ from storage.models.indicator import (
     ReleaseStatusRecord,
 )
 
+_MOF_JGB_MATURITIES = (
+    "1Y", "2Y", "3Y", "4Y", "5Y", "6Y", "7Y", "8Y", "9Y",
+    "10Y", "15Y", "20Y", "25Y", "30Y", "40Y",
+)
+
+_MOF_JGB_RELEASE_SCHEDULE_DEFS: tuple[tuple[str, str, dict[str, Any], str, str, str, str, str], ...] = tuple(
+    (
+        f"JP_GOVT_{maturity}",
+        "daily",
+        {"calendar": "japan", "time": "09:30", "timezone": "Asia/Tokyo"},
+        "daily",
+        "00:30",
+        "Asia/Tokyo",
+        "pattern",
+        "MOF JGB interest rates next business day 09:30 JST",
+    )
+    for maturity in _MOF_JGB_MATURITIES
+)
+
 
 def _calendar_corp_raw_at_or_before_with_conn(
     connection: sqlite3.Connection,
@@ -1823,6 +1842,7 @@ class _CalendarQueriesMixin:
         ("GDP_REAL_JP",         "approximate_window", {"month_offset": 3, "window_days": 30}, "quarterly","",    "",                 "approximate", "IMF quarterly lag"),
         ("POLICY_RATE_JP",      "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
         ("CLI_JP",              "monthly_lag",      {"lag_months": 2, "day": 10, "tolerance_days": 15}, "monthly","",  "",           "approximate", "OECD CLI ~2 month lag"),
+        *_MOF_JGB_RELEASE_SCHEDULE_DEFS,
         # ── Germany Rates ────────────────────────────────────────────
         ("DE_GOVT_2Y",          "daily",            {},                                     "daily",    "",      "",                 "pattern",     "Bundesbank current Federal securities yield"),
         ("DE_GOVT_5Y",          "daily",            {},                                     "daily",    "",      "",                 "pattern",     "Bundesbank current Federal securities yield"),

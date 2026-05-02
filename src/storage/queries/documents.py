@@ -940,6 +940,7 @@ class _DocumentsQueriesMixin:
         "bls_series": "bls",
         "eia_series": "eia",
         "bundesbank_series": "bundesbank",
+        "mof_jp_series": "mof_jp",
         "ny_fed_series": "nyfed",
         "fedwatch_series": "rateprobability",
         "imf_series": "imf",

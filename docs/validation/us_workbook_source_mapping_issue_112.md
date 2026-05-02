@@ -2,7 +2,7 @@
 
 Date: 2026-05-01
 Issue: #112
-Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings; NY Fed GSCPI mapping; Bundesbank Germany yield mappings
+Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings; NY Fed GSCPI mapping; Bundesbank Germany yield mappings; Japan MOF JGB yield mappings
 
 The inspected US workbook is a coverage sample for finding omitted fields. Source
 grouping here follows the indicator's economic meaning, official publisher,
@@ -84,6 +84,30 @@ query parameters, fetcher output, SDMX raw snapshot hashing, obs-family seeding,
 concept-map seeding, release-schedule seeding, subject alias resolution, source
 discovery, and the orchestrator save path into `indicators` and `obs_raw`.
 
-Remaining source groups for later slices: Japan MOF official yields, AISI weekly
-steel, ISM subcomponents, Redbook, Sentix US, SOFR-OIS, and exact Wind/Bloomberg
-parity.
+## Japan MOF JGB Yield Rows
+
+| Indicator/source group | MOF CSV column | Series id | Concept id | Obs family |
+| --- | --- | --- | --- | --- |
+| Japan 1Y government yield | `1Y` | `MOF_JP_GOVT_1Y` | `JP_GOVT_1Y` | `jp.rates.govt_1y` |
+| Japan 2Y government yield | `2Y` | `MOF_JP_GOVT_2Y` | `JP_GOVT_2Y` | `jp.rates.govt_2y` |
+| Japan 3Y government yield | `3Y` | `MOF_JP_GOVT_3Y` | `JP_GOVT_3Y` | `jp.rates.govt_3y` |
+| Japan 4Y government yield | `4Y` | `MOF_JP_GOVT_4Y` | `JP_GOVT_4Y` | `jp.rates.govt_4y` |
+| Japan 5Y government yield | `5Y` | `MOF_JP_GOVT_5Y` | `JP_GOVT_5Y` | `jp.rates.govt_5y` |
+| Japan 6Y government yield | `6Y` | `MOF_JP_GOVT_6Y` | `JP_GOVT_6Y` | `jp.rates.govt_6y` |
+| Japan 7Y government yield | `7Y` | `MOF_JP_GOVT_7Y` | `JP_GOVT_7Y` | `jp.rates.govt_7y` |
+| Japan 8Y government yield | `8Y` | `MOF_JP_GOVT_8Y` | `JP_GOVT_8Y` | `jp.rates.govt_8y` |
+| Japan 9Y government yield | `9Y` | `MOF_JP_GOVT_9Y` | `JP_GOVT_9Y` | `jp.rates.govt_9y` |
+| Japan 10Y government yield | `10Y` | `MOF_JP_GOVT_10Y` | `JP_GOVT_10Y` | `jp.rates.govt_10y` |
+| Japan 15Y government yield | `15Y` | `MOF_JP_GOVT_15Y` | `JP_GOVT_15Y` | `jp.rates.govt_15y` |
+| Japan 20Y government yield | `20Y` | `MOF_JP_GOVT_20Y` | `JP_GOVT_20Y` | `jp.rates.govt_20y` |
+| Japan 25Y government yield | `25Y` | `MOF_JP_GOVT_25Y` | `JP_GOVT_25Y` | `jp.rates.govt_25y` |
+| Japan 30Y government yield | `30Y` | `MOF_JP_GOVT_30Y` | `JP_GOVT_30Y` | `jp.rates.govt_30y` |
+| Japan 40Y government yield | `40Y` | `MOF_JP_GOVT_40Y` | `JP_GOVT_40Y` | `jp.rates.govt_40y` |
+
+Focused tests cover official CSV parsing, client raw payloads, fetcher output,
+raw snapshot hashing, obs-family seeding, concept-map seeding, release-schedule
+seeding, subject alias resolution, source discovery, country-scoped validation,
+and the orchestrator save path into `indicators` and `obs_raw`.
+
+Remaining source groups for later slices: AISI weekly steel, ISM subcomponents,
+Redbook, Sentix US, SOFR-OIS, and exact Wind/Bloomberg parity.

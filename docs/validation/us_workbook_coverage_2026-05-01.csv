@@ -15,13 +15,13 @@ Wind/workbook label,德国:国债收益率:2年期,德国国债!R3C13,connected,
 Wind/workbook label,德国:国债收益率:30年期,德国国债!R3C18,connected,bundesbank:BUNDESBANK_DE_GOVT_30Y,Bundesbank BBSSY current Federal securities 30Y yield is configured.
 Wind/workbook label,德国:国债收益率:5年期,德国国债!R3C14,connected,bundesbank:BUNDESBANK_DE_GOVT_5Y,Bundesbank BBSSY current Federal securities 5Y yield is configured.
 Wind/workbook label,德国:国债收益率:7年期,德国国债!R3C15,connected,bundesbank:BUNDESBANK_DE_GOVT_7Y,Bundesbank BBSSY current Federal securities 7Y yield is configured.
-Wind/workbook label,日本:国债利率:10年,日本国债!R3C18;主要国家国债收益率利差!R2C11,missing,,Japan MOF official yield path remains open.
-Wind/workbook label,日本:国债利率:1年,日本国债!R3C13,missing,,Japan MOF official yield path remains open.
-Wind/workbook label,日本:国债利率:2年,日本国债!R3C14,missing,,Japan MOF official yield path remains open.
-Wind/workbook label,日本:国债利率:30年,日本国债!R3C19,missing,,Japan MOF official yield path remains open.
-Wind/workbook label,日本:国债利率:3年,日本国债!R3C15,missing,,Japan MOF official yield path remains open.
-Wind/workbook label,日本:国债利率:5年,日本国债!R3C16,missing,,Japan MOF official yield path remains open.
-Wind/workbook label,日本:国债利率:7年,日本国债!R3C17,missing,,Japan MOF official yield path remains open.
+Wind/workbook label,日本:国债利率:10年,日本国债!R3C18;主要国家国债收益率利差!R2C11,connected,mof_jp:MOF_JP_GOVT_10Y,Japan MOF official JGB constant-maturity 10Y yield is configured.
+Wind/workbook label,日本:国债利率:1年,日本国债!R3C13,connected,mof_jp:MOF_JP_GOVT_1Y,Japan MOF official JGB constant-maturity 1Y yield is configured.
+Wind/workbook label,日本:国债利率:2年,日本国债!R3C14,connected,mof_jp:MOF_JP_GOVT_2Y,Japan MOF official JGB constant-maturity 2Y yield is configured.
+Wind/workbook label,日本:国债利率:30年,日本国债!R3C19,connected,mof_jp:MOF_JP_GOVT_30Y,Japan MOF official JGB constant-maturity 30Y yield is configured.
+Wind/workbook label,日本:国债利率:3年,日本国债!R3C15,connected,mof_jp:MOF_JP_GOVT_3Y,Japan MOF official JGB constant-maturity 3Y yield is configured.
+Wind/workbook label,日本:国债利率:5年,日本国债!R3C16,connected,mof_jp:MOF_JP_GOVT_5Y,Japan MOF official JGB constant-maturity 5Y yield is configured.
+Wind/workbook label,日本:国债利率:7年,日本国债!R3C17,connected,mof_jp:MOF_JP_GOVT_7Y,Japan MOF official JGB constant-maturity 7Y yield is configured.
 Wind/workbook label,杠杆率(按名义价值计):政府部门:美国,季度数据!R5C21,connected,bis:BIS_TC_GOV_US,BIS Total Credit WS_TC `Q.US.G.A.N.770.A` general government nominal value as percent of GDP is configured.
 Wind/workbook label,杠杆率:居民部门:美国,季度数据!R5C20,connected,bis:BIS_TC_HH_US,BIS Total Credit WS_TC `Q.US.H.A.M.770.A` household credit as percent of GDP is configured.
 Wind/workbook label,杠杆率:非金融企业部门:美国,季度数据!R5C19,connected,bis:BIS_TC_NFC_US,BIS Total Credit WS_TC `Q.US.N.A.M.770.A` non-financial corporation credit as percent of GDP is configured.

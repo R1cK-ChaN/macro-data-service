@@ -170,6 +170,35 @@ _BUNDESBANK_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "BUNDESBANK_DE_GOVT_30Y": ("de.rates.govt_30y", "Germany 30Y Federal Securities Yield", "percent", "daily", "none"),
 }
 
+_MOF_JGB_MATURITIES = (
+    "1Y", "2Y", "3Y", "4Y", "5Y", "6Y", "7Y", "8Y", "9Y",
+    "10Y", "15Y", "20Y", "25Y", "30Y", "40Y",
+)
+
+_MOF_JGB_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    f"MOF_JP_GOVT_{maturity}": (
+        f"jp.rates.govt_{maturity.lower()}",
+        f"Japan {maturity} Government Bond Yield",
+        "percent",
+        "daily",
+        "none",
+    )
+    for maturity in _MOF_JGB_MATURITIES
+}
+
+_MOF_JGB_CONCEPT_MAP_DEFS: tuple[tuple[str, str, str, str, int, str, str], ...] = tuple(
+    (
+        f"JP_GOVT_{maturity}",
+        "mof_jp",
+        f"MOF_JP_GOVT_{maturity}",
+        f"jp.rates.govt_{maturity.lower()}",
+        1,
+        "primary",
+        "MOF constant-maturity JGB interest rate",
+    )
+    for maturity in _MOF_JGB_MATURITIES
+)
+
 _OECD_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
     "OECD_CLI_US":           ("us.leading.cli",             "US Composite Leading Indicator",  "index",   "monthly", "none"),
@@ -252,6 +281,7 @@ _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
     ("bis",             "bis",             "Bank for International Settlements","data_aggregator",  "CH", "https://www.bis.org",                                           "https://stats.bis.org/api/v2"),
     ("ecb",             "ecb",             "European Central Bank",             "central_bank",     "EU", "https://www.ecb.europa.eu",                                      "https://data-api.ecb.europa.eu/service/data"),
     ("bundesbank",      "bundesbank",      "Deutsche Bundesbank",               "central_bank",     "DE", "https://www.bundesbank.de",                                      "https://api.statistiken.bundesbank.de/rest"),
+    ("mof_jp",          "mof_jp",          "Japan Ministry of Finance",         "government_agency", "JP", "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/index.htm", "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/historical/jgbcme_all.csv"),
     ("oecd",            "oecd",            "Organisation for Economic Co-operation", "data_aggregator", "XX", "https://www.oecd.org",                                      "https://sdmx.oecd.org/public/rest/v2"),
     ("worldbank",       "worldbank",       "World Bank",                        "data_aggregator",  "XX", "https://www.worldbank.org",                                      "https://api.worldbank.org/v2"),
     ("bls",             "bls",             "Bureau of Labor Statistics",         "government_agency", "US", "https://www.bls.gov",                                            "https://api.bls.gov/publicAPI/v2"),
@@ -795,6 +825,7 @@ class _IndicatorQueriesMixin:
             ("bis", _BIS_FAMILY_MAP),
             ("ecb", _ECB_FAMILY_MAP),
             ("bundesbank", _BUNDESBANK_FAMILY_MAP),
+            ("mof_jp", _MOF_JGB_FAMILY_MAP),
             ("oecd", _OECD_FAMILY_MAP),
             ("worldbank", _WORLDBANK_FAMILY_MAP),
             ("bls", _BLS_FAMILY_MAP),
@@ -1004,6 +1035,7 @@ class _IndicatorQueriesMixin:
         ("GDP_REAL_JP",         "imf",            "IMF_JP_GDP",     "jp.growth.gdp_real",            1, "primary",     "Real GDP LCU"),
         ("POLICY_RATE_JP",      "bis",            "BIS_POLICY_JP",  "jp.rates.policy_bis",           1, "primary",     "BOJ policy rate"),
         ("CLI_JP",              "oecd",           "OECD_CLI_JP",    "jp.leading.cli",                1, "primary",     "Composite leading indicator"),
+        *_MOF_JGB_CONCEPT_MAP_DEFS,
         #
         # ── Germany ─────────────────────────────────────────────────
         ("DE_GOVT_2Y",          "bundesbank",     "BUNDESBANK_DE_GOVT_2Y", "de.rates.govt_2y",       1, "primary",     "Bundesbank current Federal securities yield"),
