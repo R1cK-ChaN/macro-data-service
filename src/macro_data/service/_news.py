@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from contracts import format_epoch_iso
@@ -24,11 +24,7 @@ class NewsOpsMixin(LocalMacroDataServiceBase):
         articles = self._store.get_news_context(
             days=int(arguments.get("days", 3)),
             limit=int(arguments.get("limit", 15)),
-            impact_level=arguments.get("impact_level"),
             feed_category=arguments.get("feed_category"),
-            finance_category=arguments.get("finance_category"),
-            country=arguments.get("country"),
-            asset_class=arguments.get("asset_class"),
             display_timezone=arguments.get("timezone"),
         )
         return {"articles": articles}
@@ -58,75 +54,10 @@ class NewsOpsMixin(LocalMacroDataServiceBase):
             query=query,
             days=days,
             limit=limit,
-            impact_level=(arguments.get("impact_level") or "").strip() or None,
             feed_category=(arguments.get("feed_category") or "").strip() or None,
-            finance_category=(arguments.get("finance_category") or "").strip() or None,
-            country=(arguments.get("country") or "").strip() or None,
-            asset_class=(arguments.get("asset_class") or "").strip() or None,
             display_timezone=(arguments.get("timezone") or "").strip() or None,
         )
         return {"total": len(articles), "days": days, "articles": articles}
-
-    def _op_search_knowledge_base(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        if self._retriever is None:
-            return {
-                "error": "knowledge base unavailable",
-                "evidences": [],
-                "stats": {"total_candidates": 0, "fused": 0, "final_k": 0, "coverage": {}, "coverage_ok": False, "timing_ms": 0},
-            }
-        from rag.models import MacroMode
-
-        query = str(arguments.get("query") or "")
-        if not query.strip():
-            return {"error": "query is required"}
-        mode_str = str(arguments.get("mode") or "QA").upper()
-        try:
-            mode = MacroMode(mode_str)
-        except ValueError:
-            mode = MacroMode.QA
-        filters: dict[str, Any] = {}
-        for key in ("country", "indicator_group", "impact_level", "content_type", "source_type"):
-            value = arguments.get(key)
-            if value:
-                filters[key] = [value] if isinstance(value, str) else value
-        days = arguments.get("days")
-        if days:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
-            filters["updated_after"] = cutoff.isoformat()
-        limit = arguments.get("limit")
-        result = self._retriever.retrieve(
-            query,
-            mode,
-            filters=filters,
-            limit=int(limit) if limit else None,
-        )
-        evidences = []
-        for evidence in result.get("evidences", []):
-            evidences.append({
-                "chunk_id": evidence.chunk_id,
-                "text": evidence.text,
-                "source_type": evidence.source_type,
-                "source_id": evidence.source_id,
-                "section_path": evidence.section_path,
-                "content_type": evidence.content_type,
-                "country": evidence.country,
-                "indicator_group": evidence.indicator_group,
-                "impact_level": evidence.impact_level,
-                "data_source": evidence.data_source,
-                "updated_at": evidence.updated_at,
-                "scores": evidence.scores,
-            })
-        return {
-            "evidences": evidences,
-            "stats": {
-                "total_candidates": result.get("candidates_total", 0),
-                "fused": result.get("deduped_total", 0),
-                "final_k": result.get("final_k", 0),
-                "coverage": result.get("coverage_counts", {}),
-                "coverage_ok": result.get("coverage_ok", False),
-                "timing_ms": result.get("timing_ms", 0),
-            },
-        }
 
     def _op_fetch_live_news(self, arguments: dict[str, Any]) -> dict[str, Any]:
         raw_sources = (arguments.get("sources") or "all").lower().strip()

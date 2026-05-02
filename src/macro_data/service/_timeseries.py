@@ -374,36 +374,6 @@ class TimeseriesOpsMixin(LocalMacroDataServiceBase):
             "release_families": items,
         }
 
-    def _op_get_indicator_trend(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        keyword = str(arguments["indicator_keyword"])
-        limit = int(arguments.get("limit", 12))
-        events = self._store.list_indicator_releases(indicator_keyword=keyword, limit=limit)
-        return {
-            "indicator_keyword": keyword,
-            "releases": [self._event_to_dict(event) for event in events],
-        }
-
-    def _op_get_surprise_summary(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        days = int(arguments.get("days", 14))
-        events = self._store.list_recent_events(limit=200, days=days, released_only=True)
-        by_category: dict[str, list[float]] = {}
-        for event in events:
-            if event.surprise is not None:
-                by_category.setdefault(event.category, []).append(float(event.surprise))
-        summary = []
-        for category, surprises in sorted(by_category.items()):
-            beats = sum(1 for item in surprises if item > 0)
-            misses = sum(1 for item in surprises if item < 0)
-            avg = round(sum(surprises) / len(surprises), 4) if surprises else 0.0
-            summary.append({
-                "category": category,
-                "count": len(surprises),
-                "beats": beats,
-                "misses": misses,
-                "avg_surprise": avg,
-            })
-        return {"summary": summary}
-
     def _op_fetch_country_indicators(self, arguments: dict[str, Any]) -> dict[str, Any]:
         from ingestion.scrapers import TradingEconomicsIndicatorsClient
 

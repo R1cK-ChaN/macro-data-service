@@ -296,8 +296,7 @@ class _SentimentQueriesMixin:
         # Both counts also bound above by ``now_iso`` (Codex P3 round
         # 2) — without this, replay / backfill rows with
         # ``created_at > now_iso`` inflate the spike counts even
-        # though the evidence-link query already filters them out,
-        # causing false social_breakout events.
+        # though the evidence-link query already filters them out.
         sql = """
             WITH per_keyword AS (
                 SELECT
@@ -330,66 +329,6 @@ class _SentimentQueriesMixin:
         with self._connection(commit=False) as connection:
             rows = connection.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
-
-    def list_x_post_ids_for_keyword_window(
-        self, *, keyword: str, window_start_iso: str, window_end_iso: str,
-    ) -> list[str]:
-        """Posts that would back a social_breakout event for one
-        (keyword, window) pair — used to backfill the
-        ``x_post_event_links`` table after the calendar event is
-        injected.
-
-        Mirrors the ``is_available = 1`` filter the spike detector
-        uses (Codex P3 round 1) so the evidence linked to an
-        injected event matches the post population that caused the
-        spike — soft-deleted posts don't get linked as evidence."""
-        with self._connection(commit=False) as connection:
-            rows = connection.execute(
-                """
-                SELECT pk.post_id
-                FROM x_post_keywords pk
-                JOIN x_posts xp ON pk.post_id = xp.post_id
-                WHERE pk.keyword = ?
-                  AND datetime(xp.created_at) >= datetime(?)
-                  AND datetime(xp.created_at) <= datetime(?)
-                  AND xp.is_available = 1
-                ORDER BY xp.created_at DESC
-                """,
-                (keyword, window_start_iso, window_end_iso),
-            ).fetchall()
-        return [str(r["post_id"]) for r in rows]
-
-    def link_x_post_to_event(
-        self,
-        *,
-        post_id: str,
-        cal_provider: str,
-        cal_provider_event_id: str,
-        link_type: str,
-        created_at: str | None = None,
-    ) -> None:
-        """Bridge a post to a cal_econ_event row.
-
-        ``link_type`` is one of ``'pre_release'`` / ``'post_release'``
-        / ``'keyword_match'`` / ``'social_breakout'`` (CHECK on the
-        column). INSERT OR IGNORE — the (post_id, cal_provider,
-        cal_provider_event_id) PK keeps re-runs idempotent."""
-        with self._connection(commit=True) as connection:
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO x_post_event_links (
-                    post_id, cal_provider, cal_provider_event_id,
-                    link_type, created_at
-                ) VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    post_id,
-                    cal_provider,
-                    cal_provider_event_id,
-                    link_type,
-                    created_at or utc_now().isoformat(),
-                ),
-            )
 
     # ── Soft-deletion availability patrol (issue #76 P4) ────────
 
@@ -455,92 +394,3 @@ class _SentimentQueriesMixin:
                 (stamp, post_id),
             )
 
-    def inject_social_breakout_event(
-        self,
-        *,
-        keyword: str,
-        event_time_utc: str,
-        title: str,
-        triggering_post_ids: list[str],
-        observed_at_epoch_ms: int,
-    ) -> str:
-        """Insert (or update on conflict) a synthetic ``cal_econ_event``
-        with ``source='x_derived'`` and ``event_type='social_breakout'``,
-        and backfill ``x_post_event_links`` for every triggering post.
-
-        ``provider_event_id`` is composed from the keyword + the
-        event-time date so re-running the detector for the same
-        spike window is idempotent (the (provider, provider_event_id)
-        PK + INSERT OR IGNORE collapses retries onto the same row).
-        Returns the synthesized ``provider_event_id`` so the caller
-        can correlate it with downstream calendar reads."""
-        provider = "x_derived"
-        # Include time-of-day in the id (Codex P3 round 2) so a
-        # keyword that spikes more than once on the same date routes
-        # to separate cal_econ_event rows. ``YYYY-MM-DDTHH:MM`` keeps
-        # the id readable and stable for ON CONFLICT idempotency
-        # within a one-minute detector cycle while letting subsequent
-        # spikes land cleanly.
-        time_slug = (
-            event_time_utc[:16]
-            .replace(":", "-")
-            .replace("T", "-")
-        )
-        slug = "".join(
-            ch if ch.isalnum() else "-"
-            for ch in keyword.lower().strip()
-        ).strip("-")
-        provider_event_id = f"breakout-{slug}-{time_slug}"
-        # Content hash captures the spike-defining inputs so a re-run
-        # with identical kw + window + posts dedupes via PK; if the
-        # spike re-fires under different post coverage the row updates
-        # rather than inserting a duplicate (different content_hash).
-        import hashlib
-        digest_input = (
-            keyword + "|" + event_time_utc + "|"
-            + ",".join(sorted(triggering_post_ids))
-        ).encode("utf-8")
-        content_hash = hashlib.sha256(digest_input).hexdigest()
-        now_iso = utc_now().isoformat()
-        with self._connection(commit=True) as connection:
-            connection.execute(
-                """
-                INSERT INTO cal_econ_event (
-                    provider, provider_event_id, event_time_utc,
-                    event_time_precision, reference_date,
-                    reference_label, country_code, indicator_id,
-                    category, title, importance, currency, unit,
-                    actual, previous, revised, forecast,
-                    consensus_forecast, ticker, source, source_url,
-                    content_hash, last_update_epoch_ms,
-                    observed_at_epoch_ms, created_at, updated_at,
-                    event_type
-                ) VALUES (
-                    ?, ?, ?, 'datetime', NULL, '', '', NULL,
-                    'sentiment', ?, NULL, '', '', NULL, NULL,
-                    NULL, NULL, NULL, '', 'x_derived', '',
-                    ?, NULL, ?, ?, ?, 'social_breakout'
-                )
-                ON CONFLICT(provider, provider_event_id) DO UPDATE SET
-                    title                = excluded.title,
-                    content_hash         = excluded.content_hash,
-                    observed_at_epoch_ms = excluded.observed_at_epoch_ms,
-                    updated_at           = excluded.updated_at
-                """,
-                (
-                    provider, provider_event_id, event_time_utc,
-                    title, content_hash, int(observed_at_epoch_ms),
-                    now_iso, now_iso,
-                ),
-            )
-            for post_id in triggering_post_ids:
-                connection.execute(
-                    """
-                    INSERT OR IGNORE INTO x_post_event_links (
-                        post_id, cal_provider, cal_provider_event_id,
-                        link_type, created_at
-                    ) VALUES (?, ?, ?, 'social_breakout', ?)
-                    """,
-                    (post_id, provider, provider_event_id, now_iso),
-                )
-        return provider_event_id

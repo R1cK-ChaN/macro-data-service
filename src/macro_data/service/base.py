@@ -76,11 +76,9 @@ class LocalMacroDataServiceBase:
         *,
         store: Any,
         ingestion: Any | None = None,
-        retriever: Any | None = None,
     ) -> None:
         self._store = store
         self._ingestion = ingestion
-        self._retriever = retriever
         self._ontology_seeded = False
         self._subject_vocabulary_seeded = False
 

@@ -441,25 +441,10 @@ capability/catalog state describes what a source *can* expose, while
 | `indicators` | Time series macro data (FRED, EIA, Treasury Fiscal, NY Fed, rate probabilities) |
 | `indicator_vintages` | Revision history for macro series (ALFRED vintage data) |
 | `news_articles` | News + gov reports (FTS5 full-text search) |
-| `regime_snapshots` | Market regime JSON snapshots |
-| `generated_notes` | AI-generated analysis notes |
-| `analytical_observations` | Observations & insights |
-| `research_artifacts` | Research documents with tags |
-| `trade_signals` | Trading signals with rationale |
-| `decision_log` | Decision tracking |
-| `position_state` | Current portfolio positions |
 | `source_capability` | Capability registry for catalog/discovery/source-mode metadata |
 | `catalog_entity` | Persisted catalog entities or fixed-scope source entities |
 | `catalog_sync_checkpoint` | Latest discovery/latest-sync checkpoint state |
 | `catalog_sync_run` | Historical discovery/latest-sync run log |
-| `performance_records` | Trading performance metrics |
-| `trading_artifacts` | Trading strategy documents |
-| `client_profiles` | User profiles (20+ dimensions) |
-| `conversation_threads` / `conversation_messages` | Chat history |
-| `delivery_queue` | Content delivery to users |
-| `group_profiles` / `group_members` / `group_messages` | Group chat |
-| `portfolio_holdings` / `portfolio_vol_snapshots` / `portfolio_alerts` | Portfolio management |
-| `subagent_runs` | Sub-agent task tracking |
 | `x_tracked_accounts` | Issue #76 P0 — handles polled by the X (Twitter) timeline lane; PK is handle, user_id resolved by P1 client |
 | `x_keyword_pool` | Issue #76 P0 — keyword list driving `search/recent` polling; seeded with ~50 macro/ticker/geopolitical/tech terms |
 | `x_posts` | Issue #76 P0 — captured X posts with engagement counters and per-row availability flag for soft-deletion patrol |
@@ -598,15 +583,13 @@ The HTML-scraped live refresh path is retired; legacy read helpers use
 
 ## Record Dataclasses (`storage/models/`)
 
-Issue #58 Tier 2.1A extracted 40 frozen record dataclasses out of
+Issue #58 Tier 2.1A extracted the frozen record dataclasses out of
 `sqlite.py` into per-domain submodules under `src/storage/models/`. Each
 file groups records by the bounded context they belong to:
 
 ```
 storage/models/
   __init__.py     — re-exports every record name; backwards-compatible.
-  analytical.py   — RegimeSnapshotRecord, GeneratedNoteRecord,
-                    AnalyticalObservationRecord, ResearchArtifactRecord.
   calendar.py     — StoredEventRecord, CalendarIndicatorRecord,
                     CalendarIndicatorAliasRecord,
                     CalendarEventVintageRecord.
@@ -625,13 +608,8 @@ storage/models/
                     FundamentalsFinancialsRecord,
                     FundamentalsHighlightsRecord,
                     FundamentalsEstimatesRecord (issue #68 slice 1).
-  messaging.py    — ClientProfileRecord, ConversationMessageRecord,
-                    DeliveryQueueRecord, GroupProfileRecord,
-                    GroupMemberRecord, GroupMessageRecord.
   news.py         — NewsArticleRecord, TrendTopicRecord.
-  trading.py      — TradeSignalRecord, DecisionLogRecord,
-                    PositionStateRecord, PerformanceRecord,
-                    TradingArtifactRecord.
+  sentiment.py    — XPostRecord (issue #76).
 ```
 
 `storage.sqlite` re-exports every record name, so existing imports
@@ -663,16 +641,14 @@ without losing data.
 
 ## Per-Domain Queries (`storage/queries/`)
 
-Issue #71 Tier 2.1B-2 extracted the ~165 `SQLiteEngineStore` methods
-into 8 per-domain mixin modules under `src/storage/queries/`. Each
-domain owns its tables' read/write paths plus any module-level seed
-data and helpers that pair with them:
+Issue #71 Tier 2.1B-2 extracted the `SQLiteEngineStore` methods into
+per-domain mixin modules under `src/storage/queries/`. Each domain owns
+its tables' read/write paths plus any module-level seed data and helpers
+that pair with them:
 
 ```
 storage/queries/
   __init__.py     — package marker; mixins are imported by storage.sqlite directly.
-  analytical.py   — regime_snapshots, generated_notes, analytical_observations,
-                    subagent_runs, research_artifacts.
   calendar.py     — calendar_events + calendar_event_vintages +
                     calendar_indicator + calendar_indicator_alias +
                     release_schedule + release_status. Owns the module-level
@@ -696,16 +672,11 @@ storage/queries/
                     dicts (_FRED_FAMILY_MAP, _EIA_FAMILY_MAP, _OBS_SOURCE_DEFS,
                     _OBS_DOC_LINKS, _VINTAGE_FAMILY_IDS).
   market.py       — market_prices, market_instruments, market_symbol_history,
-                    market_price_bars, plus portfolio_holdings /
-                    portfolio_vol_snapshots / portfolio_alerts.
-  messaging.py    — client_profiles, conversation_threads, delivery_queue,
-                    group_profiles / group_members / group_messages plus
-                    the search-scoring helpers (_search_terms,
-                    _score_text_match, _recency_decay).
+                    market_price_bars.
   news.py         — news_articles + trend_topics + article_fingerprint +
                     news_context scoring (with the impact-decay constants).
-  trading.py      — trade_signals, decision_log, position_state,
-                    performance_records, trading_artifacts.
+  sentiment.py    — x_tracked_accounts, x_keyword_pool, x_posts,
+                    x_post_keywords, x_post_event_links (issue #76).
 ```
 
 Each domain module exposes a private `_XQueriesMixin` class.

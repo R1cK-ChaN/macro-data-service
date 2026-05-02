@@ -500,74 +500,93 @@ def apply_schema(connection: sqlite3.Connection) -> None:
             timestamp INTEGER NOT NULL,
             description TEXT NOT NULL,
             content_markdown TEXT NOT NULL,
-            impact_level TEXT NOT NULL,
-            finance_category TEXT NOT NULL,
-            confidence REAL NOT NULL,
             content_fetched INTEGER NOT NULL DEFAULT 0,
+            language TEXT NOT NULL DEFAULT 'en',
+            authors TEXT NOT NULL DEFAULT '',
             scraped_at TEXT NOT NULL
         )
         """
     )
-    # -- news_articles new columns for LLM extraction -----------
-    _news_new_cols = [
-        ("institution", "TEXT NOT NULL DEFAULT ''"),
-        ("country", "TEXT NOT NULL DEFAULT ''"),
-        ("market", "TEXT NOT NULL DEFAULT ''"),
-        ("asset_class", "TEXT NOT NULL DEFAULT ''"),
-        ("sector", "TEXT NOT NULL DEFAULT ''"),
-        ("document_type", "TEXT NOT NULL DEFAULT ''"),
-        ("event_type", "TEXT NOT NULL DEFAULT ''"),
-        ("subject", "TEXT NOT NULL DEFAULT ''"),
-        ("subject_id", "TEXT NOT NULL DEFAULT ''"),
-        ("data_period", "TEXT NOT NULL DEFAULT ''"),
-        ("contains_commentary", "INTEGER NOT NULL DEFAULT 0"),
-        ("language", "TEXT NOT NULL DEFAULT 'en'"),
-        ("authors", "TEXT NOT NULL DEFAULT ''"),
-        ("extraction_provider", "TEXT NOT NULL DEFAULT 'keyword'"),
-    ]
-    for col_name, col_def in _news_new_cols:
-        try:
-            connection.execute(f"ALTER TABLE news_articles ADD COLUMN {col_name} {col_def}")
-        except sqlite3.OperationalError:
-            pass
+    # Backfill the slim columns that pre-#113 databases may not carry.
+    # CREATE TABLE IF NOT EXISTS leaves an existing table untouched, so
+    # databases that predate the original `language` / `authors` ALTERs
+    # need an explicit additive migration here.
+    _ensure_table_columns(
+        connection,
+        table_name="news_articles",
+        columns={
+            "language": "TEXT NOT NULL DEFAULT 'en'",
+            "authors": "TEXT NOT NULL DEFAULT ''",
+        },
+    )
     # -- FTS5 full-text search for news articles ----------------
     # Guarded: SQLite builds without FTS5 skip this block;
-    # search_news() falls back to LIKE queries.
+    # search_news() falls back to LIKE queries. Triggers + the virtual
+    # table are torn down up-front so the issue #113 P1 column drops
+    # below aren't blocked by a `subject`-referencing trigger.
+    try:
+        for trigger_name in ("news_fts_ai", "news_fts_ad", "news_fts_au"):
+            connection.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
+        legacy_news_fts = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='news_fts'"
+        ).fetchone()
+        if legacy_news_fts and "subject" in (legacy_news_fts[0] or ""):
+            connection.execute("DROP TABLE news_fts")
+    except sqlite3.OperationalError:
+        pass  # FTS5 not available; nothing to tear down
+    # -- issue #113 P1: drop LLM-enrichment columns from existing
+    # news_articles. Downstream that wants enrichment runs its own
+    # service against the raw rows. ALTER TABLE DROP COLUMN requires
+    # SQLite >= 3.35 (March 2021); the project pins Python >= 3.11 which
+    # ships SQLite >= 3.40. Older builds get a loud failure rather than
+    # a silent partial migration that breaks the next ingest.
+    existing_news_cols = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(news_articles)").fetchall()
+    }
+    _legacy_news_cols = (
+        "impact_level", "finance_category", "confidence",
+        "institution", "country", "market", "asset_class", "sector",
+        "document_type", "event_type", "subject", "subject_id",
+        "data_period", "contains_commentary", "extraction_provider",
+    )
+    for col_name in _legacy_news_cols:
+        if col_name not in existing_news_cols:
+            continue
+        connection.execute(f"ALTER TABLE news_articles DROP COLUMN {col_name}")
     try:
         connection.execute(
             """
             CREATE VIRTUAL TABLE IF NOT EXISTS news_fts USING fts5(
-                title, description, subject,
+                title, description,
                 content='news_articles',
                 content_rowid='id'
             )
             """
         )
-        for trigger_name in ("news_fts_ai", "news_fts_ad", "news_fts_au"):
-            connection.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
         connection.execute(
             """
             CREATE TRIGGER news_fts_ai AFTER INSERT ON news_articles BEGIN
-                INSERT INTO news_fts(rowid, title, description, subject)
-                VALUES (new.id, new.title, new.description, new.subject);
+                INSERT INTO news_fts(rowid, title, description)
+                VALUES (new.id, new.title, new.description);
             END
             """
         )
         connection.execute(
             """
             CREATE TRIGGER news_fts_ad AFTER DELETE ON news_articles BEGIN
-                INSERT INTO news_fts(news_fts, rowid, title, description, subject)
-                VALUES ('delete', old.id, old.title, old.description, old.subject);
+                INSERT INTO news_fts(news_fts, rowid, title, description)
+                VALUES ('delete', old.id, old.title, old.description);
             END
             """
         )
         connection.execute(
             """
             CREATE TRIGGER news_fts_au AFTER UPDATE ON news_articles BEGIN
-                INSERT INTO news_fts(news_fts, rowid, title, description, subject)
-                VALUES ('delete', old.id, old.title, old.description, old.subject);
-                INSERT INTO news_fts(rowid, title, description, subject)
-                VALUES (new.id, new.title, new.description, new.subject);
+                INSERT INTO news_fts(news_fts, rowid, title, description)
+                VALUES ('delete', old.id, old.title, old.description);
+                INSERT INTO news_fts(rowid, title, description)
+                VALUES (new.id, new.title, new.description);
             END
             """
         )
@@ -636,356 +655,38 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_trend_topics_normalized "
         "ON trend_topics(normalized_topic_hash)"
     )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS regime_snapshots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            regime_json TEXT NOT NULL,
-            trigger_event TEXT NOT NULL,
-            summary TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS generated_notes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TEXT NOT NULL,
-            note_type TEXT NOT NULL,
-            title TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            body_markdown TEXT NOT NULL,
-            regime_json TEXT,
-            metadata_json TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS analytical_observations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            observation_type TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            detail TEXT NOT NULL,
-            source_kind TEXT NOT NULL,
-            source_id INTEGER NOT NULL,
-            metadata_json TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS research_artifacts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            artifact_type TEXT NOT NULL,
-            title TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            content_markdown TEXT NOT NULL,
-            source_kind TEXT NOT NULL,
-            source_id INTEGER NOT NULL,
-            tags_json TEXT NOT NULL,
-            metadata_json TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS trade_signals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            signal_type TEXT NOT NULL,
-            title TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            rationale_markdown TEXT NOT NULL,
-            signal_json TEXT NOT NULL,
-            confidence REAL NOT NULL,
-            metadata_json TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS decision_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            decision_type TEXT NOT NULL,
-            title TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            rationale_markdown TEXT NOT NULL,
-            research_artifact_id INTEGER,
-            signal_id INTEGER,
-            metadata_json TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (research_artifact_id) REFERENCES research_artifacts(id),
-            FOREIGN KEY (signal_id) REFERENCES trade_signals(id)
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS position_state (
-            symbol TEXT PRIMARY KEY,
-            exposure REAL NOT NULL,
-            direction TEXT NOT NULL,
-            thesis TEXT NOT NULL,
-            metadata_json TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS performance_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            metric_name TEXT NOT NULL,
-            metric_value REAL NOT NULL,
-            period_label TEXT NOT NULL,
-            metadata_json TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS trading_artifacts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            artifact_type TEXT NOT NULL,
-            title TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            rationale_markdown TEXT NOT NULL,
-            research_artifact_id INTEGER NOT NULL,
-            decision_log_id INTEGER,
-            signal_json TEXT NOT NULL,
-            confidence REAL NOT NULL,
-            tags_json TEXT NOT NULL,
-            metadata_json TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (research_artifact_id) REFERENCES research_artifacts(id),
-            FOREIGN KEY (decision_log_id) REFERENCES decision_log(id)
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS client_profiles (
-            client_id TEXT PRIMARY KEY,
-            preferred_language TEXT NOT NULL DEFAULT '',
-            watchlist_topics_json TEXT NOT NULL DEFAULT '[]',
-            response_style TEXT NOT NULL DEFAULT '',
-            risk_appetite TEXT NOT NULL DEFAULT '',
-            investment_horizon TEXT NOT NULL DEFAULT '',
-            institution_type TEXT NOT NULL DEFAULT '',
-            risk_preference TEXT NOT NULL DEFAULT '',
-            asset_focus_json TEXT NOT NULL DEFAULT '[]',
-            market_focus_json TEXT NOT NULL DEFAULT '[]',
-            expertise_level TEXT NOT NULL DEFAULT '',
-            activity TEXT NOT NULL DEFAULT '',
-            current_mood TEXT NOT NULL DEFAULT '',
-            confidence TEXT NOT NULL DEFAULT '',
-            notes TEXT NOT NULL DEFAULT '',
-            last_active_at TEXT NOT NULL DEFAULT '',
-            total_interactions INTEGER NOT NULL DEFAULT 0,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    _ensure_table_columns(
-        connection,
-        table_name="client_profiles",
-        columns={
-            "institution_type": "TEXT NOT NULL DEFAULT ''",
-            "risk_preference": "TEXT NOT NULL DEFAULT ''",
-            "asset_focus_json": "TEXT NOT NULL DEFAULT '[]'",
-            "market_focus_json": "TEXT NOT NULL DEFAULT '[]'",
-            "expertise_level": "TEXT NOT NULL DEFAULT ''",
-            "activity": "TEXT NOT NULL DEFAULT ''",
-            "current_mood": "TEXT NOT NULL DEFAULT ''",
-            "emotional_trend": "TEXT NOT NULL DEFAULT ''",
-            "stress_level": "TEXT NOT NULL DEFAULT ''",
-            "confidence": "TEXT NOT NULL DEFAULT ''",
-            "notes": "TEXT NOT NULL DEFAULT ''",
-            "personal_facts_json": "TEXT NOT NULL DEFAULT '[]'",
-        },
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS conversation_threads (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            client_id TEXT NOT NULL,
-            channel TEXT NOT NULL,
-            thread_id TEXT NOT NULL,
-            opened_at TEXT NOT NULL,
-            last_active_at TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'active',
-            UNIQUE(client_id, channel, thread_id)
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS conversation_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            client_id TEXT NOT NULL,
-            channel TEXT NOT NULL,
-            thread_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            metadata_json TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (client_id, channel, thread_id)
-                REFERENCES conversation_threads(client_id, channel, thread_id)
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS delivery_queue (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            client_id TEXT NOT NULL,
-            channel TEXT NOT NULL,
-            thread_id TEXT NOT NULL,
-            source_type TEXT NOT NULL,
-            source_artifact_id INTEGER,
-            content_rendered TEXT NOT NULL,
-            status TEXT NOT NULL,
-            delivered_at TEXT,
-            client_reaction TEXT NOT NULL DEFAULT '',
-            metadata_json TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_analytical_observations_created ON analytical_observations(id DESC)"
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_research_artifacts_type_created ON research_artifacts(artifact_type, id DESC)"
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_trading_artifacts_research_created ON trading_artifacts(research_artifact_id, id DESC)"
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_decision_log_research_created ON decision_log(research_artifact_id, id DESC)"
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_performance_records_metric_created ON performance_records(metric_name, id DESC)"
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_conversation_messages_thread_created ON conversation_messages(client_id, channel, thread_id, id DESC)"
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_delivery_queue_client_created ON delivery_queue(client_id, channel, thread_id, id DESC)"
-    )
-    # -- Portfolio volatility management tables ---------------------
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS portfolio_holdings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            portfolio_id TEXT NOT NULL DEFAULT 'default',
-            symbol TEXT NOT NULL,
-            name TEXT NOT NULL,
-            asset_class TEXT NOT NULL,
-            weight REAL NOT NULL,
-            notional REAL NOT NULL,
-            updated_at TEXT NOT NULL,
-            UNIQUE(portfolio_id, symbol)
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS portfolio_vol_snapshots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            portfolio_id TEXT NOT NULL DEFAULT 'default',
-            snapshot_json TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_portfolio_vol_snapshots_portfolio ON portfolio_vol_snapshots(portfolio_id, id DESC)"
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS portfolio_alerts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            portfolio_id TEXT NOT NULL DEFAULT 'default',
-            alert_type TEXT NOT NULL,
-            severity TEXT NOT NULL,
-            message TEXT NOT NULL,
-            acknowledged INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS subagent_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id TEXT NOT NULL,
-            parent_agent TEXT NOT NULL,
-            task_type TEXT NOT NULL,
-            objective TEXT NOT NULL,
-            scope_tags_json TEXT NOT NULL,
-            status TEXT NOT NULL,
-            summary TEXT NOT NULL DEFAULT '',
-            elapsed_seconds REAL NOT NULL DEFAULT 0.0,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    # -- Three-layer memory: group tables --------------------------------
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS group_profiles (
-            group_id TEXT PRIMARY KEY,
-            group_name TEXT NOT NULL DEFAULT '',
-            group_topic TEXT NOT NULL DEFAULT '',
-            group_notes TEXT NOT NULL DEFAULT '',
-            member_count INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS group_members (
-            group_id TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            display_name TEXT NOT NULL DEFAULT '',
-            role_in_group TEXT NOT NULL DEFAULT '',
-            personality_notes TEXT NOT NULL DEFAULT '',
-            first_seen_at TEXT NOT NULL,
-            last_seen_at TEXT NOT NULL,
-            message_count INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (group_id, user_id)
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS group_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id TEXT NOT NULL,
-            thread_id TEXT NOT NULL DEFAULT 'main',
-            user_id TEXT NOT NULL,
-            display_name TEXT NOT NULL DEFAULT '',
-            content TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_group_messages_group_thread "
-        "ON group_messages(group_id, thread_id, id DESC)"
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_group_members_group "
-        "ON group_members(group_id, last_seen_at DESC)"
-    )
+    # -- issue #113 P0+P4: drop legacy downstream-shaped tables ------
+    # Trading / analytical / messaging / portfolio / subagent_runs were
+    # scaffolded for downstream services that never landed. Tables verified
+    # empty in production at branch cut; safe to drop on existing engine.db.
+    # Children-before-parents ordering keeps PRAGMA foreign_keys=ON happy
+    # if a dev still has stale rows locally. ``research_artifacts`` and
+    # ``rag_sync_watermarks`` joined the drop list in P4 when src/rag/
+    # was removed.
+    for legacy_table in (
+        "trading_artifacts",
+        "decision_log",
+        "trade_signals",
+        "research_artifacts",
+        "position_state",
+        "performance_records",
+        "regime_snapshots",
+        "generated_notes",
+        "analytical_observations",
+        "conversation_messages",
+        "conversation_threads",
+        "client_profiles",
+        "delivery_queue",
+        "group_messages",
+        "group_members",
+        "group_profiles",
+        "portfolio_alerts",
+        "portfolio_vol_snapshots",
+        "portfolio_holdings",
+        "subagent_runs",
+        "rag_sync_watermarks",
+    ):
+        connection.execute(f"DROP TABLE IF EXISTS {legacy_table}")
     # -- Document storage: 5-table normalized schema --------------------
     connection.execute(
         """
@@ -1119,16 +820,6 @@ def apply_schema(connection: sqlite3.Connection) -> None:
             document_id TEXT PRIMARY KEY,
             extra_json TEXT NOT NULL DEFAULT '{}',
             FOREIGN KEY (document_id) REFERENCES document(document_id)
-        )
-        """
-    )
-    # -- RAG sync watermarks ----------------------------------------
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS rag_sync_watermarks (
-            source_type TEXT PRIMARY KEY,
-            last_synced_id INTEGER NOT NULL DEFAULT 0,
-            last_synced_at TEXT NOT NULL
         )
         """
     )
@@ -1667,10 +1358,10 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_cal_econ_event_date_indicator "
         "ON cal_econ_event(indicator_id, date(event_time_utc))"
     )
-    # Issue #76 P0 — accept synthetic events injected by the X (Twitter)
-    # social_breakout detector (`source='x_derived'`). The new column is
-    # blank for the existing official-feed rows and only populated by the
-    # sentiment lane.
+    # Issue #76 P0 added ``event_type`` so the X (Twitter) sentiment
+    # lane could synthesise rows; issue #113 P2 unhooked the synthesis
+    # from this repo (downstream territory). The column stays for the
+    # existing rows + the calendar-side `subtype` projection.
     _ensure_table_columns(
         connection,
         table_name="cal_econ_event",
@@ -2005,8 +1696,9 @@ def apply_schema(connection: sqlite3.Connection) -> None:
     # engagement metrics have no slot). x_post_event_links bridges
     # to cal_econ_event via the composite (provider, provider_event_id)
     # convention used by calendar_event_vintages — no strict FK so
-    # social_breakout rows synthesised by the detector and legacy
-    # calendar_events ids both resolve.
+    # legacy calendar_events ids resolve too. (Issue #113 P2 retired
+    # the downstream-shaped social_breakout synthesis; existing rows
+    # in production are kept as historical artifacts.)
     # ``handle`` is the PK because it is the only stable identifier
     # known at seed time — X's numeric ``user_id`` requires an API
     # resolution step that the P1 ingestion client performs on first
@@ -2107,6 +1799,10 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         "ON x_post_keywords(keyword, first_seen_at DESC)"
     )
 
+    # link_type CHECK shrank in issue #113 P2 — `social_breakout` is
+    # gone with the spike-detector calendar write-back. Existing rows
+    # carrying the old value stay in production engine.db (CHECK only
+    # enforces on new INSERTs); fresh DBs reject it.
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS x_post_event_links (
@@ -2115,7 +1811,7 @@ def apply_schema(connection: sqlite3.Connection) -> None:
             cal_provider_event_id TEXT NOT NULL,
             link_type             TEXT NOT NULL
                 CHECK (link_type IN (
-                    'pre_release','post_release','keyword_match','social_breakout'
+                    'pre_release','post_release','keyword_match'
                 )),
             created_at            TEXT NOT NULL,
             PRIMARY KEY (post_id, cal_provider, cal_provider_event_id),

@@ -21,7 +21,6 @@ from bs4 import BeautifulSoup
 from contracts import format_epoch_iso, normalize_utc_iso, to_epoch_ms
 from env import get_env_value
 from ingestion.news._classify import Deduplicator
-from ingestion.news._extract import extract_news_metadata
 from ingestion.news._config import get_feeds
 from ingestion.news._fetcher import ArticleFetcher
 from ingestion._shared.url_canon import canonicalize_url, content_hash

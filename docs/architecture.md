@@ -10,7 +10,7 @@ from ~25 free/licensed upstreams instead of BBG's paid feed.
 resolves macro + market + calendar + document data from ~25 upstreams into a
 single SQLite store that downstream services (analyst UI, RAG, agents) read
 through one service interface.
-**Last updated:** 2026-05-02 (branch `feat/issue-112-us-workbook-sources`, sentix Economic Index US mappings added to the macro time-series pipeline; prior public-read allowlist for `POST /v1/ops/<op>` remains in `macro_data/server.py` via `PUBLIC_READ_OPS` for six read ops: `resolve_indicator`, `resolve_indicator_history`, `list_items`, `get_document`, `get_release_schedule`, `get_release_status`; admin / write ops stay reachable via CLI / systemd over the same in-process service — see § Service boundary)
+**Last updated:** 2026-05-02 (branch `refactor/issue-113-data-layer-only` complete: P0+P1+P2+P3+P4. P0 dropped trading/analytical/messaging/portfolio/subagent_runs. P1 stripped 14 LLM-enrichment columns from `news_articles` and deleted `src/ingestion/news/_extract.py`. P2 retired the `cal_econ_event` write-back from `XSpikeDetector` and dropped `social_breakout` from the `x_post_event_links.link_type` CHECK. P3 deleted the three downstream-shaped service ops `search_knowledge_base` (RAG-shaped), `get_surprise_summary` (derived signal), and `get_indicator_trend` (collapses into `get_indicator_history`). P4 deleted `src/rag/` (~2480 LOC) along with the `research_artifacts` and `rag_sync_watermarks` tables, the `rag` CLI subcommand, and the `_build_optional_retriever` factory hook. Public-read allowlist for `POST /v1/ops/<op>` remains in `macro_data/server.py` via `PUBLIC_READ_OPS` for six read ops: `resolve_indicator`, `resolve_indicator_history`, `list_items`, `get_document`, `get_release_schedule`, `get_release_status`; admin / write ops stay reachable via CLI / systemd over the same in-process service — see § Service boundary)
 
 ### Bloomberg-capability coverage (current → 1.0)
 
@@ -21,12 +21,12 @@ through one service interface.
 | ECO — economic calendar | `cal_econ_*` + official sources (BLS/BEA/Census/ISM/Fed/ECB/NBS/BoJ/Statistics Bureau JP/INSEE/ZEW/Ifo/GfK/HCOB); TE retained as historical source | shipped (issues #8, #9, #13 P2, #14 P1/P2, #15 P4a/P4b/P4c/P5, #23) |
 | EVTS — corporate calendar | `cal_corp_*` + EODHD | in flight (issue #8) |
 | FA — company fundamentals (income / balance / cashflow / ratios) | `fundamentals_*` + EODHD `/api/fundamentals/` | shipped (issue #68) |
-| Terminal News (N) | `news_articles` + 140-feed RSS pipeline + classifier | shipped core; dedup + ranking ongoing |
+| Terminal News (N) | `news_articles` + 140-feed RSS pipeline + Jaccard dedup | shipped core (LLM enrichment removed in #113 P1; downstream owns) |
 | Research / NIM | `document` + `document_blob` (+ RAG index) | shipped core; Fed + gov-report wired |
-| PORT / PRTU analytics | `portfolio_*`, `trade_signals`, `performance_records` | scaffolded; awaiting downstream |
+| PORT / PRTU analytics | downstream concern — not in this repo (issue #113) | downstream |
 | FLDS / SRCH (metadata search) | `subjects` + `concept_map` + `list_items` family filter | shipped (issues #2, #5) |
 | Release alerts, SRCY | `release_schedule` + `release_status` + 3 alert types | shipped |
-| Terminal chat (IB / MSG) | `conversation_threads` / `_messages`, `group_*`, `delivery_queue` | scaffolded |
+| Terminal chat (IB / MSG) | downstream concern — not in this repo (issue #113) | downstream |
 
 "Shipped" = tables + code in place. "In flight" = current work. "Scaffolded" =
 schema exists; population pending downstream services.
@@ -59,9 +59,10 @@ the resolution layer.
 | **Storage** | `src/storage/{sqlite.py, schema.py, queries/}`, ~60 tables | Canonical persistence |
 | **Resolution** | `src/macro_data/service/` + storage helpers | Cross-source ranking, PIT queries, unified views |
 | **Service** | `src/macro_data/cli.py`, `server.py` | CLI + HTTP boundary |
-| **RAG sidecar** | `src/rag/` | Local semantic index + retrieval (Milvus optional) |
 
-Everything else (agents, UIs, notebooks) is a consumer.
+Everything else (agents, UIs, notebooks, **RAG**) is a consumer; the
+in-tree `src/rag/` sidecar was retired in issue #113 P4 — downstream
+RAG services consume `get_document` / `list_items` over HTTP.
 
 ---
 
@@ -83,8 +84,8 @@ Everything else (agents, UIs, notebooks) is a consumer.
 
 ### 3. News
 
-- **Clients:** `NewsIngestionClient` over 140 RSS feeds (`ingestion/news/_config.py`). Fingerprinting in `article_fingerprint` handles de-dup.
-- **Classifier pipeline:** `news_classify.py` + `news_extract.py` for content extraction, domain detection, trend bucketing.
+- **Clients:** `NewsIngestionClient` over 140 RSS feeds (`ingestion/news/_config.py`). Fingerprinting in `article_fingerprint` handles de-dup; Jaccard token overlap on titles (24h window) catches near-duplicates before storage.
+- **Storage:** `news_articles` carries the slim raw row (title, url, description, content, language, authors). Issue #113 P1 deleted the LLM-extraction path (`_extract.py`) and the 14 derived columns (`impact_level`, `finance_category`, `confidence`, `institution`, `country`, `market`, `asset_class`, `sector`, `document_type`, `event_type`, `subject`, `subject_id`, `data_period`, `contains_commentary`, `extraction_provider`). Downstream services that want enrichment run their own pipeline against these rows.
 
 ### 4. Market data (issue #1 — shipped, extended by issue #67)
 
@@ -248,14 +249,6 @@ Issue #36 — Wayback evidence-archive URL per vintage row:
 
 - `source_capability` registers each source's discovery / latest-sync / status contract. `catalog_entity` + `catalog_sync_*` persist crawled catalogs and run logs — used for OECD / World Bank / ILO / SDMX catalogs.
 
-### 8. RAG sidecar
-
-- `src/rag/`: chunker, BM25 lexical, embeddings, Milvus vector store, reranker, retriever, orchestrator, policy layer. Reads from `document_blob`; writes to a sibling index. Optional at runtime.
-
-### 9. Trading / research artifacts (scaffolded)
-
-- `trade_signals`, `decision_log`, `position_state`, `performance_records`, `analytical_observations`, `research_artifacts`, `generated_notes`, `regime_snapshots`, `portfolio_*`, `group_*`, `client_profiles`, `conversation_threads` / `_messages`, `delivery_queue`, `subagent_runs`. Tables exist; most are scaffolding pending the downstream services that will populate them.
-
 ---
 
 ## Service boundary
@@ -305,19 +298,17 @@ defeats the whole aggregation-layer premise.
 src/
   contracts.py              Core DTOs (Event, CalendarItem, MarketSnapshot, RegimeState, ...)
   storage/
-    sqlite.py               SQLiteEngineStore — composes 8 query mixins + connection-management base
+    sqlite.py               SQLiteEngineStore — composes 7 query mixins + connection-management base
     schema.py               apply_schema(connection) — every CREATE TABLE / INDEX / additive ALTER
-    models/                 40 frozen record dataclasses, per-domain (issue #58 Tier 2.1A)
+    models/                 Frozen record dataclasses, per-domain (issue #58 Tier 2.1A)
     queries/                Per-domain SQL helpers, mixed into SQLiteEngineStore (issue #71 Tier 2.1B)
-      analytical.py         regime_snapshots, generated_notes, analytical_observations, …
       calendar.py           calendar_events, vintages, indicator/alias, release_schedule/status + free helpers
       documents.py          doc_source/release_family, document/blob/extra, FTS, item_subjects, list_items_*
+      fundamentals.py       fundamentals_raw + company/financials/highlights/estimates (issue #68)
       indicator.py          indicators, vintages, obs_*, concept_map, source_capability + catalog_*, seed dicts
-      market.py             market_prices/instruments/symbol_history/price_bars + portfolio_*
-      messaging.py          client_profiles, conversations, delivery_queue, group_*
+      market.py             market_prices/instruments/symbol_history/price_bars
       news.py               news_articles, trend_topics, article_fingerprint, news_context scoring
       sentiment.py          x_tracked_accounts, x_posts, x_keyword_pool — X (Twitter) lane (issue #76)
-      trading.py            trade_signals, decision_log, position_state, performance, trading_artifacts
     STORAGE.md              Table-by-table narrative (kept in sync with schema.py)
     subjects.py             Subject vocabulary loader + tagger
     subjects.yaml           Canonical subject list (edit here, sync via subjects.py)
@@ -341,7 +332,6 @@ src/
       _ops_health.py        refresh-all/run-schedule/source listing/health/alerts
     cli.py, server.py       Thin boundaries
     factory.py, client.py   Wiring + programmatic access
-  rag/                      Local RAG (see src/rag/README.md)
 ```
 
 ---
@@ -351,7 +341,7 @@ src/
 | Issue | Branch | Slice |
 |---|---|---|
 | #8 | `fix/issue-8-retire-legacy-calendar` | Final retirement slice: legacy HTML calendar source is inert, old read helpers point at `cal_econ_event`, and `/v1/calendar` is the downstream contract. |
-| #76 | `feat/issue-76-x-twitter-ingestion` | Sentiment lane bootstrap (P0–P4 shipped). P0 (schema): five `x_*` tables, `cal_econ_event.event_type` extension, `v_calendar_item` projects `event_type` as `subtype`, ~50-keyword + ~25-account seeds. P1 (timeline polling): `XV2Client` paginated with `pagination_token`; `XTimelineIngestor`; priority-tiered scheduler (15min/30min/1h). P2 (keyword search): `search_recent_tweets` with `-is:retweet lang:en` appended; truncated drains return `truncated=True` to skip the cooldown stamp. P3 (discovery + event injection): `XSpikeDetector` (per-hour rate comparison, 3× threshold, `min_baseline_count=12`, replay-safe `now_iso` upper bound) materialises `cal_econ_event` rows with `source='x_derived'` / `event_type='social_breakout'` (window-specific `provider_event_id` so same-day double-spikes don't collapse) + `x_post_event_links` evidence (matched `is_available=1` filter); `XHashtagDiscoveryRunner` extracts `entities.hashtags` and upserts novel terms as `category='derived'`. P4 (availability): `XAvailabilityPatrol` runs every 6h on posts with `like_count + retweet_count > 50` fetched in last 72h, batched 100/call via `GET /2/tweets?ids=...`; only `Not Found Error` results flip `is_available=0`; resurfaced posts auto-restore via `upsert_x_post` ON CONFLICT setting `is_available=1`. **Awaiting merge.** |
+| #76 | `feat/issue-76-x-twitter-ingestion` | Sentiment lane bootstrap (P0–P4 shipped). P0 (schema): five `x_*` tables, `cal_econ_event.event_type` extension, `v_calendar_item` projects `event_type` as `subtype`, ~50-keyword + ~25-account seeds. P1 (timeline polling): `XV2Client` paginated with `pagination_token`; `XTimelineIngestor`; priority-tiered scheduler (15min/30min/1h). P2 (keyword search): `search_recent_tweets` with `-is:retweet lang:en` appended; truncated drains return `truncated=True` to skip the cooldown stamp. P3 (discovery): `XSpikeDetector` (per-hour rate comparison, 3× threshold, `min_baseline_count=12`, replay-safe `now_iso` upper bound) returns volume-spike observations; `XHashtagDiscoveryRunner` extracts `entities.hashtags` and upserts novel terms as `category='derived'`. **Issue #113 P2 retired the `cal_econ_event` write-back from the spike detector — calendar synthesis from social signal is downstream territory; existing `source='x_derived'` rows in production stay as historical artifacts.** P4 (availability): `XAvailabilityPatrol` runs every 6h on posts with `like_count + retweet_count > 50` fetched in last 72h, batched 100/call via `GET /2/tweets?ids=...`; only `Not Found Error` results flip `is_available=0`; resurfaced posts auto-restore via `upsert_x_post` ON CONFLICT setting `is_available=1`. **Awaiting merge.** |
 
 Closed recently (context only — the code is the source of truth):
 

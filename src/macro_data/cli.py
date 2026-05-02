@@ -149,12 +149,6 @@ def build_parser() -> argparse.ArgumentParser:
     wb_refresh.add_argument("--sleep-seconds", type=float, default=0.3)
     wb_refresh.add_argument("--db-path", default=None)
 
-    rag_parser = subparsers.add_parser("rag")
-    rag_sub = rag_parser.add_subparsers(dest="rag_command", required=True)
-    rag_sub.add_parser("calibrate")
-    rag_sub.add_parser("sync")
-    rag_sub.add_parser("status")
-
     validate = subparsers.add_parser("validate")
     validate.add_argument("--source", default=None, help="Validate a single source")
     validate.add_argument("--cross-source", action="store_true", help="Run cross-source checks")
@@ -194,29 +188,6 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose.add_argument("--db-path", default=None)
 
     return parser
-
-
-def _run_rag(args: argparse.Namespace) -> int:
-    from rag.bridge import MacroIngestionBridge
-    from rag.config import RAGConfig
-    from rag.embeddings import Embedder
-    from rag.vector_store import VectorStore
-
-    cfg = RAGConfig.from_env()
-    store = VectorStore(cfg)
-    store.init_collection()
-    embedder = Embedder(cfg)
-    bridge = MacroIngestionBridge(store, embedder, cfg)
-    if args.rag_command == "calibrate":
-        print(json.dumps(bridge.calibrate(), ensure_ascii=False, indent=2))
-        return 0
-    if args.rag_command == "sync":
-        print(json.dumps(bridge.sync(), ensure_ascii=False, indent=2))
-        return 0
-    if args.rag_command == "status":
-        print(json.dumps(bridge.status(), ensure_ascii=False, indent=2))
-        return 0
-    return 2
 
 
 def _run_oecd_dataflows(args: argparse.Namespace) -> int:
@@ -803,8 +774,6 @@ def main(argv: list[str] | None = None) -> int:
         return _run_oecd_generate_configs(args)
     if args.command == "oecd-refresh-catalog":
         return _run_oecd_refresh_catalog(args)
-    if args.command == "rag":
-        return _run_rag(args)
     parser.error("unknown command")
     return 2
 

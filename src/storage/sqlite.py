@@ -5,11 +5,11 @@ After issue #71 Tier 2.1B the file is reduced to:
 * connection-management + schema-bootstrap base methods on
   ``SQLiteEngineStore`` (``__init__`` / ``get_connection`` /
   ``_connection`` / ``init_schema``);
-* the 8 per-domain query mixins composed into ``SQLiteEngineStore`` via
+* per-domain query mixins composed into ``SQLiteEngineStore`` via
   multiple inheritance, each owning the SQL for its tables — see
-  ``storage.queries.{calendar,documents,indicator,market,news,trading,
-  messaging,analytical}``;
-* backwards-compatibility re-exports of the 40 record dataclasses from
+  ``storage.queries.{calendar,documents,fundamentals,indicator,market,
+  news,sentiment}``;
+* backwards-compatibility re-exports of the record dataclasses from
   ``storage.models`` and the calendar-vintage helper from
   ``storage.queries.calendar``, so external ``from storage.sqlite import
   XRecord`` / ``…import append_calendar_event_vintage_if_changed_with_conn``
@@ -28,16 +28,11 @@ from pathlib import Path
 from typing import Iterator
 
 from storage.models import (
-    AnalyticalObservationRecord,
     CalendarEventVintageRecord,
     CalendarIndicatorAliasRecord,
     CalendarIndicatorRecord,
     CentralBankCommunicationRecord,
-    ClientProfileRecord,
     ConceptMapRecord,
-    ConversationMessageRecord,
-    DecisionLogRecord,
-    DeliveryQueueRecord,
     DocReleaseFamilyRecord,
     DocSourceRecord,
     DocumentBlobRecord,
@@ -48,10 +43,6 @@ from storage.models import (
     FundamentalsFinancialsRecord,
     FundamentalsHighlightsRecord,
     FundamentalsRawRecord,
-    GeneratedNoteRecord,
-    GroupMemberRecord,
-    GroupMessageRecord,
-    GroupProfileRecord,
     IndicatorObservationRecord,
     IndicatorVintageRecord,
     MarketCorpActionsRawRecord,
@@ -65,20 +56,13 @@ from storage.models import (
     ObsFamilyRecord,
     ObsRawRecord,
     ObsSourceRecord,
-    PerformanceRecord,
-    PositionStateRecord,
-    RegimeSnapshotRecord,
     ReleaseScheduleRecord,
     ReleaseStatusRecord,
-    ResearchArtifactRecord,
     ResolvedObservation,
     StoredEventRecord,
-    TradeSignalRecord,
-    TradingArtifactRecord,
     TrendTopicRecord,
     XPostRecord,
 )
-from storage.queries.analytical import _AnalyticalQueriesMixin
 from storage.queries.calendar import (
     _CalendarQueriesMixin,
     append_calendar_event_vintage_if_changed_with_conn,
@@ -87,10 +71,8 @@ from storage.queries.documents import _DocumentsQueriesMixin
 from storage.queries.fundamentals import _FundamentalsQueriesMixin
 from storage.queries.indicator import _IndicatorQueriesMixin
 from storage.queries.market import _MarketQueriesMixin
-from storage.queries.messaging import _MessagingQueriesMixin
 from storage.queries.news import _NewsQueriesMixin
 from storage.queries.sentiment import _SentimentQueriesMixin
-from storage.queries.trading import _TradingQueriesMixin
 from storage.schema import apply_schema
 
 
@@ -100,16 +82,13 @@ def default_engine_db_path(root: Path | None = None) -> Path:
 
 
 class SQLiteEngineStore(
-    _AnalyticalQueriesMixin,
     _CalendarQueriesMixin,
     _DocumentsQueriesMixin,
     _FundamentalsQueriesMixin,
     _IndicatorQueriesMixin,
     _MarketQueriesMixin,
-    _MessagingQueriesMixin,
     _NewsQueriesMixin,
     _SentimentQueriesMixin,
-    _TradingQueriesMixin,
 ):
     def __init__(self, db_path: Path | None = None) -> None:
         self.db_path = db_path or default_engine_db_path()
