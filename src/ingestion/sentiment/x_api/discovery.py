@@ -1,19 +1,20 @@
-"""Hot-topic discovery + social-breakout event injection.
+"""Hot-topic discovery on the X (Twitter) sentiment lane.
 
-Issue #76 P3. Wraps three flows:
+Issue #76 P3 originally bundled spike detection with calendar-event
+injection. Issue #113 P2 unwound the injection — synthesising
+``cal_econ_event`` rows from social signal is downstream territory, not
+the data layer's job. The detector still scans for volume spikes and
+returns them so a downstream service can decide what to do; nothing
+writes back to ``cal_econ_event`` from this module any more.
+
+Two flows remain:
 
 1. **Volume / engagement spike detection.** SQL on
    ``_SentimentQueriesMixin`` — windowed counts per keyword, fired
    when the recent-window rate exceeds a multiple of the rolling
    baseline.
 
-2. **Calendar event injection.** Each spike materialises a synthetic
-   ``cal_econ_event`` row with ``source='x_derived'`` and
-   ``event_type='social_breakout'``, and backfills
-   ``x_post_event_links`` for every post in the trigger window so the
-   calendar consumer can pull the supporting evidence at read time.
-
-3. **Broad-discovery hashtag mining.** ``GET /2/tweets/search/recent``
+2. **Broad-discovery hashtag mining.** ``GET /2/tweets/search/recent``
    on the issue body's stock query
    (``(market OR macro OR fed OR inflation) lang:en -is:retweet has:links``)
    with ``entities`` requested. Co-occurring hashtags are counted; any
@@ -46,10 +47,11 @@ DEFAULT_DISCOVERY_QUERY = (
 
 
 @dataclass(frozen=True)
-class SocialBreakoutInjection:
+class SpikeObservation:
+    """One detected spike. Returned by ``XSpikeDetector.run``; no
+    side-effect on ``cal_econ_event`` after issue #113 P2."""
+
     keyword: str
-    cal_provider_event_id: str
-    triggering_post_count: int
     count_window: int
     count_baseline: int
 
@@ -84,7 +86,12 @@ def _hashtag_co_occurrences(posts: list[XPost]) -> Counter[str]:
 
 
 class XSpikeDetector:
-    """Volume / engagement spike → calendar event injection."""
+    """Volume / engagement spike scanner.
+
+    Issue #113 P2 unhooked the calendar-event injection. ``run`` now
+    just returns the spikes the underlying SQL flagged so a downstream
+    consumer can act on them.
+    """
 
     def __init__(self, store: SQLiteEngineStore) -> None:
         self.store = store
@@ -96,61 +103,23 @@ class XSpikeDetector:
         window_hours: int = 1,
         baseline_hours: int = 24,
         threshold: float = 3.0,
-    ) -> list[SocialBreakoutInjection]:
-        """Scan once for volume spikes and inject one calendar event
-        per triggering keyword.
-
-        Returns one ``SocialBreakoutInjection`` per spike injected so
-        the caller can log run statistics. Idempotent — re-running for
-        the same spike-window collapses onto the same
-        ``provider_event_id`` via the cal_econ_event PK."""
-        now = now_iso or utc_now().isoformat()
+    ) -> list[SpikeObservation]:
+        """Scan once for volume spikes and return one observation per
+        triggering keyword."""
         spikes = self.store.detect_x_volume_spikes(
-            now_iso=now,
+            now_iso=now_iso,
             window_hours=window_hours,
             baseline_hours=baseline_hours,
             threshold=threshold,
         )
-        injections: list[SocialBreakoutInjection] = []
-        for spike in spikes:
-            keyword = str(spike["keyword"])
-            window_start = self._window_start_iso(now, window_hours)
-            triggering_post_ids = (
-                self.store.list_x_post_ids_for_keyword_window(
-                    keyword=keyword,
-                    window_start_iso=window_start,
-                    window_end_iso=now,
-                )
+        return [
+            SpikeObservation(
+                keyword=str(spike["keyword"]),
+                count_window=int(spike["count_window"]),
+                count_baseline=int(spike["count_baseline"]),
             )
-            cal_provider_event_id = self.store.inject_social_breakout_event(
-                keyword=keyword,
-                event_time_utc=now,
-                title=f"X social_breakout: {keyword}",
-                triggering_post_ids=triggering_post_ids,
-                observed_at_epoch_ms=int(utc_now().timestamp() * 1000),
-            )
-            injections.append(
-                SocialBreakoutInjection(
-                    keyword=keyword,
-                    cal_provider_event_id=cal_provider_event_id,
-                    triggering_post_count=len(triggering_post_ids),
-                    count_window=int(spike["count_window"]),
-                    count_baseline=int(spike["count_baseline"]),
-                )
-            )
-        return injections
-
-    @staticmethod
-    def _window_start_iso(now_iso: str, hours: int) -> str:
-        from datetime import datetime, timedelta, timezone
-        # The store-side comparison uses datetime() so we don't need
-        # microsecond precision here — minute-grain is enough.
-        # Parse the ISO stamp; tolerate trailing ``Z``.
-        normalized = now_iso.replace("Z", "+00:00")
-        dt = datetime.fromisoformat(normalized)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return (dt - timedelta(hours=hours)).isoformat()
+            for spike in spikes
+        ]
 
 
 class XHashtagDiscoveryRunner:

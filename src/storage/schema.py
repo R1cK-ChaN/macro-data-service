@@ -1382,10 +1382,10 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_cal_econ_event_date_indicator "
         "ON cal_econ_event(indicator_id, date(event_time_utc))"
     )
-    # Issue #76 P0 — accept synthetic events injected by the X (Twitter)
-    # social_breakout detector (`source='x_derived'`). The new column is
-    # blank for the existing official-feed rows and only populated by the
-    # sentiment lane.
+    # Issue #76 P0 added ``event_type`` so the X (Twitter) sentiment
+    # lane could synthesise rows; issue #113 P2 unhooked the synthesis
+    # from this repo (downstream territory). The column stays for the
+    # existing rows + the calendar-side `subtype` projection.
     _ensure_table_columns(
         connection,
         table_name="cal_econ_event",
@@ -1720,8 +1720,9 @@ def apply_schema(connection: sqlite3.Connection) -> None:
     # engagement metrics have no slot). x_post_event_links bridges
     # to cal_econ_event via the composite (provider, provider_event_id)
     # convention used by calendar_event_vintages — no strict FK so
-    # social_breakout rows synthesised by the detector and legacy
-    # calendar_events ids both resolve.
+    # legacy calendar_events ids resolve too. (Issue #113 P2 retired
+    # the downstream-shaped social_breakout synthesis; existing rows
+    # in production are kept as historical artifacts.)
     # ``handle`` is the PK because it is the only stable identifier
     # known at seed time — X's numeric ``user_id`` requires an API
     # resolution step that the P1 ingestion client performs on first
@@ -1822,6 +1823,10 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         "ON x_post_keywords(keyword, first_seen_at DESC)"
     )
 
+    # link_type CHECK shrank in issue #113 P2 — `social_breakout` is
+    # gone with the spike-detector calendar write-back. Existing rows
+    # carrying the old value stay in production engine.db (CHECK only
+    # enforces on new INSERTs); fresh DBs reject it.
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS x_post_event_links (
@@ -1830,7 +1835,7 @@ def apply_schema(connection: sqlite3.Connection) -> None:
             cal_provider_event_id TEXT NOT NULL,
             link_type             TEXT NOT NULL
                 CHECK (link_type IN (
-                    'pre_release','post_release','keyword_match','social_breakout'
+                    'pre_release','post_release','keyword_match'
                 )),
             created_at            TEXT NOT NULL,
             PRIMARY KEY (post_id, cal_provider, cal_provider_event_id),
