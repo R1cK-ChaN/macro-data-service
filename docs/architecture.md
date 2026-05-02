@@ -10,7 +10,7 @@ from ~25 free/licensed upstreams instead of BBG's paid feed.
 resolves macro + market + calendar + document data from ~25 upstreams into a
 single SQLite store that downstream services (analyst UI, RAG, agents) read
 through one service interface.
-**Last updated:** 2026-05-02 (branch `refactor/issue-113-data-layer-only` P0, A-tier scaffolded tables + their mixin/model files dropped; trading/analytical/messaging/portfolio/subagent_runs no longer in this repo. `research_artifacts` table is held over until P4 because `src/rag/bridge.py` still SELECTs from it — gone with the rag sidecar. Public-read allowlist for `POST /v1/ops/<op>` remains in `macro_data/server.py` via `PUBLIC_READ_OPS` for six read ops: `resolve_indicator`, `resolve_indicator_history`, `list_items`, `get_document`, `get_release_schedule`, `get_release_status`; admin / write ops stay reachable via CLI / systemd over the same in-process service — see § Service boundary)
+**Last updated:** 2026-05-02 (branch `refactor/issue-113-data-layer-only` P0+P1. P0 dropped trading/analytical/messaging/portfolio/subagent_runs (research_artifacts kept until P4). P1 stripped 14 LLM-enrichment columns from `news_articles` and deleted `src/ingestion/news/_extract.py`; the news ingest path now writes the slim raw row only. Public-read allowlist for `POST /v1/ops/<op>` remains in `macro_data/server.py` via `PUBLIC_READ_OPS` for six read ops: `resolve_indicator`, `resolve_indicator_history`, `list_items`, `get_document`, `get_release_schedule`, `get_release_status`; admin / write ops stay reachable via CLI / systemd over the same in-process service — see § Service boundary)
 
 ### Bloomberg-capability coverage (current → 1.0)
 
@@ -21,7 +21,7 @@ through one service interface.
 | ECO — economic calendar | `cal_econ_*` + official sources (BLS/BEA/Census/ISM/Fed/ECB/NBS/BoJ/Statistics Bureau JP/INSEE/ZEW/Ifo/GfK/HCOB); TE retained as historical source | shipped (issues #8, #9, #13 P2, #14 P1/P2, #15 P4a/P4b/P4c/P5, #23) |
 | EVTS — corporate calendar | `cal_corp_*` + EODHD | in flight (issue #8) |
 | FA — company fundamentals (income / balance / cashflow / ratios) | `fundamentals_*` + EODHD `/api/fundamentals/` | shipped (issue #68) |
-| Terminal News (N) | `news_articles` + 140-feed RSS pipeline + classifier | shipped core; dedup + ranking ongoing |
+| Terminal News (N) | `news_articles` + 140-feed RSS pipeline + Jaccard dedup | shipped core (LLM enrichment removed in #113 P1; downstream owns) |
 | Research / NIM | `document` + `document_blob` (+ RAG index) | shipped core; Fed + gov-report wired |
 | PORT / PRTU analytics | downstream concern — not in this repo (issue #113) | downstream |
 | FLDS / SRCH (metadata search) | `subjects` + `concept_map` + `list_items` family filter | shipped (issues #2, #5) |
@@ -83,8 +83,8 @@ Everything else (agents, UIs, notebooks) is a consumer.
 
 ### 3. News
 
-- **Clients:** `NewsIngestionClient` over 140 RSS feeds (`ingestion/news/_config.py`). Fingerprinting in `article_fingerprint` handles de-dup.
-- **Classifier pipeline:** `news_classify.py` + `news_extract.py` for content extraction, domain detection, trend bucketing.
+- **Clients:** `NewsIngestionClient` over 140 RSS feeds (`ingestion/news/_config.py`). Fingerprinting in `article_fingerprint` handles de-dup; Jaccard token overlap on titles (24h window) catches near-duplicates before storage.
+- **Storage:** `news_articles` carries the slim raw row (title, url, description, content, language, authors). Issue #113 P1 deleted the LLM-extraction path (`_extract.py`) and the 14 derived columns (`impact_level`, `finance_category`, `confidence`, `institution`, `country`, `market`, `asset_class`, `sector`, `document_type`, `event_type`, `subject`, `subject_id`, `data_period`, `contains_commentary`, `extraction_provider`). Downstream services that want enrichment run their own pipeline against these rows.
 
 ### 4. Market data (issue #1 — shipped, extended by issue #67)
 

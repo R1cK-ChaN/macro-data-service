@@ -22,24 +22,9 @@ class NewsArticleRecord:
     timestamp: int
     description: str
     content_markdown: str
-    impact_level: str
-    finance_category: str
-    confidence: float
     content_fetched: bool
-    institution: str = ""
-    country: str = ""
-    market: str = ""
-    asset_class: str = ""
-    sector: str = ""
-    document_type: str = ""
-    event_type: str = ""
-    subject: str = ""
-    subject_id: str = ""
-    data_period: str = ""
-    contains_commentary: bool = False
     language: str = "en"
     authors: str = ""
-    extraction_provider: str = "keyword"
 
 
 @dataclass(frozen=True)

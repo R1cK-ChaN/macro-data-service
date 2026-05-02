@@ -20,7 +20,6 @@ from ingestion._shared.discovery import (
     search,
 )
 from ingestion.news.client import NewsIngestionClient
-from ingestion.news._extract import NewsExtraction
 from ingestion.news._types import PreparedNewsRecord
 from storage.sqlite import SQLiteEngineStore
 
@@ -157,33 +156,12 @@ def _prepared(**overrides) -> PreparedNewsRecord:
     return PreparedNewsRecord(**base)
 
 
-def _extraction(**overrides) -> NewsExtraction:
-    base = dict(
-        title="Fed chair warns CPI trajectory unstable",
-        institution="Reuters",
-        authors="Jane Reporter",
-        publish_date="2024-04-10",
-        data_period="2024-04",
-        country="US",
-        market="US Treasuries",
-        asset_class="Macro",
-        sector="Inflation",
-        document_type="News Article",
-        event_type="Market Commentary",
-        subject="CPI",
-        subject_id="",
-        language="en",
-        contains_commentary=True,
-        impact_level="high",
-        finance_category="inflation",
-        confidence=0.8,
-        extraction_provider="keyword",
-    )
-    base.update(overrides)
-    return NewsExtraction(**base)
-
-
-def test_mirror_creates_document_with_structured_columns(store) -> None:
+def test_mirror_creates_document_with_raw_columns(store) -> None:
+    """Issue #113 P1 stripped LLM-extraction enrichment from the news
+    ingest path; the document mirror now writes only the raw fetched
+    fields. Enrichment columns on `document` stay in the schema for
+    gov_report's own extraction lane and remain blank for news rows.
+    """
     client = NewsIngestionClient()
     # Build the subject tagger the same way store_articles does.
     client._ensure_news_doc_source(store)
@@ -195,7 +173,6 @@ def test_mirror_creates_document_with_structured_columns(store) -> None:
         store=store,
         tagger=tagger,
         entry=_prepared(),
-        extraction=_extraction(),
         article_content=(
             "The chair emphasized that headline CPI readings have been "
             "running hotter than expected for three consecutive months, "
@@ -207,15 +184,13 @@ def test_mirror_creates_document_with_structured_columns(store) -> None:
     doc = docs[0]
     assert doc.source_id == "news"
     assert doc.document_type == "report"  # news maps to 'report'
-    assert doc.title.startswith("Fed chair warns")
+    assert doc.title == "Fed chair warns CPI trajectory unstable"
     assert doc.subtitle == "Reuters Business"  # feed name carried here
-    assert doc.institution == "Reuters"
-    assert doc.asset_class == "Macro"
-    assert doc.impact_level == "high"
-    assert doc.contains_commentary is True
-    assert doc.confidence == 0.8
-    assert doc.subject_freetext == "CPI"
-    assert doc.event_type == "Market Commentary"
+    assert doc.country_code == "XX"  # no extraction → unknown country
+    assert doc.topic_code == "business"
+    assert doc.institution == ""
+    assert doc.asset_class == ""
+    assert doc.impact_level == ""
 
 
 def test_mirror_indexes_into_documents_fts(store) -> None:
@@ -229,7 +204,6 @@ def test_mirror_indexes_into_documents_fts(store) -> None:
         store=store,
         tagger=tagger,
         entry=_prepared(),
-        extraction=_extraction(),
         article_content="The chair emphasized headline CPI trajectory.",
     )
     hits = store.search_documents("CPI")
@@ -249,67 +223,19 @@ def test_mirror_tags_subjects_via_title_regex(store) -> None:
         store=store,
         tagger=tagger,
         entry=_prepared(),
-        extraction=_extraction(),
         article_content="body",
     )
     doc = store.list_documents(source_id="news", limit=1)[0]
     tags = dict(store.list_document_subjects(doc.document_id))
-    # "Fed chair warns CPI trajectory unstable" — matches econ.cpi (\bCPI\b)
-    # and rate.us.fed_funds (\bfed(eral reserve)?\s+rate\b? -- no, just \bFOMC\b
-    # / \bfed funds\b). Let's just assert CPI and check the tagger didn't
-    # over-match.
+    # "Fed chair warns CPI trajectory unstable" matches econ.cpi via the
+    # \bCPI\b regex on the subject tagger.
     assert "econ.cpi" in tags
     assert tags["econ.cpi"] == 0.8
 
 
-@pytest.mark.parametrize(
-    "extractor_country, expected",
-    [
-        ("", "XX"),
-        ("global", "XX"),
-        ("Global", "XX"),
-        ("World", "XX"),
-        ("US", "US"),
-        ("us", "US"),
-        ("USA", "US"),
-        ("united states", "US"),
-        ("China", "CN"),
-        ("JAPAN", "JP"),
-        ("Euro Area", "EU"),
-        ("UK", "GB"),
-        ("Unknown land", "XX"),
-    ],
-)
-def test_mirror_normalizes_country_code(
-    store, extractor_country: str, expected: str,
-) -> None:
-    """Regression for codex P2: blank / free-text country values must not
-    silently default to 'US' — that poisons downstream country filters
-    with global and non-US news."""
-    client = NewsIngestionClient()
-    client._ensure_news_doc_source(store)
-    from storage.subjects import SubjectTagger, sync_from_yaml
-    sync_from_yaml(store)
-    with store._connection(commit=False) as c:
-        tagger = SubjectTagger(c)
-    # Unique URL per parametrization so each case creates a distinct doc.
-    prepared = _prepared(
-        canonical_url=f"https://example.com/{expected}/{extractor_country}",
-        url_hash=f"{hash((extractor_country, expected)) & 0xFFFFFFFFFFFFFFFF:016x}" * 4,
-    )
-    client._mirror_as_document(
-        store=store, tagger=tagger, entry=prepared,
-        extraction=_extraction(country=extractor_country),
-        article_content="body",
-    )
-    doc = store.get_document(prepared.url_hash[:16])
-    assert doc is not None
-    assert doc.country_code == expected
-
-
 def test_mirror_skips_if_document_already_exists(store) -> None:
     """When a gov-report ingest wrote this URL first, news ingestion
-    should leave it alone so it isn't overwritten with news metadata."""
+    should leave it alone so it isn't overwritten."""
     client = NewsIngestionClient()
     client._ensure_news_doc_source(store)
     from storage.subjects import SubjectTagger, sync_from_yaml
@@ -318,22 +244,20 @@ def test_mirror_skips_if_document_already_exists(store) -> None:
         tagger = SubjectTagger(c)
 
     prepared = _prepared()
-    # First write — as a news document.
+    # First write — original title body.
     client._mirror_as_document(
         store=store, tagger=tagger, entry=prepared,
-        extraction=_extraction(impact_level="high"),
         article_content="original body",
     )
-    # Second write with different extraction — should be a no-op.
+    # Second write with a different prepared entry — should be a no-op
+    # because the canonical_url already exists.
+    second = _prepared(raw_title="Different headline that should not land")
     client._mirror_as_document(
-        store=store, tagger=tagger, entry=prepared,
-        extraction=_extraction(impact_level="critical",
-                               institution="SomethingElse"),
+        store=store, tagger=tagger, entry=second,
         article_content="updated body that should not land",
     )
     doc = store.list_documents(source_id="news", limit=5)[0]
-    assert doc.impact_level == "high"
-    assert doc.institution == "Reuters"
+    assert doc.title == "Fed chair warns CPI trajectory unstable"
 
 
 def test_ensure_news_doc_source_is_idempotent(store) -> None:

@@ -1,11 +1,15 @@
 """News-domain query helpers for SQLiteEngineStore.
 
 Covers news_articles + trend_topics + article_fingerprint plus the
-news-context scoring path used by analytical/messaging consumers.
+news-context retrieval used by downstream callers.
 
 Extracted from storage.sqlite in issue #71 Tier 2.1B-2. Methods rely on
 the ``self._connection`` context manager defined on the SQLiteEngineStore
 base class — composition wires them together via multiple inheritance.
+
+Issue #113 P1 stripped the LLM-enrichment columns from `news_articles`;
+the data layer now writes only the raw fetched fields. Downstream
+services that want enrichment run their own pipeline against these rows.
 """
 
 from __future__ import annotations
@@ -30,9 +34,9 @@ from storage.models.news import (
 
 
 class _NewsQueriesMixin:
-    _IMPACT_HALF_LIFE = {"critical": 7, "high": 5, "medium": 3, "low": 2, "info": 1}
-
-    _IMPACT_WEIGHT = {"critical": 2.0, "high": 1.5, "medium": 1.0, "low": 0.6, "info": 0.3}
+    # Half-life days used by ``get_news_context``: more recent articles
+    # weigh more without any per-article impact-level signal (issue #113 P1).
+    _DEFAULT_HALF_LIFE_DAYS = 3
 
     _TIME_DECAY_MAX_BOOST = 1.5
 
@@ -45,13 +49,8 @@ class _NewsQueriesMixin:
                 INSERT OR REPLACE INTO news_articles (
                     url_hash, source_feed, feed_category, title, url,
                     timestamp, description, content_markdown,
-                    impact_level, finance_category, confidence,
-                    content_fetched, institution, country, market,
-                    asset_class, sector, document_type, event_type,
-                    subject, subject_id, data_period,
-                    contains_commentary, language, authors,
-                    extraction_provider, scraped_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    content_fetched, language, authors, scraped_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     article.url_hash,
@@ -62,24 +61,9 @@ class _NewsQueriesMixin:
                     article.timestamp,
                     article.description,
                     article.content_markdown,
-                    article.impact_level,
-                    article.finance_category,
-                    article.confidence,
                     int(article.content_fetched),
-                    article.institution,
-                    article.country,
-                    article.market,
-                    article.asset_class,
-                    article.sector,
-                    article.document_type,
-                    article.event_type,
-                    article.subject,
-                    article.subject_id,
-                    article.data_period,
-                    int(article.contains_commentary),
                     article.language,
                     article.authors,
-                    article.extraction_provider,
                     utc_now().isoformat(),
                 ),
             )
@@ -89,11 +73,11 @@ class _NewsQueriesMixin:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO trend_topics (
-                    trend_id, provider, provider_topic_id, title_raw, topic,
-                    summary, keywords_json, category, region, popularity_score,
-                    provider_rank, engagement_score, comment_count,
-                    observed_at, expires_at, raw_json, normalized_topic_hash,
-                    scraped_at
+                    trend_id, provider, provider_topic_id, title_raw,
+                    topic, summary, keywords_json, category, region,
+                    popularity_score, provider_rank, engagement_score,
+                    comment_count, observed_at, expires_at, raw_json,
+                    normalized_topic_hash, scraped_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -154,30 +138,14 @@ class _NewsQueriesMixin:
         *,
         limit: int = 20,
         days: int = 7,
-        impact_level: str | None = None,
         feed_category: str | None = None,
-        finance_category: str | None = None,
-        country: str | None = None,
-        asset_class: str | None = None,
     ) -> list[NewsArticleRecord]:
         cutoff = int((utc_now() - timedelta(days=days)).timestamp())
         conditions = ["timestamp >= ?"]
         params: list[Any] = [cutoff]
-        if impact_level:
-            conditions.append("impact_level = ?")
-            params.append(impact_level)
         if feed_category:
             conditions.append("feed_category = ?")
             params.append(feed_category)
-        if finance_category:
-            conditions.append("finance_category = ?")
-            params.append(finance_category)
-        if country:
-            conditions.append("country = ?")
-            params.append(country)
-        if asset_class:
-            conditions.append("asset_class = ?")
-            params.append(asset_class)
         params.append(limit)
         with self._connection(commit=False) as connection:
             rows = connection.execute(
@@ -223,32 +191,16 @@ class _NewsQueriesMixin:
         query: str | None = None,
         days: int = 7,
         limit: int = 15,
-        impact_level: str | None = None,
         feed_category: str | None = None,
-        finance_category: str | None = None,
-        country: str | None = None,
-        asset_class: str | None = None,
         display_timezone: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Retrieve news with time-decay + impact-weight composite scoring."""
+        """Retrieve news with time-decay scoring (no per-article impact weight)."""
         cutoff = int((utc_now() - timedelta(days=days)).timestamp())
         conditions = ["timestamp >= ?"]
         params: list[Any] = [cutoff]
-        if impact_level:
-            conditions.append("impact_level = ?")
-            params.append(impact_level)
         if feed_category:
             conditions.append("feed_category = ?")
             params.append(feed_category)
-        if finance_category:
-            conditions.append("finance_category = ?")
-            params.append(finance_category)
-        if country:
-            conditions.append("country = ?")
-            params.append(country)
-        if asset_class:
-            conditions.append("asset_class = ?")
-            params.append(asset_class)
 
         with self._connection(commit=False) as connection:
             if query:
@@ -287,31 +239,23 @@ class _NewsQueriesMixin:
             article = self._row_to_news_article(row)
             pub = epoch_to_datetime(article.timestamp)
             age_days = max((now - pub).total_seconds() / 86400, 0.0)
-            half_life = self._IMPACT_HALF_LIFE.get(article.impact_level, 2)
             time_decay = self._TIME_DECAY_MIN_BOOST + (
                 (self._TIME_DECAY_MAX_BOOST - self._TIME_DECAY_MIN_BOOST)
-                * math.pow(2, -age_days / half_life)
+                * math.pow(2, -age_days / self._DEFAULT_HALF_LIFE_DAYS)
             )
-            impact_w = self._IMPACT_WEIGHT.get(article.impact_level, 0.5)
-            composite = time_decay * impact_w
 
             desc = article.description
             if len(desc) > 500:
                 desc = desc[:500] + "..."
             payload = {
                 "source_feed": article.source_feed,
+                "feed_category": article.feed_category,
                 "title": article.title,
                 "url": article.url,
                 "timestamp": article.timestamp,
                 "published_at": format_epoch_iso(article.timestamp),
                 "description": desc,
-                "impact_level": article.impact_level,
-                "finance_category": article.finance_category,
-                "country": article.country,
-                "asset_class": article.asset_class,
-                "subject": article.subject,
-                "event_type": article.event_type,
-                "score": round(composite, 4),
+                "score": round(time_decay, 4),
             }
             if display_timezone:
                 try:
@@ -322,7 +266,7 @@ class _NewsQueriesMixin:
                     payload["published_timezone"] = display_timezone
                 except ValueError:
                     pass
-            scored.append((composite, payload))
+            scored.append((time_decay, payload))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [item for _, item in scored[:limit]]
@@ -420,24 +364,9 @@ class _NewsQueriesMixin:
             timestamp=int(row["timestamp"]),
             description=row["description"],
             content_markdown=row["content_markdown"],
-            impact_level=row["impact_level"],
-            finance_category=row["finance_category"],
-            confidence=float(row["confidence"]),
             content_fetched=bool(row["content_fetched"]),
-            institution=row["institution"] or "",
-            country=row["country"] or "",
-            market=row["market"] or "",
-            asset_class=row["asset_class"] or "",
-            sector=row["sector"] or "",
-            document_type=row["document_type"] or "",
-            event_type=row["event_type"] or "",
-            subject=row["subject"] or "",
-            subject_id=row["subject_id"] or "",
-            data_period=row["data_period"] or "",
-            contains_commentary=bool(row["contains_commentary"]),
             language=row["language"] or "en",
             authors=row["authors"] or "",
-            extraction_provider=row["extraction_provider"] or "keyword",
         )
 
     def _row_to_trend_topic(self, row: sqlite3.Row) -> TrendTopicRecord:

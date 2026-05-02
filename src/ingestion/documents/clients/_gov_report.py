@@ -244,6 +244,9 @@ class GovReportIngestionClient:
                         ))
 
                 # --- Legacy news_articles storage ---
+                # issue #113 P1 stripped enrichment columns; gov reports
+                # keep importance / institution / country on the
+                # ``document_extra.extra_json`` payload above.
                 if store.news_article_exists(url_hash):
                     continue
                 ts = int(published_epoch_ms / 1000)
@@ -256,13 +259,7 @@ class GovReportIngestionClient:
                     timestamp=ts,
                     description=item.description,
                     content_markdown=content,
-                    impact_level=item.importance or "medium",
-                    finance_category=item.data_category,
-                    confidence=0.8,
                     content_fetched=bool(content),
-                    institution=item.institution,
-                    country=item.country,
-                    document_type="government_report",
                     language=item.language,
                 )
                 store.upsert_news_article(record)

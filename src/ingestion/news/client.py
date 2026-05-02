@@ -1,4 +1,9 @@
-"""News ingestion client."""
+"""News ingestion client.
+
+Issue #113 P1 removed the LLM-based metadata extraction from the ingest
+path; the data layer writes the slim raw record (title, url, description,
+content, language) and downstream services run their own enrichment.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +18,6 @@ from bs4 import BeautifulSoup
 
 from contracts import format_epoch_iso
 from ingestion.news._classify import Deduplicator
-from ingestion.news._extract import extract_news_metadata
 from ingestion.news._config import get_feeds
 from ingestion.news._fetcher import ArticleFetcher
 from ingestion._shared.url_canon import canonicalize_url, content_hash
@@ -35,36 +39,10 @@ _MIN_ARTICLE_CONTENT_CHARS = 100
 # release_family_id (the feed name) and the structured columns.
 _NEWS_DOC_SOURCE_ID = "news"
 _NEWS_DOCUMENT_TYPE = "report"
-# ISO 3166 user-assigned placeholder used when the extractor reports a
-# blank or non-two-letter country (global/unknown feeds). 'US' would
+# ISO 3166 user-assigned placeholder used when the per-feed config
+# doesn't carry a country (global / multi-region wires). 'US' would
 # wrongly bucket ECB / BoJ / global news under US filters.
 _UNKNOWN_COUNTRY_CODE = "XX"
-
-
-def _normalize_country_code(value: str | None) -> str:
-    """Coerce an extractor country string into a 2-letter ISO code.
-
-    Maps common human forms (e.g. 'Global', 'global', 'UK') to their
-    conventional codes and falls back to ``XX`` for blanks / unknowns so
-    downstream filters don't lie about provenance.
-    """
-    raw = (value or "").strip().upper()
-    if not raw or raw in {"GLOBAL", "WORLD", "INTERNATIONAL"}:
-        return _UNKNOWN_COUNTRY_CODE
-    # Aliases run before the len==2 shortcut so 'UK' normalizes to 'GB'
-    # instead of passing through as a non-ISO code.
-    aliases = {
-        "USA": "US", "UNITED STATES": "US", "AMERICA": "US",
-        "CHINA": "CN", "PRC": "CN",
-        "JAPAN": "JP",
-        "EUROPE": "EU", "EURO AREA": "EU", "EUROZONE": "EU", "EU": "EU",
-        "UK": "GB", "UNITED KINGDOM": "GB", "BRITAIN": "GB",
-    }
-    if raw in aliases:
-        return aliases[raw]
-    if len(raw) == 2:
-        return raw
-    return _UNKNOWN_COUNTRY_CODE
 
 
 class RefreshStats:
@@ -255,41 +233,16 @@ class NewsIngestionClient:
                 if len((article.content or "").strip()) < _MIN_ARTICLE_CONTENT_CHARS:
                     logger.info("news article dropped for low content: %s", entry.raw_url)
                     continue
-                extraction = extract_news_metadata(
-                    title=entry.raw_title,
-                    description=entry.description,
-                    content_markdown=article.content,
-                    source_feed=entry.source_feed,
-                    feed_category=entry.feed_category,
-                    published_at=format_epoch_iso(entry.timestamp),
-                )
                 record = NewsArticleRecord(
                     url_hash=entry.url_hash,
                     source_feed=entry.source_feed,
                     feed_category=entry.feed_category,
-                    title=extraction.title,
+                    title=entry.raw_title,
                     url=entry.raw_url,
                     timestamp=entry.timestamp,
                     description=entry.description,
                     content_markdown=article.content,
-                    impact_level=extraction.impact_level,
-                    finance_category=extraction.finance_category,
-                    confidence=extraction.confidence,
                     content_fetched=article.fetched,
-                    institution=extraction.institution,
-                    country=extraction.country,
-                    market=extraction.market,
-                    asset_class=extraction.asset_class,
-                    sector=extraction.sector,
-                    document_type=extraction.document_type,
-                    event_type=extraction.event_type,
-                    subject=extraction.subject,
-                    subject_id=extraction.subject_id,
-                    data_period=extraction.data_period,
-                    contains_commentary=extraction.contains_commentary,
-                    language=extraction.language,
-                    authors=extraction.authors,
-                    extraction_provider=extraction.extraction_provider,
                 )
                 store.upsert_news_article(record)
                 store.insert_fingerprint(
@@ -307,7 +260,6 @@ class NewsIngestionClient:
                     store=store,
                     tagger=tagger,
                     entry=entry,
-                    extraction=extraction,
                     article_content=article.content or "",
                 )
                 count += 1
@@ -363,7 +315,6 @@ class NewsIngestionClient:
         store: SQLiteEngineStore,
         tagger: SubjectTagger | None,
         entry: PreparedNewsRecord,
-        extraction,
         article_content: str,
     ) -> None:
         """Write one news article as a row in the document surface.
@@ -371,6 +322,8 @@ class NewsIngestionClient:
         Idempotent: if a document with this canonical_url already exists,
         skip the write (news_articles already deduped upstream, but a
         simultaneous gov_report ingest can race on the same URL).
+        Issue #113 P1 dropped the LLM-extraction fields; the document row
+        carries only what the raw feed provides.
         """
         if store.document_exists(entry.canonical_url):
             return
@@ -387,13 +340,13 @@ class NewsIngestionClient:
             release_family_id="",
             source_id=_NEWS_DOC_SOURCE_ID,
             canonical_url=entry.canonical_url,
-            title=extraction.title or entry.raw_title,
+            title=entry.raw_title,
             subtitle=entry.source_feed,
             document_type=_NEWS_DOCUMENT_TYPE,
             mime_type="text/html",
-            language_code=(extraction.language or "en")[:5],
-            country_code=_normalize_country_code(extraction.country),
-            topic_code=(extraction.finance_category or entry.feed_category)[:50],
+            language_code="en",
+            country_code=_UNKNOWN_COUNTRY_CODE,
+            topic_code=entry.feed_category[:50],
             published_date=published_date,
             published_at=published_at,
             published_precision="exact",
@@ -406,17 +359,6 @@ class NewsIngestionClient:
             published_epoch_ms=published_epoch_ms,
             created_epoch_ms=now_epoch_ms,
             updated_epoch_ms=now_epoch_ms,
-            institution=extraction.institution or "",
-            authors=extraction.authors or "",
-            data_period=extraction.data_period or "",
-            market=extraction.market or "",
-            asset_class=extraction.asset_class or "",
-            sector=extraction.sector or "",
-            event_type=extraction.event_type or "News Article",
-            impact_level=extraction.impact_level or "",
-            contains_commentary=bool(extraction.contains_commentary),
-            confidence=float(extraction.confidence or 0.0),
-            subject_freetext=extraction.subject or "",
         )
         store.upsert_document(doc)
 
@@ -438,12 +380,12 @@ class NewsIngestionClient:
 
         store.upsert_document_fts(
             document_id=doc_id,
-            title=extraction.title or entry.raw_title,
+            title=entry.raw_title,
             body=article_content,
         )
 
         if tagger is not None:
-            tags = dict(tagger.tag_text(extraction.title or entry.raw_title))
+            tags = dict(tagger.tag_text(entry.raw_title))
             if tags:
                 store.set_document_subjects(doc_id, tags)
 

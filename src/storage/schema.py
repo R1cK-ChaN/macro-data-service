@@ -500,74 +500,93 @@ def apply_schema(connection: sqlite3.Connection) -> None:
             timestamp INTEGER NOT NULL,
             description TEXT NOT NULL,
             content_markdown TEXT NOT NULL,
-            impact_level TEXT NOT NULL,
-            finance_category TEXT NOT NULL,
-            confidence REAL NOT NULL,
             content_fetched INTEGER NOT NULL DEFAULT 0,
+            language TEXT NOT NULL DEFAULT 'en',
+            authors TEXT NOT NULL DEFAULT '',
             scraped_at TEXT NOT NULL
         )
         """
     )
-    # -- news_articles new columns for LLM extraction -----------
-    _news_new_cols = [
-        ("institution", "TEXT NOT NULL DEFAULT ''"),
-        ("country", "TEXT NOT NULL DEFAULT ''"),
-        ("market", "TEXT NOT NULL DEFAULT ''"),
-        ("asset_class", "TEXT NOT NULL DEFAULT ''"),
-        ("sector", "TEXT NOT NULL DEFAULT ''"),
-        ("document_type", "TEXT NOT NULL DEFAULT ''"),
-        ("event_type", "TEXT NOT NULL DEFAULT ''"),
-        ("subject", "TEXT NOT NULL DEFAULT ''"),
-        ("subject_id", "TEXT NOT NULL DEFAULT ''"),
-        ("data_period", "TEXT NOT NULL DEFAULT ''"),
-        ("contains_commentary", "INTEGER NOT NULL DEFAULT 0"),
-        ("language", "TEXT NOT NULL DEFAULT 'en'"),
-        ("authors", "TEXT NOT NULL DEFAULT ''"),
-        ("extraction_provider", "TEXT NOT NULL DEFAULT 'keyword'"),
-    ]
-    for col_name, col_def in _news_new_cols:
-        try:
-            connection.execute(f"ALTER TABLE news_articles ADD COLUMN {col_name} {col_def}")
-        except sqlite3.OperationalError:
-            pass
+    # Backfill the slim columns that pre-#113 databases may not carry.
+    # CREATE TABLE IF NOT EXISTS leaves an existing table untouched, so
+    # databases that predate the original `language` / `authors` ALTERs
+    # need an explicit additive migration here.
+    _ensure_table_columns(
+        connection,
+        table_name="news_articles",
+        columns={
+            "language": "TEXT NOT NULL DEFAULT 'en'",
+            "authors": "TEXT NOT NULL DEFAULT ''",
+        },
+    )
     # -- FTS5 full-text search for news articles ----------------
     # Guarded: SQLite builds without FTS5 skip this block;
-    # search_news() falls back to LIKE queries.
+    # search_news() falls back to LIKE queries. Triggers + the virtual
+    # table are torn down up-front so the issue #113 P1 column drops
+    # below aren't blocked by a `subject`-referencing trigger.
+    try:
+        for trigger_name in ("news_fts_ai", "news_fts_ad", "news_fts_au"):
+            connection.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
+        legacy_news_fts = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='news_fts'"
+        ).fetchone()
+        if legacy_news_fts and "subject" in (legacy_news_fts[0] or ""):
+            connection.execute("DROP TABLE news_fts")
+    except sqlite3.OperationalError:
+        pass  # FTS5 not available; nothing to tear down
+    # -- issue #113 P1: drop LLM-enrichment columns from existing
+    # news_articles. Downstream that wants enrichment runs its own
+    # service against the raw rows. ALTER TABLE DROP COLUMN requires
+    # SQLite >= 3.35 (March 2021); the project pins Python >= 3.11 which
+    # ships SQLite >= 3.40. Older builds get a loud failure rather than
+    # a silent partial migration that breaks the next ingest.
+    existing_news_cols = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(news_articles)").fetchall()
+    }
+    _legacy_news_cols = (
+        "impact_level", "finance_category", "confidence",
+        "institution", "country", "market", "asset_class", "sector",
+        "document_type", "event_type", "subject", "subject_id",
+        "data_period", "contains_commentary", "extraction_provider",
+    )
+    for col_name in _legacy_news_cols:
+        if col_name not in existing_news_cols:
+            continue
+        connection.execute(f"ALTER TABLE news_articles DROP COLUMN {col_name}")
     try:
         connection.execute(
             """
             CREATE VIRTUAL TABLE IF NOT EXISTS news_fts USING fts5(
-                title, description, subject,
+                title, description,
                 content='news_articles',
                 content_rowid='id'
             )
             """
         )
-        for trigger_name in ("news_fts_ai", "news_fts_ad", "news_fts_au"):
-            connection.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
         connection.execute(
             """
             CREATE TRIGGER news_fts_ai AFTER INSERT ON news_articles BEGIN
-                INSERT INTO news_fts(rowid, title, description, subject)
-                VALUES (new.id, new.title, new.description, new.subject);
+                INSERT INTO news_fts(rowid, title, description)
+                VALUES (new.id, new.title, new.description);
             END
             """
         )
         connection.execute(
             """
             CREATE TRIGGER news_fts_ad AFTER DELETE ON news_articles BEGIN
-                INSERT INTO news_fts(news_fts, rowid, title, description, subject)
-                VALUES ('delete', old.id, old.title, old.description, old.subject);
+                INSERT INTO news_fts(news_fts, rowid, title, description)
+                VALUES ('delete', old.id, old.title, old.description);
             END
             """
         )
         connection.execute(
             """
             CREATE TRIGGER news_fts_au AFTER UPDATE ON news_articles BEGIN
-                INSERT INTO news_fts(news_fts, rowid, title, description, subject)
-                VALUES ('delete', old.id, old.title, old.description, old.subject);
-                INSERT INTO news_fts(rowid, title, description, subject)
-                VALUES (new.id, new.title, new.description, new.subject);
+                INSERT INTO news_fts(news_fts, rowid, title, description)
+                VALUES ('delete', old.id, old.title, old.description);
+                INSERT INTO news_fts(rowid, title, description)
+                VALUES (new.id, new.title, new.description);
             END
             """
         )

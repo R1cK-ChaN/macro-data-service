@@ -24,11 +24,7 @@ class NewsOpsMixin(LocalMacroDataServiceBase):
         articles = self._store.get_news_context(
             days=int(arguments.get("days", 3)),
             limit=int(arguments.get("limit", 15)),
-            impact_level=arguments.get("impact_level"),
             feed_category=arguments.get("feed_category"),
-            finance_category=arguments.get("finance_category"),
-            country=arguments.get("country"),
-            asset_class=arguments.get("asset_class"),
             display_timezone=arguments.get("timezone"),
         )
         return {"articles": articles}
@@ -58,11 +54,7 @@ class NewsOpsMixin(LocalMacroDataServiceBase):
             query=query,
             days=days,
             limit=limit,
-            impact_level=(arguments.get("impact_level") or "").strip() or None,
             feed_category=(arguments.get("feed_category") or "").strip() or None,
-            finance_category=(arguments.get("finance_category") or "").strip() or None,
-            country=(arguments.get("country") or "").strip() or None,
-            asset_class=(arguments.get("asset_class") or "").strip() or None,
             display_timezone=(arguments.get("timezone") or "").strip() or None,
         )
         return {"total": len(articles), "days": days, "articles": articles}
