@@ -12,13 +12,13 @@ Coverage is partial. The repo has connected official-source equivalents for core
 
 Coverage definitions:
 - connected: configured exact or direct-equivalent source path exists in repo
-- partial: source family exists, while the exact series, config, transform, or scheduled sync needs work
+- partial: source connector or provider exists, while the exact series, config, transform, or scheduled sync needs work
 - missing: no configured source path found in repo scan
 
 Field counts:
-- connected: 52
+- connected: 58
 - partial: 284
-- missing: 65
+- missing: 59
 - total extracted unique fields: 401
 
 Input source labels:
@@ -44,11 +44,11 @@ fetcher output, and schedule/vintage handling are wired.
 | Sheet | connected | partial | missing |
 | --- | ---: | ---: | ---: |
 | MOVE 和VIX | 1 | 0 | 1 |
-| 主要国家国债收益率利差 | 1 | 0 | 3 |
+| 主要国家国债收益率利差 | 2 | 0 | 2 |
 | 劳动力市场（月度指标） | 8 | 81 | 0 |
 | 周度数据 | 3 | 4 | 4 |
 | 季度数据 | 8 | 3 | 0 |
-| 德国国债 | 0 | 0 | 6 |
+| 德国国债 | 6 | 0 | 0 |
 | 日本国债 | 0 | 0 | 7 |
 | 月度数据 | 11 | 29 | 3 |
 | 汇率 | 5 | 12 | 0 |
@@ -70,7 +70,7 @@ fetcher output, and schedule/vintage handling are wired.
 | ISM PMI | partial | ISM Manufacturing headline value is registered; subcomponents and services PMI fields need connectors/config. |
 | Treasury curve | partial | 2Y/5Y proxy/10Y/30Y/10Y real/10Y-2Y are configured; additional maturities and TIPS tenors need series additions. |
 | FX | partial | DXY, broad dollar, EUR/USD, USD/CNY, and USD/JPY are covered; dollar sub-indexes and additional FX pairs need configured series/watchlist entries. |
-| Global sovereign yields | missing | Germany, Japan, and China yield series need configured source paths. |
+| Global sovereign yields | partial | Germany yield series are configured through Bundesbank BBSSY. Japan and China official parity paths remain open. |
 | Market volatility | partial | VIX is configured; MOVE needs a configured source path. |
 | GSCPI | connected | NY Fed GSCPI is configured through the NY Fed research-data fetcher. |
 
@@ -82,7 +82,7 @@ Current coverage status remains a repo-configuration finding. A field marked mis
 | --- | --- | --- |
 | MOVE index | Market lane through EODHD `MOVE.INDX`; official reference is ICE MOVE | Add `MOVE.INDX` to the EODHD market universe/config. |
 | China 10Y government yield | Market lane through EODHD `CN10Y.GBOND`; ChinaBond official path for official parity | Add EODHD GBOND market config and keep ChinaBond as the official-source parity path. |
-| Germany yields | Bundesbank daily federal securities yields; EODHD GBOND as market backup where available | Add Bundesbank mappings for 2Y/5Y/7Y/10Y/15Y/30Y and optional EODHD GBOND market rows. |
+| Germany yields | Bundesbank daily federal securities yields; EODHD GBOND as market backup where available | Connected in issue #112 slice 5 through Bundesbank BBSSY, obs-family, concept-map, release-schedule, subject aliases, and SDMX raw snapshots. |
 | Japan yields | Japan MOF JGB interest-rate CSV; EODHD GBOND as market backup where available | Add Japan MOF mappings for 1Y/2Y/3Y/5Y/7Y/10Y/30Y and optional EODHD GBOND market rows. |
 | WEI | FRED/Dallas Fed `WEI` | Connected in issue #112 slice 2 through FRED `MACRO_SERIES`, obs-family, concept-map, release-schedule, and subject aliases. |
 | Housing vacancy and homeownership | Census HVS official data or FRED Census-hosted mirrors `RHORUSQ156N`, `RRVRUSQ156N`, `RHVRUSQ156N` | Connected in issue #112 slice 2 through FRED Census-hosted HVS series, obs-families, concept-map, release-schedules, and subject aliases. |
@@ -108,4 +108,4 @@ The liquidity fields in the coverage sample are connected through existing FRED/
 
 Full field-level map: `docs/validation/us_workbook_coverage_2026-05-01.csv`
 
-Recommended implementation sequence: add Bundesbank yields, Japan MOF yields, AISI weekly steel, and full ISM official report parsing. Licensed-source decisions remain for Redbook, Sentix US, SOFR-OIS, and exact Wind/Bloomberg parity.
+Recommended implementation sequence: add Japan MOF yields, AISI weekly steel, and full ISM official report parsing. Licensed-source decisions remain for Redbook, Sentix US, SOFR-OIS, and exact Wind/Bloomberg parity.

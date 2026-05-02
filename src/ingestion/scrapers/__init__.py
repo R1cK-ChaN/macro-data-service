@@ -4,6 +4,8 @@ from ._common import ScrapedIndicator, ScrapedMarketQuote, ScrapedNewsItem
 from ingestion.sdmx._errors import (
     BISAPIError,
     BISRateLimitError,
+    BundesbankAPIError,
+    BundesbankRateLimitError,
     ECBAPIError,
     ECBRateLimitError,
     EurostatAPIError,
@@ -27,6 +29,7 @@ from ingestion.sdmx._types import (
     SDMXDimension as ILODimension,
     SDMXDimension as UNSDDimension,
     SDMXObservation as BISObservation,
+    SDMXObservation as BundesbankObservation,
     SDMXObservation as ECBObservation,
     SDMXObservation as EurostatObservation,
     SDMXObservation as ILOObservation,
@@ -41,6 +44,7 @@ from ingestion.sdmx._types import (
     SDMXStructureSummary as UNSDStructureSummary,
 )
 from ingestion.sdmx.providers.bis import BISClient
+from ingestion.sdmx.providers.bundesbank import BundesbankClient
 from ingestion.sdmx.providers.ecb import ECBClient
 from ingestion.sdmx.providers.eurostat import EurostatClient
 from ingestion.sdmx.providers.ilo import ILOClient
@@ -162,6 +166,9 @@ __all__ = [
     "BLSSurvey",
     "BISObservation",
     "BloombergArticle",
+    "BundesbankAPIError",
+    "BundesbankObservation",
+    "BundesbankRateLimitError",
     "ECBAPIError",
     "ECBDataStructure",
     "ECBDataflow",
@@ -265,6 +272,7 @@ __all__ = [
     "CensusClient",
     "BLSClient",
     "BISClient",
+    "BundesbankClient",
     "ECBClient",
     "EIAClient",
     "EurostatClient",

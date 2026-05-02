@@ -1823,6 +1823,13 @@ class _CalendarQueriesMixin:
         ("GDP_REAL_JP",         "approximate_window", {"month_offset": 3, "window_days": 30}, "quarterly","",    "",                 "approximate", "IMF quarterly lag"),
         ("POLICY_RATE_JP",      "approximate_window", {"month_offset": 6, "window_days": 30}, "quarterly","",    "",                 "approximate", "BIS quarterly lag"),
         ("CLI_JP",              "monthly_lag",      {"lag_months": 2, "day": 10, "tolerance_days": 15}, "monthly","",  "",           "approximate", "OECD CLI ~2 month lag"),
+        # ── Germany Rates ────────────────────────────────────────────
+        ("DE_GOVT_2Y",          "daily",            {},                                     "daily",    "",      "",                 "pattern",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_5Y",          "daily",            {},                                     "daily",    "",      "",                 "pattern",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_7Y",          "daily",            {},                                     "daily",    "",      "",                 "pattern",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_10Y",         "daily",            {},                                     "daily",    "",      "",                 "pattern",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_15Y",         "daily",            {},                                     "daily",    "",      "",                 "pattern",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_30Y",         "daily",            {},                                     "daily",    "",      "",                 "pattern",     "Bundesbank current Federal securities yield"),
         # ── Euro Area ─────────────────────────────────────────────────
         ("CPI_EU",              "monthly_lag",      {"lag_months": 1, "day": 15, "tolerance_days": 10}, "monthly","",  "",           "pattern",     "Eurostat HICP flash ~15th"),
         ("GDP_EU",              "monthly_lag",      {"lag_months": 1, "day": 15, "tolerance_days": 10}, "monthly","",  "",           "pattern",     "Eurostat GDP ~45 day lag"),

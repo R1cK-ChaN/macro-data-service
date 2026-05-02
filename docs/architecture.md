@@ -10,7 +10,7 @@ from ~25 free/licensed upstreams instead of BBG's paid feed.
 resolves macro + market + calendar + document data from ~25 upstreams into a
 single SQLite store that downstream services (analyst UI, RAG, agents) read
 through one service interface.
-**Last updated:** 2026-05-01 (branch `feat/issue-104-public-read-allowlist`, public-read allowlist for `POST /v1/ops/<op>` — `PUBLIC_READ_OPS` frozenset in `macro_data/server.py` gates the dispatcher to six read ops (`resolve_indicator`, `resolve_indicator_history`, `list_items`, `get_document`, `get_release_schedule`, `get_release_status`); all other ops return HTTP 403 even with a valid bearer token; admin / write ops stay reachable via CLI / systemd over the same in-process service — see § Service boundary)
+**Last updated:** 2026-05-02 (branch `feat/issue-112-us-workbook-sources`, Bundesbank BBSSY Germany yield mappings added to the macro time-series pipeline; prior public-read allowlist for `POST /v1/ops/<op>` remains in `macro_data/server.py` via `PUBLIC_READ_OPS` for six read ops: `resolve_indicator`, `resolve_indicator_history`, `list_items`, `get_document`, `get_release_schedule`, `get_release_status`; admin / write ops stay reachable via CLI / systemd over the same in-process service — see § Service boundary)
 
 ### Bloomberg-capability coverage (current → 1.0)
 
@@ -69,11 +69,11 @@ Everything else (agents, UIs, notebooks) is a consumer.
 
 ### 1. Macro time-series (the backbone)
 
-- **Sources wired** (13): BLS, FRED, EIA, NYFed, Treasury, IMF, Eurostat, Destatis, ZEW, BIS, ECB, OECD, World Bank. SDMX providers unified under `ingestion/sdmx/` (6 of the 13 go through it).
-- **Schema:** `obs_source`, `obs_family`, `indicators`, `indicator_vintages`. `concept_map` bridges source-native IDs to 86 canonical concepts; `subject_aliases` lets text queries resolve back to concepts.
+- **Sources wired** (14): BLS, FRED, EIA, NYFed, Treasury, IMF, Eurostat, Destatis, ZEW, BIS, ECB, Bundesbank, OECD, World Bank. SDMX providers unified under `ingestion/sdmx/` (7 of the 14 go through it).
+- **Schema:** `obs_source`, `obs_family`, `indicators`, `indicator_vintages`. `concept_map` bridges source-native IDs to 102 canonical concepts; `subject_aliases` lets text queries resolve back to concepts.
 - **Resolution:** `resolve_indicator(concept_id)` ranks sources by `concept_map.priority`, returns primary + alternates. Vintages preserved for PIT reconstruction.
 - **Status:** architecture complete; first-pass ingestion bootstrap underway. DB starts empty; Phase 1 (top US macro, 10 indicators) is the immediate next milestone, not more code.
-- **Audit lane** (issue #69 slice 1): `obs_raw` mirrors `cal_econ_raw` — one row per HTTP response per `(source, series_id)`, idempotent on `(source, series_id, content_hash)`. The FRED / BLS / SDMX scrapers expose `*_with_raw` companions to `get_series` / `get_data` that return `(parsed, raw_payload, request_params)` so the orchestrator side-writes the audit row before normalize. Per-source canonicalization (`ingestion/timeseries/canonicalize.py`) hashes only the sorted observations, dropping query-time envelope echoes (`observation_start` / `realtime_*` / `responseTime` / SDMX `header.prepared`) so a daily refresh with a sliding `start_date` dedupes through INSERT OR IGNORE. Three sources covered (FRED + BLS + IMF SDMX-JSON); BIS is excluded (CSV body has no JSON-shape canonicalization yet). Re-projection helpers `_parse_fred_observations` / parsing in BLS+SDMX mirror the calendar `cal_econ_raw` replay path — fix a parser, replay raw, zero quota cost.
+- **Audit lane** (issue #69 slice 1): `obs_raw` mirrors `cal_econ_raw` — one row per HTTP response per `(source, series_id)`, idempotent on `(source, series_id, content_hash)`. The FRED / BLS / SDMX scrapers expose `*_with_raw` companions to `get_series` / `get_data` that return `(parsed, raw_payload, request_params)` so the orchestrator side-writes the audit row before normalize. Per-source canonicalization (`ingestion/timeseries/canonicalize.py`) hashes only the sorted observations, dropping query-time envelope echoes (`observation_start` / `realtime_*` / `responseTime` / SDMX `header.prepared`) so a daily refresh with a sliding `start_date` dedupes through INSERT OR IGNORE. Covered sources: FRED, BLS, and SDMX-JSON providers IMF / ECB / Eurostat / OECD / UNSD / ILO / Bundesbank. BIS uses CSV, so JSON-shape canonicalization is deferred. Re-projection helpers `_parse_fred_observations` / parsing in BLS+SDMX mirror the calendar `cal_econ_raw` replay path — fix a parser, replay raw, zero quota cost.
 
 ### 2. Documents (government reports + central-bank comms)
 

@@ -521,6 +521,7 @@ class SourceCapabilityManager:
         from ingestion.scrapers.gov_report import _CN_SOURCES, _EU_SOURCES, _JP_SOURCES, _US_SOURCES
         from ingestion.series_config import (
             BEA_DATASETS,
+            BUNDESBANK_SERIES,
             BLS_SERIES,
             CENSUS_DATASETS,
             EIA_SERIES,
@@ -1320,6 +1321,17 @@ class SourceCapabilityManager:
             is_default_scheduled=True,
             discover=_treasury_entities,
             sync_latest=lambda entity_ids, limit: _run_job("treasury_fiscal"),
+        )
+        adapters["bundesbank"] = SourceCapabilityAdapter(
+            source_id="bundesbank",
+            display_name="Bundesbank",
+            source_type="fixed-scope-complete",
+            entity_type="series",
+            description="Bundesbank current Federal securities yield series.",
+            supports_structure=False,
+            is_default_scheduled=True,
+            discover=_configured_entities("bundesbank", "series", BUNDESBANK_SERIES),
+            sync_latest=lambda entity_ids, limit: _run_job("bundesbank"),
         )
 
         if orchestrator is not None:

@@ -160,6 +160,16 @@ _ECB_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     "ECB_EURUSD":          ("eu.fx.eurusd",           "EUR/USD Exchange Rate",     "ratio",        "monthly", "none"),
 }
 
+_BUNDESBANK_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
+    # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
+    "BUNDESBANK_DE_GOVT_2Y":  ("de.rates.govt_2y",  "Germany 2Y Federal Securities Yield",  "percent", "daily", "none"),
+    "BUNDESBANK_DE_GOVT_5Y":  ("de.rates.govt_5y",  "Germany 5Y Federal Securities Yield",  "percent", "daily", "none"),
+    "BUNDESBANK_DE_GOVT_7Y":  ("de.rates.govt_7y",  "Germany 7Y Federal Securities Yield",  "percent", "daily", "none"),
+    "BUNDESBANK_DE_GOVT_10Y": ("de.rates.govt_10y", "Germany 10Y Federal Securities Yield", "percent", "daily", "none"),
+    "BUNDESBANK_DE_GOVT_15Y": ("de.rates.govt_15y", "Germany 15Y Federal Securities Yield", "percent", "daily", "none"),
+    "BUNDESBANK_DE_GOVT_30Y": ("de.rates.govt_30y", "Germany 30Y Federal Securities Yield", "percent", "daily", "none"),
+}
+
 _OECD_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
     "OECD_CLI_US":           ("us.leading.cli",             "US Composite Leading Indicator",  "index",   "monthly", "none"),
@@ -241,6 +251,7 @@ _OBS_SOURCE_DEFS: list[tuple[str, str, str, str, str, str, str]] = [
     ("istat",           "istat",           "Italian National Institute of Statistics","government_agency", "IT", "https://www.istat.it",                                      "https://www.istat.it/en/press-release"),
     ("bis",             "bis",             "Bank for International Settlements","data_aggregator",  "CH", "https://www.bis.org",                                           "https://stats.bis.org/api/v2"),
     ("ecb",             "ecb",             "European Central Bank",             "central_bank",     "EU", "https://www.ecb.europa.eu",                                      "https://data-api.ecb.europa.eu/service/data"),
+    ("bundesbank",      "bundesbank",      "Deutsche Bundesbank",               "central_bank",     "DE", "https://www.bundesbank.de",                                      "https://api.statistiken.bundesbank.de/rest"),
     ("oecd",            "oecd",            "Organisation for Economic Co-operation", "data_aggregator", "XX", "https://www.oecd.org",                                      "https://sdmx.oecd.org/public/rest/v2"),
     ("worldbank",       "worldbank",       "World Bank",                        "data_aggregator",  "XX", "https://www.worldbank.org",                                      "https://api.worldbank.org/v2"),
     ("bls",             "bls",             "Bureau of Labor Statistics",         "government_agency", "US", "https://www.bls.gov",                                            "https://api.bls.gov/publicAPI/v2"),
@@ -783,6 +794,7 @@ class _IndicatorQueriesMixin:
             ("eurostat", _EUROSTAT_FAMILY_MAP),
             ("bis", _BIS_FAMILY_MAP),
             ("ecb", _ECB_FAMILY_MAP),
+            ("bundesbank", _BUNDESBANK_FAMILY_MAP),
             ("oecd", _OECD_FAMILY_MAP),
             ("worldbank", _WORLDBANK_FAMILY_MAP),
             ("bls", _BLS_FAMILY_MAP),
@@ -992,6 +1004,14 @@ class _IndicatorQueriesMixin:
         ("GDP_REAL_JP",         "imf",            "IMF_JP_GDP",     "jp.growth.gdp_real",            1, "primary",     "Real GDP LCU"),
         ("POLICY_RATE_JP",      "bis",            "BIS_POLICY_JP",  "jp.rates.policy_bis",           1, "primary",     "BOJ policy rate"),
         ("CLI_JP",              "oecd",           "OECD_CLI_JP",    "jp.leading.cli",                1, "primary",     "Composite leading indicator"),
+        #
+        # ── Germany ─────────────────────────────────────────────────
+        ("DE_GOVT_2Y",          "bundesbank",     "BUNDESBANK_DE_GOVT_2Y", "de.rates.govt_2y",       1, "primary",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_5Y",          "bundesbank",     "BUNDESBANK_DE_GOVT_5Y", "de.rates.govt_5y",       1, "primary",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_7Y",          "bundesbank",     "BUNDESBANK_DE_GOVT_7Y", "de.rates.govt_7y",       1, "primary",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_10Y",         "bundesbank",     "BUNDESBANK_DE_GOVT_10Y", "de.rates.govt_10y",     1, "primary",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_15Y",         "bundesbank",     "BUNDESBANK_DE_GOVT_15Y", "de.rates.govt_15y",     1, "primary",     "Bundesbank current Federal securities yield"),
+        ("DE_GOVT_30Y",         "bundesbank",     "BUNDESBANK_DE_GOVT_30Y", "de.rates.govt_30y",     1, "primary",     "Bundesbank current Federal securities yield"),
         #
         # ── Euro Area ────────────────────────────────────────────────
         ("CPI_EU",              "eurostat",       "ESTAT_HICP",     "eu.inflation.hicp",             1, "primary",     "Eurostat HICP YoY"),
@@ -1221,14 +1241,27 @@ class _IndicatorQueriesMixin:
             ]
 
     def list_concepts(self, *, country_code: str | None = None) -> list[str]:
-        """Return distinct concept_ids, optionally filtered by country suffix."""
+        """Return distinct concept_ids, optionally filtered by obs-family country."""
         with self._connection(commit=False) as connection:
             if country_code:
-                suffix = f"_{country_code.upper()}"
+                country = country_code.upper()
                 rows = connection.execute(
-                    "SELECT DISTINCT concept_id FROM concept_map "
-                    "WHERE concept_id LIKE ? ORDER BY concept_id",
-                    (f"%{suffix}",),
+                    """
+                    SELECT DISTINCT cm.concept_id
+                    FROM concept_map cm
+                    LEFT JOIN obs_family f ON f.family_id = cm.obs_family_id
+                    WHERE f.country_code = ?
+                       OR (
+                           f.family_id IS NULL
+                           AND (
+                               lower(cm.obs_family_id) LIKE ?
+                               OR cm.concept_id LIKE ? ESCAPE '\\'
+                               OR cm.concept_id LIKE ? ESCAPE '\\'
+                           )
+                       )
+                    ORDER BY cm.concept_id
+                    """,
+                    (country, f"{country.lower()}.%", f"{country}\\_%", f"%\\_{country}"),
                 ).fetchall()
             else:
                 rows = connection.execute(
@@ -1303,6 +1336,7 @@ class _IndicatorQueriesMixin:
             "eurostat": ("indicators", "source = ?", ("eurostat",), "scraped_at"),
             "bis": ("indicators", "source = ?", ("bis",), "scraped_at"),
             "ecb": ("indicators", "source = ?", ("ecb",), "scraped_at"),
+            "bundesbank": ("indicators", "source = ?", ("bundesbank",), "scraped_at"),
             "oecd": ("indicators", "source = ?", ("oecd",), "scraped_at"),
             "worldbank": ("indicators", "source = ?", ("worldbank",), "scraped_at"),
             "nyfed_rates": ("indicators", "source = ?", ("nyfed",), "scraped_at"),

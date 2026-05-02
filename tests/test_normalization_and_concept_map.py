@@ -183,6 +183,10 @@ class TestConceptMapQueries:
         assert "CPI_CN" in cn
         assert "CPI_US" not in cn
 
+        de = store.list_concepts(country_code="DE")
+        assert "DE_GOVT_10Y" in de
+        assert "CPI_US" not in de
+
     def test_policy_rate_has_cross_check(self, store):
         store.seed_concept_map()
         mappings = store.get_concept_series("POLICY_RATE_US")
@@ -515,8 +519,12 @@ class TestValidateAllConcepts:
     def test_filter_by_country(self, store, validation_engine):
         store.seed_concept_map()
         reports = validation_engine.validate_all_concepts(store, country_code="US")
+        sources = {r.source for r in reports}
         assert len(reports) > 0
-        assert all("_US" in r.source for r in reports)
+        assert "concept:CPI_US" in sources
+        assert "concept:WTI_CRUDE" in sources
+        assert "concept:CPI_CN" not in sources
+        assert "concept:DE_GOVT_10Y" not in sources
 
     def test_to_dict_round_trip(self, store, validation_engine):
         store.seed_concept_map()

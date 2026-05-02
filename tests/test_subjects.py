@@ -125,6 +125,17 @@ def test_tagger_structured_dedups_across_alias_types(
     assert hits == [("econ.cpi", STRUCTURED_CONFIDENCE)]
 
 
+def test_tagger_structured_resolves_bundesbank_series(
+    store: SQLiteEngineStore,
+) -> None:
+    sync_from_yaml(store)
+    with store._connection(commit=False) as c:
+        tagger = SubjectTagger(c)
+    assert tagger.tag_structured(
+        bundesbank_series="BUNDESBANK_DE_GOVT_10Y",
+    ) == [("rate.de.govt", STRUCTURED_CONFIDENCE)]
+
+
 @pytest.mark.parametrize(
     "concept_id, expected_subject",
     [
@@ -151,6 +162,8 @@ def test_tagger_structured_dedups_across_alias_types(
         # NY Fed bridges (the dual-form alias fix)
         ("SOFR_US", "rate.us.sofr"),
         ("OBFR_US", "rate.us.obfr"),
+        # Bundesbank bridges
+        ("DE_GOVT_10Y", "rate.de.govt"),
     ],
 )
 def test_resolve_subjects_for_concept_bridges_vocabularies(

@@ -178,6 +178,21 @@ subjects:
         - '\bten[- ]year (?:treasury|yield|note)\b'
         - '\b10Y\b'
 
+  - id: rate.de.govt
+    display: "Germany Government Yields"
+    aliases:
+      bundesbank_series:
+        - BUNDESBANK_DE_GOVT_2Y
+        - BUNDESBANK_DE_GOVT_5Y
+        - BUNDESBANK_DE_GOVT_7Y
+        - BUNDESBANK_DE_GOVT_10Y
+        - BUNDESBANK_DE_GOVT_15Y
+        - BUNDESBANK_DE_GOVT_30Y
+      calendar_indicator: []
+      title_regex:
+        - '\b(?:german|germany)\s+(?:government\s+)?(?:bond|bund)\s+yield'
+        - '\bBund(?:esanleihe)?\b'
+
   # ----- Reference rates (NY Fed) -----
 
   # NY Fed rates store two alias forms for the same series: the natural

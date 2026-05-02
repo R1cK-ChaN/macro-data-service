@@ -21,6 +21,7 @@ __all__ = [
     "EUROSTAT_SERIES",
     "BIS_SERIES",
     "ECB_SERIES",
+    "BUNDESBANK_SERIES",
     "OECD_DEFAULT_AGENCY_ID", "OECDSeriesConfig",
     "_slugify_oecd_token", "_generated_oecd_series_id", "_generated_oecd_config_key",
     "render_oecd_series_configs", "OECD_SERIES",
@@ -671,6 +672,55 @@ ECB_SERIES = {
     "deposit_rate":  {"dataflow": "FM",  "key": "B.U2.EUR.4F.KR.DFR.LEV",        "series_id": "ECB_EA_DEPOSIT_RATE",  "category": "rates"},
     "eurusd":        {"dataflow": "EXR", "key": "M.USD.EUR.SP00.A",              "series_id": "ECB_EURUSD",           "category": "fx"},
     "eurusd_daily":  {"dataflow": "EXR", "key": "D.USD.EUR.SP00.A",              "series_id": "ECB_EURUSD_D",         "category": "fx"},
+}
+
+# ---------------------------------------------------------------------------
+# Bundesbank (SDMX)
+# ---------------------------------------------------------------------------
+
+BUNDESBANK_SERIES = {
+    "de_govt_2y": {
+        "dataflow": "BBSSY",
+        "key": "D.REN.EUR.A610.000000WT0202.A",
+        "series_id": "BUNDESBANK_DE_GOVT_2Y",
+        "name": "Germany 2Y Federal Securities Yield",
+        "category": "rates",
+    },
+    "de_govt_5y": {
+        "dataflow": "BBSSY",
+        "key": "D.REN.EUR.A620.000000WT0505.A",
+        "series_id": "BUNDESBANK_DE_GOVT_5Y",
+        "name": "Germany 5Y Federal Securities Yield",
+        "category": "rates",
+    },
+    "de_govt_7y": {
+        "dataflow": "BBSSY",
+        "key": "D.REN.EUR.A607.000000WT7070.A",
+        "series_id": "BUNDESBANK_DE_GOVT_7Y",
+        "name": "Germany 7Y Federal Securities Yield",
+        "category": "rates",
+    },
+    "de_govt_10y": {
+        "dataflow": "BBSSY",
+        "key": "D.REN.EUR.A630.000000WT1010.A",
+        "series_id": "BUNDESBANK_DE_GOVT_10Y",
+        "name": "Germany 10Y Federal Securities Yield",
+        "category": "rates",
+    },
+    "de_govt_15y": {
+        "dataflow": "BBSSY",
+        "key": "D.REN.EUR.A615.000000WT1515.A",
+        "series_id": "BUNDESBANK_DE_GOVT_15Y",
+        "name": "Germany 15Y Federal Securities Yield",
+        "category": "rates",
+    },
+    "de_govt_30y": {
+        "dataflow": "BBSSY",
+        "key": "D.REN.EUR.A640.000000WT3030.A",
+        "series_id": "BUNDESBANK_DE_GOVT_30Y",
+        "name": "Germany 30Y Federal Securities Yield",
+        "category": "rates",
+    },
 }
 
 # ---------------------------------------------------------------------------

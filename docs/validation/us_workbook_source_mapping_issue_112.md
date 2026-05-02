@@ -2,7 +2,7 @@
 
 Date: 2026-05-01
 Issue: #112
-Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings; NY Fed GSCPI mapping
+Slices: EODHD market-lane MOVE/GBOND mappings; FRED WEI/HVS mappings; BIS Total Credit mappings; NY Fed GSCPI mapping; Bundesbank Germany yield mappings
 
 The inspected US workbook is a coverage sample for finding omitted fields. Source
 grouping here follows the indicator's economic meaning, official publisher,
@@ -68,6 +68,22 @@ obs-family seeding, concept-map seeding, release-schedule seeding, source
 discovery, subject alias resolution, US holiday handling, and NY release-time
 conversion for the GSCPI row.
 
-Remaining source groups for later slices: Bundesbank official yields, Japan
-MOF official yields, AISI weekly steel, ISM subcomponents, Redbook, Sentix US,
-SOFR-OIS, and exact Wind/Bloomberg parity.
+## Bundesbank Germany Yield Rows
+
+| Indicator/source group | Bundesbank dataflow | Bundesbank key | Series id | Concept id | Obs family |
+| --- | --- | --- | --- | --- | --- |
+| Germany 2Y federal securities yield | `BBSSY` | `D.REN.EUR.A610.000000WT0202.A` | `BUNDESBANK_DE_GOVT_2Y` | `DE_GOVT_2Y` | `de.rates.govt_2y` |
+| Germany 5Y federal securities yield | `BBSSY` | `D.REN.EUR.A620.000000WT0505.A` | `BUNDESBANK_DE_GOVT_5Y` | `DE_GOVT_5Y` | `de.rates.govt_5y` |
+| Germany 7Y federal securities yield | `BBSSY` | `D.REN.EUR.A607.000000WT7070.A` | `BUNDESBANK_DE_GOVT_7Y` | `DE_GOVT_7Y` | `de.rates.govt_7y` |
+| Germany 10Y federal securities yield | `BBSSY` | `D.REN.EUR.A630.000000WT1010.A` | `BUNDESBANK_DE_GOVT_10Y` | `DE_GOVT_10Y` | `de.rates.govt_10y` |
+| Germany 15Y federal securities yield | `BBSSY` | `D.REN.EUR.A615.000000WT1515.A` | `BUNDESBANK_DE_GOVT_15Y` | `DE_GOVT_15Y` | `de.rates.govt_15y` |
+| Germany 30Y federal securities yield | `BBSSY` | `D.REN.EUR.A640.000000WT3030.A` | `BUNDESBANK_DE_GOVT_30Y` | `DE_GOVT_30Y` | `de.rates.govt_30y` |
+
+Focused tests cover official key config, Bundesbank SDMX Accept-header and
+query parameters, fetcher output, SDMX raw snapshot hashing, obs-family seeding,
+concept-map seeding, release-schedule seeding, subject alias resolution, source
+discovery, and the orchestrator save path into `indicators` and `obs_raw`.
+
+Remaining source groups for later slices: Japan MOF official yields, AISI weekly
+steel, ISM subcomponents, Redbook, Sentix US, SOFR-OIS, and exact Wind/Bloomberg
+parity.

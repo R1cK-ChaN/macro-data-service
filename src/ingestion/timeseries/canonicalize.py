@@ -167,6 +167,7 @@ _HASH_BY_SOURCE = {
     # SDMX-JSON family — BIS is excluded because its endpoint returns CSV.
     "imf": sdmx_content_hash,
     "ecb": sdmx_content_hash,
+    "bundesbank": sdmx_content_hash,
     "eurostat": sdmx_content_hash,
     "oecd": sdmx_content_hash,
     "unsd": sdmx_content_hash,

@@ -8,6 +8,7 @@ from ingestion.timeseries.clients._sdmx_clients import (
     EurostatIngestionClient,
     BISIngestionClient,
     ECBIngestionClient,
+    BundesbankIngestionClient,
 )
 from ingestion.timeseries.clients._oecd_client import OECDIngestionClient
 from ingestion.timeseries.clients._ilo_unsd import ILOIngestionClient, UNSDIngestionClient
@@ -23,6 +24,7 @@ from ingestion.documents.clients._gov_report import GovReportIngestionClient
 
 __all__ = [
     "BISIngestionClient",
+    "BundesbankIngestionClient",
     "ECBIngestionClient",
     "EIAIngestionClient",
     "EurostatIngestionClient",

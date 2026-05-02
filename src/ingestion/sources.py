@@ -110,6 +110,7 @@ def _infer_publish_precision(value: str | None) -> str:
 from ingestion.timeseries._config import (  # noqa: E402
     BEA_DATASETS,
     BEA_KNOWN_DATASETS,
+    BUNDESBANK_SERIES,
     BIS_SERIES,
     BLS_SERIES,
     BLS_SURVEY_PREFIXES,
@@ -199,6 +200,7 @@ SOURCE_FAMILIES: dict[str, str] = {
     "eurostat": "economic_data",
     "bis": "economic_data",
     "ecb": "economic_data",
+    "bundesbank": "economic_data",
     "oecd": "economic_data",
     "worldbank": "economic_data",
     "worldbank_catalog": "economic_data",
@@ -251,6 +253,7 @@ from ingestion.clients._sdmx_clients import (
     EurostatIngestionClient,
     BISIngestionClient,
     ECBIngestionClient,
+    BundesbankIngestionClient,
 )
 from ingestion.clients._oecd_client import OECDIngestionClient, _OECDRateLimiter
 from ingestion.clients._ilo_unsd import ILOIngestionClient, UNSDIngestionClient
@@ -301,6 +304,7 @@ class IngestionOrchestrator:
         eurostat: EurostatIngestionClient | None = None,
         bis: BISIngestionClient | None = None,
         ecb: ECBIngestionClient | None = None,
+        bundesbank: BundesbankIngestionClient | None = None,
         oecd: OECDIngestionClient | None = None,
         worldbank: WorldBankIngestionClient | None = None,
         validation_engine: Any | None = None,
@@ -329,6 +333,7 @@ class IngestionOrchestrator:
         self.eurostat = eurostat or EurostatIngestionClient()
         self.bis = bis or BISIngestionClient()
         self.ecb = ecb or ECBIngestionClient()
+        self.bundesbank = bundesbank or BundesbankIngestionClient()
         self.oecd = oecd or OECDIngestionClient()
         self.worldbank = worldbank or WorldBankIngestionClient()
         self._obs_seeded = False
@@ -344,6 +349,7 @@ class IngestionOrchestrator:
         if self._obs_seeded:
             return
         self.store.seed_obs_sources_and_families()
+        self.store.seed_concept_map()
         self.store.backfill_obs_family_ids()
         self._family_lookup = self.store.build_obs_family_lookup()
         self._obs_seeded = True
@@ -428,6 +434,7 @@ class IngestionOrchestrator:
             self._build_eurostat_source(),
             self._build_bis_source(),
             self._build_ecb_source(),
+            self._build_bundesbank_source(),
             self._build_oecd_source(),
             self._build_worldbank_source(),
             self._build_worldbank_catalog_source(),
@@ -458,6 +465,7 @@ class IngestionOrchestrator:
             "eurostat",
             "bis",
             "ecb",
+            "bundesbank",
             "oecd",
             "worldbank",
             "worldbank_catalog",
@@ -1090,6 +1098,13 @@ class IngestionOrchestrator:
             "ecb", SDMXFetcher(self.ecb.client, "ecb", ECB_SERIES),
         )
 
+    def _build_bundesbank_source(self) -> IngestionSourceDefinition:
+        from ingestion.fetchers._sdmx import SDMXFetcher
+        return self._build_fetcher_source(
+            "bundesbank",
+            SDMXFetcher(self.bundesbank.client, "bundesbank", BUNDESBANK_SERIES),
+        )
+
     def _build_oecd_source(self) -> IngestionSourceDefinition:
         from ingestion.fetchers._oecd import OECDFetcher
         return self._build_fetcher_source(
@@ -1132,6 +1147,7 @@ class IngestionOrchestrator:
         "eurostat": "eurostat",
         "bis": "bis",
         "ecb": "ecb",
+        "bundesbank": "bundesbank",
         "oecd": "oecd",
         "worldbank": "worldbank",
     }
@@ -1175,6 +1191,10 @@ class IngestionOrchestrator:
             fetcher = SDMXFetcher(self.bis.client, "bis", BIS_SERIES)
         elif source_id == "ecb":
             fetcher = SDMXFetcher(self.ecb.client, "ecb", ECB_SERIES)
+        elif source_id == "bundesbank":
+            fetcher = SDMXFetcher(
+                self.bundesbank.client, "bundesbank", BUNDESBANK_SERIES,
+            )
         elif source_id == "oecd":
             fetcher = OECDFetcher(client=self.oecd.client)
         elif source_id == "worldbank":

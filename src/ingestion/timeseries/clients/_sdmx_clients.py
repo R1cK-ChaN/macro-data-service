@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ingestion.sdmx.providers.bis import BISClient
+from ingestion.sdmx.providers.bundesbank import BundesbankClient
 from ingestion.sdmx.providers.ecb import ECBClient
 from ingestion.sdmx.providers.eurostat import EurostatClient
 from ingestion.sdmx.providers.imf import IMFClient
@@ -467,3 +468,8 @@ class ECBIngestionClient:
                 logger.warning("ECB catalog refresh failed for %s", dataflow.id, exc_info=True)
             time.sleep(sleep_seconds)
         return RefreshStats(source="ecb", count=count)
+
+
+class BundesbankIngestionClient:
+    def __init__(self) -> None:
+        self.client = BundesbankClient()
