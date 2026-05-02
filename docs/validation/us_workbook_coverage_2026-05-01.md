@@ -16,9 +16,9 @@ Coverage definitions:
 - missing: no configured source path found in repo scan
 
 Field counts:
-- connected: 116
+- connected: 118
 - partial: 282
-- missing: 2
+- missing: 0
 - total extracted unique fields: 400
 
 Input source labels:
@@ -45,8 +45,8 @@ fetcher output, and schedule/vintage handling are wired.
 
 | Sheet | connected | partial | missing |
 | --- | ---: | ---: | ---: |
-| MOVE 和VIX | 1 | 0 | 1 |
-| 主要国家国债收益率利差 | 3 | 0 | 1 |
+| MOVE 和VIX | 2 | 0 | 0 |
+| 主要国家国债收益率利差 | 4 | 0 | 0 |
 | 劳动力市场（月度指标） | 8 | 81 | 0 |
 | 周度数据 | 7 | 4 | 0 |
 | 季度数据 | 8 | 3 | 0 |
@@ -73,8 +73,8 @@ fetcher output, and schedule/vintage handling are wired.
 | Sentix US investor confidence | connected | sentix official SNTE US headline current/expectations tickers and derived headline path are configured through the sentix Data REST API. |
 | Treasury curve | partial | 2Y/5Y proxy/10Y/30Y/10Y real/10Y-2Y are configured; additional maturities and TIPS tenors need series additions. |
 | FX | partial | DXY, broad dollar, EUR/USD, USD/CNY, and USD/JPY are covered; dollar sub-indexes and additional FX pairs need configured series/watchlist entries. |
-| Global sovereign yields | partial | Germany yield series are configured through Bundesbank BBSSY. Japan yield series are configured through MOF JGB interest-rate CSV. China official parity path remains open. |
-| Market volatility | partial | VIX is configured; MOVE needs a configured source path. |
+| Global sovereign yields | connected | Germany yield series are configured through Bundesbank BBSSY. Japan yield series are configured through MOF JGB interest-rate CSV. China 10Y is configured through EODHD `CN10Y.GBOND`. |
+| Market volatility | connected | VIX is configured through FRED and market watchlist paths. MOVE is configured through EODHD `MOVE.INDX`. |
 | GSCPI | connected | NY Fed GSCPI is configured through the NY Fed research-data fetcher. |
 
 ## Source Policy For Follow-Up Wiring
@@ -83,8 +83,8 @@ Current coverage status remains a repo-configuration finding. A field marked mis
 
 | Source/indicator group | Canonical source path | Repo action |
 | --- | --- | --- |
-| MOVE index | Market lane through EODHD `MOVE.INDX`; official reference is ICE MOVE | Add `MOVE.INDX` to the EODHD market universe/config. |
-| China 10Y government yield | Market lane through EODHD `CN10Y.GBOND`; ChinaBond official path for official parity | Add EODHD GBOND market config and keep ChinaBond as the official-source parity path. |
+| MOVE index | Market lane through EODHD `MOVE.INDX`; official reference is ICE MOVE | Connected in issue #112 slice 1 through EODHD market universe, quote-only index handling, raw snapshots, and market bars. |
+| China 10Y government yield | Market lane through EODHD `CN10Y.GBOND` | Connected in issue #112 slice 1 through EODHD GBOND market config, rate asset-class handling, raw snapshots, and market bars. |
 | Germany yields | Bundesbank daily federal securities yields; EODHD GBOND as market backup where available | Connected in issue #112 slice 5 through Bundesbank BBSSY, obs-family, concept-map, release-schedule, subject aliases, and SDMX raw snapshots. |
 | Japan yields | Japan MOF JGB interest-rate CSV; EODHD GBOND as market backup where available | Connected in issue #112 slice 6 through MOF official constant-maturity JGB CSV for 1Y/2Y/3Y/4Y/5Y/6Y/7Y/8Y/9Y/10Y/15Y/20Y/25Y/30Y/40Y, obs-family, concept-map, release-schedule, subject aliases, and raw snapshots. |
 | WEI | FRED/Dallas Fed `WEI` | Connected in issue #112 slice 2 through FRED `MACRO_SERIES`, obs-family, concept-map, release-schedule, and subject aliases. |
@@ -110,4 +110,4 @@ The liquidity fields in the coverage sample are connected through existing FRED/
 
 Full field-level map: `docs/validation/us_workbook_coverage_2026-05-01.csv`
 
-Recommended implementation sequence: finish the two concrete remaining gaps with available sources: MOVE market data and ChinaBond official 10Y yield.
+Recommended implementation sequence: continue partial-series wiring for detailed BEA, BLS, Treasury, FX, and related workbook fields using official, public, or otherwise authorized sources.

@@ -164,5 +164,6 @@ raw snapshot hashing, obs-family seeding, concept-map seeding, release-schedule
 seeding, subject alias resolution, source discovery, country-scoped validation,
 and the orchestrator save path into `indicators` and `obs_raw`.
 
-Remaining concrete gaps for later slices: MOVE market data and ChinaBond
-official 10Y yield.
+No remaining missing source-path gaps in this coverage pass. Remaining work is
+partial-series wiring for detailed fields using official, public, or otherwise
+authorized sources.

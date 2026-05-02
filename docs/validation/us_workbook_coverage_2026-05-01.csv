@@ -3,8 +3,8 @@ Bloomberg security,FARBDTRS Index,美联储金融流动性（负债规模-TGA-�
 Bloomberg security,FARBLIAB Index,美联储金融流动性（负债规模-TGA-逆回购）!R2C2,connected,fred:WALCL,Equivalent Fed total assets series is configured in FRED.
 Bloomberg security,FARWRRA Index,美联储金融流动性（负债规模-TGA-逆回购）!R2C4,connected,fred:RRPONTSYD,Equivalent reverse repo series is configured in FRED.
 Bloomberg security,SOFRRATE Index,流动性SOFR-OIS!R1C2,connected,nyfed_rates:NYFED_SOFR,Equivalent SOFR path is configured through the NY Fed rate fetcher.
-Wind/workbook label,MOVE指数,MOVE 和VIX!R2C1,missing,,MOVE is absent from market/FRED/Bloomberg-equivalent configs.
-Wind/workbook label,中国:中债国债到期收益率:10年,主要国家国债收益率利差!R2C12,missing,,ChinaBond official parity path remains open.
+Wind/workbook label,MOVE指数,MOVE 和VIX!R2C1,connected,eodhd_market:MOVE.INDX,EODHD MOVE.INDX is configured in the market universe.
+Wind/workbook label,中国:中债国债到期收益率:10年,主要国家国债收益率利差!R2C12,connected,eodhd_market:CN10Y.GBOND,EODHD CN10Y.GBOND is configured as the China 10Y government bond yield market quote.
 Wind/workbook label,名义美元指数:对国外发达经济体:周,汇率!R28C16,partial,fred source available,Broad dollar and DXY paths are configured; the advanced-economy dollar sub-index needs its own configured series.
 Wind/workbook label,名义美元指数:对新兴市场经济体:周,汇率!R28C17,partial,fred source available,Broad dollar and DXY paths are configured; the emerging-market dollar sub-index needs its own configured series.
 Wind/workbook label,名义美元指数:广义:周,汇率!R28C15,connected,fred:DTWEXBGS; market:DX-Y.NYB,Dollar index paths are configured through FRED and market watchlist.
