@@ -818,37 +818,51 @@ class IngestionOrchestrator:
         return observations
 
     def _build_fred_daily_source(self) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="fred_daily",
-            interval_seconds=86_400,
-            prepare=self._ensure_obs_seed,
-            execute=lambda: self.fred.refresh_daily_series(
-                self.store,
-                family_lookup=self._family_lookup or None,
-            ).count,
+        from ingestion.fetchers._fred import FredFetcher
+
+        daily_series = {
+            sid: meta for sid, meta in MACRO_SERIES.items()
+            if meta["freq"] == "daily"
+        }
+        return self._build_fetcher_source(
+            "fred_daily",
+            FredFetcher(
+                client=self.fred.client,
+                series_config=daily_series,
+                limit=5,
+                raise_on_error=True,
+            ),
+            lookback_days=7,
         )
 
     def _build_fred_nondaily_source(self) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="fred_nondaily",
+        from ingestion.fetchers._fred import FredFetcher
+
+        nondaily = {
+            sid: meta for sid, meta in MACRO_SERIES.items()
+            if meta["freq"] != "daily"
+        }
+        return self._build_fetcher_source(
+            "fred_nondaily",
+            FredFetcher(
+                client=self.fred.client,
+                series_config=nondaily,
+                limit=10,
+                request_delay_seconds=1.0,
+                raise_on_error=True,
+            ),
             interval_seconds=21_600,
-            prepare=self._ensure_obs_seed,
-            execute=lambda: self.fred.refresh_nondaily_series(
-                self.store,
-                family_lookup=self._family_lookup or None,
-            ).count,
+            lookback_days=120,
         )
 
     def _build_fred_full_source(self, *, lookback_days: int = 365) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="fred_full",
+        from ingestion.fetchers._fred import FredFetcher
+
+        return self._build_fetcher_source(
+            "fred_full",
+            FredFetcher(client=self.fred.client, limit=100, raise_on_error=True),
             interval_seconds=None,
-            prepare=self._ensure_obs_seed,
-            execute=lambda: self.fred.refresh_all_series(
-                self.store,
-                lookback_days=lookback_days,
-                family_lookup=self._family_lookup or None,
-            ).count,
+            lookback_days=lookback_days,
         )
 
     def _build_fred_vintages_source(self) -> IngestionSourceDefinition:
