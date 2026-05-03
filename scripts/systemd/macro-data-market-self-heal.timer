@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly market missing-bar self-heal
+
+[Timer]
+OnCalendar=Sun *-*-* 03:00:00 America/New_York
+AccuracySec=5m
+Persistent=true
+Unit=macro-data-market-self-heal.service
+
+[Install]
+WantedBy=timers.target

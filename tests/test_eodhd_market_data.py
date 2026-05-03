@@ -1,1402 +1,287 @@
-"""Tests for the EODHD P1 global market-data layer (issue #1).
-
-Skip-marked at module level after issue #118 P4 retired the SQLite
-market lane (``market_price_bars`` / ``market_corp_actions_raw`` /
-etc.). ``EODHDMarketDataProvider``'s writers call ``SQLiteEngineStore``
-methods that no longer exist (``upsert_market_price_bar``,
-``insert_market_price_bars_raw``, …); the provider is dormant pending
-the follow-up backfill issue rewires it against
-``ClickHouseMarketStore``. That rewire owns the replacement test suite.
-"""
-
 from __future__ import annotations
 
 import sys
+import json
+from datetime import date as Date
+from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import Mock
-
-import pytest
-
-pytestmark = pytest.mark.skip(
-    reason=(
-        "EODHD market provider pending CH rewire — "
-        "issue #118 P4 retired SQLite market lane"
-    )
-)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from ingestion.market._eodhd_universe import (
-    EODHD_GLOBAL_UNIVERSE,
-    EODHD_UNIVERSE_BY_TICKER,
+from ingestion.market.clients._eodhd import (
+    EODHDMarketDataProvider,
+    _bar_to_ch,
+    build_us_instruments,
 )
-from ingestion.market.clients._eodhd import EODHDMarketDataProvider
 from ingestion.market.scrapers._eodhd import (
-    EODHDAuthError,
+    EODHDAPIError,
     EODHDClient,
-    EODHDNotFoundError,
+    EODHDDailyBar,
+    EODHDDividend,
+    EODHDSymbol,
 )
-from storage import SQLiteEngineStore
 
 
-@pytest.fixture()
-def store(tmp_path) -> SQLiteEngineStore:
-    return SQLiteEngineStore(db_path=tmp_path / "engine.db")
-
-
-def _sample_rows() -> list[dict]:
-    """A minimal EODHD EOD payload — matches the live response shape."""
-    return [
-        {
-            "date": "2026-04-15",
-            "open": 58265.18, "high": 58585.95, "low": 58028.75,
-            "close": 58134.24, "adjusted_close": 58134.24, "volume": 161_000_000,
-        },
-        {
-            "date": "2026-04-16",
-            "open": 58479.83, "high": 59688.10, "low": 58428.19,
-            "close": 59518.34, "adjusted_close": 59518.34, "volume": 150_300_000,
-        },
-        {
-            "date": "2026-04-17",
-            "open": 59255.09, "high": 59381.25, "low": 58475.90,
-            "close": 58475.90, "adjusted_close": 58475.90, "volume": 140_000_000,
-        },
-    ]
-
-
-def _mock_client(payload: object) -> EODHDClient:
-    client = EODHDClient(api_key="test-key")
-    response = Mock()
-    response.content = b"not-empty"
-    response.json.return_value = payload
-    response.raise_for_status.return_value = None
-    client.session = Mock()
-    client.session.get.return_value = response
-    return client
-
-
-# ── EODHDClient.get_daily_bars ─────────────────────────────────────────────
-
-
-def test_client_parses_eod_list_shape() -> None:
-    client = _mock_client(_sample_rows())
-    bars = client.get_daily_bars("N225.INDX", start_date="2026-04-15", end_date="2026-04-17")
-    assert [b.date for b in bars] == ["2026-04-15", "2026-04-16", "2026-04-17"]
-    assert bars[0].ticker == "N225.INDX"
-    assert bars[0].close == pytest.approx(58134.24)
-    assert bars[0].adj_close == pytest.approx(58134.24)
-    assert bars[0].div_cash == 0.0 and bars[0].split_factor == 1.0
-
-
-def test_client_handles_ticker_not_found_string() -> None:
-    # EODHD returns 200 OK with a plain string body when the ticker is bad.
-    client = _mock_client("Ticker Not Found.")
-    assert client.get_daily_bars("BOGUS.XX") == []
-
-
-def test_client_raises_auth_error_on_401() -> None:
-    import requests
-
-    client = EODHDClient(api_key="bad-key")
-    response = Mock()
-    response.status_code = 401
-    response.content = b""
-    response.raise_for_status.side_effect = requests.HTTPError("401 Unauthorized", response=response)
-    client.session = Mock()
-    client.session.get.return_value = response
-    with pytest.raises(EODHDAuthError):
-        client.get_daily_bars("N225.INDX")
-
-
-def test_client_without_api_key_returns_empty_list() -> None:
-    client = EODHDClient(api_key="placeholder")
-    client.api_key = ""  # simulate missing key regardless of .env
-    assert client.get_daily_bars("N225.INDX") == []
-
-
-# ── Seeding + refresh + read ───────────────────────────────────────────────
-
-
-def test_seed_universe_upserts_global_instruments(store: SQLiteEngineStore) -> None:
-    provider = EODHDMarketDataProvider(client=_mock_client(_sample_rows()))
-    count = provider.seed_universe(store)
-    # 6 original (indices/ETF/equities) + 1 MOVE index + 10 GBOND rates
-    # + 10 FX + 5 spot metals + 5 crypto.
-    assert count == len(EODHD_GLOBAL_UNIVERSE) == 37
-
-    nikkei = store.get_market_instrument("JP_NIKKEI225")
-    assert nikkei is not None
-    assert nikkei.primary_ticker == "N225"
-    assert nikkei.provider_symbols_json == {"eodhd": "N225.INDX"}
-
-    sap = store.get_market_instrument("DE_SAP")
-    assert sap.isin == "DE0007164600"
-    assert sap.currency == "EUR"
-
-    eurusd = store.get_market_instrument("FX_EURUSD")
-    assert eurusd is not None
-    assert eurusd.asset_class == "fx"
-    assert eurusd.exchange_code == "FOREX"
-
-    btc = store.get_market_instrument("CRYPTO_BTC_USD")
-    assert btc is not None
-    assert btc.asset_class == "crypto"
-    assert btc.exchange_code == "CC"
-
-    gold = store.get_market_instrument("COMMOD_GOLD_SPOT")
-    assert gold is not None
-    assert gold.asset_class == "commodity"
-    assert gold.provider_symbols_json == {"eodhd": "XAUUSD.FOREX"}
-
-    move = store.get_market_instrument("US_MOVE")
-    assert move is not None
-    assert move.asset_class == "index"
-    assert move.provider_symbols_json == {"eodhd": "MOVE.INDX"}
-
-    de10y = store.get_market_instrument("RATES_DE_10Y_GBOND")
-    assert de10y is not None
-    assert de10y.asset_class == "rate"
-    assert de10y.exchange_code == "GBOND"
-    assert de10y.provider_symbols_json == {"eodhd": "DE10Y.GBOND"}
-
-
-def test_refresh_market_history_persists_bars_and_flags(store: SQLiteEngineStore) -> None:
-    provider = EODHDMarketDataProvider(
-        client=_mock_client(_sample_rows()),
-        request_sleep=0,
-    )
-    provider.seed_universe(store)
-    stats = provider.refresh_market_history(store, "N225.INDX")
-    assert stats.count == 3
-
-    bars = store.list_market_price_bars("JP_NIKKEI225")
-    assert [b.date for b in bars] == ["2026-04-15", "2026-04-16", "2026-04-17"]
-    # EODHD EOD endpoint has no div/split → every bar flagged missing CA.
-    assert all(b.has_missing_corp_acts for b in bars)
-    assert all(b.source_name == "EODHD" for b in bars)
-
-
-def test_refresh_market_history_auto_seeds_known_ticker(store: SQLiteEngineStore) -> None:
-    provider = EODHDMarketDataProvider(
-        client=_mock_client(_sample_rows()),
-        request_sleep=0,
-    )
-    # No seed_universe call first; auto-seed must fire.
-    stats = provider.refresh_market_history(store, "N225.INDX")
-    assert stats.count == 3
-    assert store.get_market_instrument("JP_NIKKEI225") is not None
-
-
-def test_refresh_accepts_bare_primary_ticker(store: SQLiteEngineStore) -> None:
-    provider = EODHDMarketDataProvider(
-        client=_mock_client(_sample_rows()),
-        request_sleep=0,
-    )
-    stats = provider.refresh_market_history(store, "N225")
-    assert stats.count == 3
-
-
-def test_partial_refresh_does_not_clear_existing_break(store: SQLiteEngineStore) -> None:
-    provider = EODHDMarketDataProvider(
-        client=_mock_client(_sample_rows()),
-        request_sleep=0,
-    )
-    provider.seed_universe(store)
-    store.update_instrument_history_status("JP_NIKKEI225", "break_detected")
-    provider.refresh_market_history(
-        store, "N225.INDX", start="2026-04-15", end="2026-04-17"
-    )
-    nikkei = store.get_market_instrument("JP_NIKKEI225")
-    assert nikkei.history_status == "break_detected"
-
-
-def test_seed_universe_preserves_existing_status(store: SQLiteEngineStore) -> None:
-    provider = EODHDMarketDataProvider(client=_mock_client(_sample_rows()))
-    provider.seed_universe(store)
-    store.update_instrument_history_status("DE_SAP", "manual_review")
-    provider.seed_universe(store)
-    assert store.get_market_instrument("DE_SAP").history_status == "manual_review"
-
-
-def test_refresh_handles_ticker_not_found(store: SQLiteEngineStore) -> None:
-    # Wire the scraper to return the EODHD "Ticker Not Found." string body.
-    provider = EODHDMarketDataProvider(
-        client=_mock_client("Ticker Not Found."),
-        request_sleep=0,
-    )
-    provider.seed_universe(store)
-    stats = provider.refresh_market_history(store, "N225.INDX")
-    assert stats.count == 0
-
-
-def test_refresh_swallows_http_not_found_error(store: SQLiteEngineStore) -> None:
-    # Simulate an HTTP 404 from EODHD.
-    import requests
-
-    client = EODHDClient(api_key="test")
-    client.session = Mock()
-    response = Mock()
-    response.status_code = 404
-    response.content = b""
-    response.raise_for_status.side_effect = requests.HTTPError(
-        "404 Not Found", response=response
-    )
-    client.session.get.return_value = response
-
-    provider = EODHDMarketDataProvider(client=client, request_sleep=0)
-    provider.seed_universe(store)
-    stats = provider.refresh_market_history(store, "N225.INDX")
-    assert stats.count == 0
-
-
-def test_get_market_history_agent_native_shape(store: SQLiteEngineStore) -> None:
-    provider = EODHDMarketDataProvider(
-        client=_mock_client(_sample_rows()),
-        request_sleep=0,
-    )
-    provider.seed_universe(store)
-    provider.refresh_market_history(store, "N225.INDX")
-
-    rows = provider.get_market_history(store, "N225.INDX")
-    assert len(rows) == 3
-    first = rows[0]
-    assert first["instrument_id"] == "JP_NIKKEI225"
-    assert first["ticker"] == "N225"
-    assert first["source"] == "EODHD"
-    assert "missing_corp_acts" in first["quality_flags"]
-    assert "N225 closed at" in first["agent_summary"]
-
-
-def test_universe_has_no_duplicate_tickers() -> None:
-    tickers = [e.eodhd_ticker for e in EODHD_GLOBAL_UNIVERSE]
-    assert len(tickers) == len(set(tickers))
-
-
-def test_universe_no_instrument_id_clash_with_macro_lane() -> None:
-    """EODHD spot FX and the FRED/ECB macro projections both surface
-    EUR/USD into ``market_price_bars`` — but they must keep distinct
-    ``instrument_id`` values so downstream picks the right definition.
-    The no-overlap-by-design rule (see module docstring) is structural;
-    this test makes the contract explicit."""
-    from ingestion.market._macro_map import MACRO_MARKET_BY_INSTRUMENT_ID
-
-    eodhd_ids = {e.instrument_id for e in EODHD_GLOBAL_UNIVERSE}
-    macro_ids = set(MACRO_MARKET_BY_INSTRUMENT_ID)
-    assert eodhd_ids.isdisjoint(macro_ids)
-
-
-def test_refresh_market_history_clear_corp_acts_flag_for_continuous_quotes(
-    store: SQLiteEngineStore,
-) -> None:
-    """FX, crypto, spot-metal, and GBOND-rate bars carry clean
-    corp-action and equity-delisting quality flags."""
-    provider = EODHDMarketDataProvider(
-        client=_mock_client(_sample_rows()),
-        request_sleep=0,
-    )
-    provider.seed_universe(store)
-
-    for instrument_id, ticker in (
-        ("FX_EURUSD", "EURUSD.FOREX"),
-        ("CRYPTO_BTC_USD", "BTC-USD.CC"),
-        ("COMMOD_GOLD_SPOT", "XAUUSD.FOREX"),
-        ("RATES_DE_10Y_GBOND", "DE10Y.GBOND"),
-        ("US_MOVE", "MOVE.INDX"),
-    ):
-        provider.refresh_market_history(store, ticker)
-        bars = store.list_market_price_bars(instrument_id)
-        assert len(bars) == 3, f"no bars persisted for {instrument_id}"
-        assert all(b.has_missing_corp_acts is False for b in bars), (
-            f"{instrument_id} bars carry clear corp-action flags"
-        )
-        assert all(b.has_pre2018_delisted is False for b in bars), (
-            f"{instrument_id} bars carry clear delisting flags"
-        )
-        assert all("corp_acts_missing" not in b.quality_flags_json for b in bars), (
-            f"{instrument_id} bars carry empty corp-action JSON flags"
-        )
-
-    # Sanity: equity rows still flagged as before so the gate doesn't
-    # over-broadly suppress the warning.
-    provider.refresh_market_history(store, "N225.INDX")
-    nikkei_bars = store.list_market_price_bars("JP_NIKKEI225")
-    assert all(b.has_missing_corp_acts for b in nikkei_bars), (
-        "Index bars should still be flagged corp_acts_missing pending issue #67 slice 2"
+def _symbol(code: str, *, type_: str = "Common Stock") -> EODHDSymbol:
+    return EODHDSymbol(
+        code=code,
+        name=f"{code} Inc.",
+        exchange="NASDAQ",
+        currency="USD",
+        type=type_,
+        isin=f"ISIN{code}",
+        figi=f"FIGI{code}",
+        composite_figi=f"COMP{code}",
+        list_date="2020-01-02",
+        raw={"Code": code, "Type": type_},
     )
 
 
-def test_refresh_market_history_uses_rate_policy_for_gbond_yields(
-    store: SQLiteEngineStore,
-) -> None:
-    payload = [
-        {"date": "2020-01-02", "open": -0.55, "high": -0.50, "low": -0.60,
-         "close": -0.57, "adjusted_close": -0.57, "volume": 0},
-        {"date": "2020-01-03", "open": -0.01, "high": 0.03, "low": -0.02,
-         "close": 0.01, "adjusted_close": 0.01, "volume": 0},
-    ]
-    provider = EODHDMarketDataProvider(
-        client=_mock_client(payload),
-        request_sleep=0,
-    )
-    provider.seed_universe(store)
-    stats = provider.refresh_market_history(store, "DE10Y.GBOND")
-    assert stats.count == 2
+def test_build_us_instruments_marks_delisted_by_set_difference() -> None:
+    active = [_symbol("AAPL"), _symbol("SPY", type_="ETF")]
+    with_delisted = [*active, _symbol("LEH")]
+    seen = datetime(2026, 5, 3, tzinfo=timezone.utc)
 
-    bars = store.list_market_price_bars("RATES_DE_10Y_GBOND")
-    assert [b.date for b in bars] == ["2020-01-02", "2020-01-03"]
-    assert all(b.has_break_detected is False for b in bars)
-    assert all("ohlc_sanity" not in b.quality_flags_json for b in bars)
-    assert store.get_market_instrument("RATES_DE_10Y_GBOND").history_status == (
-        "provider_continuous"
+    instruments = build_us_instruments(
+        active_symbols=active,
+        active_plus_delisted_symbols=with_delisted,
+        last_seen=seen,
     )
 
-    rows = provider.get_market_history(store, "DE10Y.GBOND")
-    assert rows[-1]["agent_summary"].startswith("DE10Y yield closed at 0.010%")
+    by_id = {row.instrument_id: row for row in instruments}
+    assert set(by_id) == {"US_AAPL", "US_SPY", "US_LEH"}
+    assert by_id["US_AAPL"].is_active is True
+    assert by_id["US_SPY"].asset_class == "equity_etf"
+    assert by_id["US_LEH"].is_active is False
 
 
-def test_refresh_market_history_break_detection_runs_for_continuous_tapes(
-    store: SQLiteEngineStore,
-) -> None:
-    """FX / crypto / spot-metal series have ``adjusted_close == close``
-    so the equity-style ``adjustment_applied`` gate would otherwise skip
-    break detection entirely. Slice 1 fixes that — break detection still
-    runs for these continuous-tape asset classes so a provider splice
-    or scale jump on EURUSD/BTC/XAU surfaces as ``has_break_detected``.
-    """
-    # Construct a series with a 60% drop on day 3 — above the default
-    # break threshold (DEFAULT_BREAK_THRESHOLD = 0.5, strict-greater check).
-    payload = [
-        {"date": "2026-04-15", "open": 1.10, "high": 1.11, "low": 1.10,
-         "close": 1.10, "adjusted_close": 1.10, "volume": 1000},
-        {"date": "2026-04-16", "open": 1.10, "high": 1.11, "low": 1.10,
-         "close": 1.10, "adjusted_close": 1.10, "volume": 1000},
-        {"date": "2026-04-17", "open": 0.40, "high": 0.40, "low": 0.40,
-         "close": 0.40, "adjusted_close": 0.40, "volume": 1000},
-    ]
-    provider = EODHDMarketDataProvider(
-        client=_mock_client(payload),
-        request_sleep=0,
-    )
-    provider.seed_universe(store)
-    provider.refresh_market_history(store, "EURUSD.FOREX")
-    bars = store.list_market_price_bars("FX_EURUSD")
-    breaks = [b for b in bars if b.has_break_detected]
-    assert len(breaks) >= 1, (
-        "FX scale jump should surface as has_break_detected even when "
-        "adjusted_close == close"
+def test_build_us_instruments_filters_unsupported_types() -> None:
+    instruments = build_us_instruments(
+        active_symbols=[_symbol("AAA"), _symbol("BOND", type_="Bond")],
+        active_plus_delisted_symbols=[_symbol("AAA"), _symbol("BOND", type_="Bond")],
+        last_seen=datetime(2026, 5, 3, tzinfo=timezone.utc),
     )
 
+    assert [row.ticker for row in instruments] == ["AAA"]
 
-def test_corp_action_bearing_classes_include_etf_variants() -> None:
-    """bond_etf / commodity_etf are real asset_class values used by
-    ``ingestion.market._tiingo_universe.TIINGO_MACRO_ETF_UNIVERSE`` —
-    bond ETFs make distributions and commodity ETFs do split, so they
-    must stay in the missing-corp-acts gate. Without this guard a
-    custom EODHD universe of macro ETFs would silently bypass the
-    quality flag."""
-    from ingestion.market.clients._eodhd import (
-        _CORP_ACTION_BEARING_ASSET_CLASSES,
-        _entry_carries_corp_actions,
+
+def test_build_us_instruments_keeps_requested_exchange_metadata() -> None:
+    instruments = build_us_instruments(
+        active_symbols=[_symbol("VOD")],
+        active_plus_delisted_symbols=[_symbol("VOD")],
+        exchange="LSE",
+        last_seen=datetime(2026, 5, 3, tzinfo=timezone.utc),
     )
 
-    assert "bond_etf" in _CORP_ACTION_BEARING_ASSET_CLASSES
-    assert "commodity_etf" in _CORP_ACTION_BEARING_ASSET_CLASSES
-    assert "equity_etf" in _CORP_ACTION_BEARING_ASSET_CLASSES
-    assert _entry_carries_corp_actions(EODHD_UNIVERSE_BY_TICKER["N225.INDX"]) is True
-    assert _entry_carries_corp_actions(EODHD_UNIVERSE_BY_TICKER["MOVE.INDX"]) is False
-    # Negative invariants — non-corp-action-bearing classes must stay out.
-    assert "fx" not in _CORP_ACTION_BEARING_ASSET_CLASSES
-    assert "crypto" not in _CORP_ACTION_BEARING_ASSET_CLASSES
-    assert "commodity" not in _CORP_ACTION_BEARING_ASSET_CLASSES
+    metadata = json.loads(instruments[0].metadata)
+
+    assert metadata["eodhd_exchange"] == "LSE"
 
 
-def test_universe_new_asset_classes_present() -> None:
-    """Guard against accidental drops on the EODHD workbook and global rows."""
-    classes = [e.asset_class for e in EODHD_GLOBAL_UNIVERSE]
-    assert classes.count("index") == 4
-    assert classes.count("rate") == 10
-    assert classes.count("fx") == 10
-    assert classes.count("crypto") == 5
-    # 5 spot metals; original universe had no commodity rows so the count
-    # equals the slice-1 contribution.
-    assert classes.count("commodity") == 5
-
-
-def test_universe_includes_workbook_move_and_gbond_tickers() -> None:
-    expected = {
-        "MOVE.INDX": ("US_MOVE", "index"),
-        "CN10Y.GBOND": ("RATES_CN_10Y_GBOND", "rate"),
-        "DE2Y.GBOND": ("RATES_DE_2Y_GBOND", "rate"),
-        "DE5Y.GBOND": ("RATES_DE_5Y_GBOND", "rate"),
-        "DE10Y.GBOND": ("RATES_DE_10Y_GBOND", "rate"),
-        "DE30Y.GBOND": ("RATES_DE_30Y_GBOND", "rate"),
-        "JP2Y.GBOND": ("RATES_JP_2Y_GBOND", "rate"),
-        "JP3Y.GBOND": ("RATES_JP_3Y_GBOND", "rate"),
-        "JP5Y.GBOND": ("RATES_JP_5Y_GBOND", "rate"),
-        "JP10Y.GBOND": ("RATES_JP_10Y_GBOND", "rate"),
-        "JP30Y.GBOND": ("RATES_JP_30Y_GBOND", "rate"),
+def test_bar_projection_derives_adjusted_ohlcv_from_adjusted_close() -> None:
+    instrument = {
+        "instrument_id": "US_AAPL",
+        "ticker": "AAPL",
+        "exchange": "NASDAQ",
     }
-    for ticker, (instrument_id, asset_class) in expected.items():
-        entry = EODHD_UNIVERSE_BY_TICKER[ticker]
-        assert entry.instrument_id == instrument_id
-        assert entry.asset_class == asset_class
-
-
-def test_orchestrator_registers_eodhd_market_source(store: SQLiteEngineStore) -> None:
-    from ingestion.sources import IngestionOrchestrator
-
-    orch = IngestionOrchestrator(store=store)
-    names = [s["name"] for s in orch.list_sources()]
-    assert "eodhd_market" in names
-
-
-# ── Review-driven invariants ──────────────────────────────────────────────
-
-
-def test_client_handles_real_ticker_not_found_text_body() -> None:
-    """EODHD's real 'Ticker Not Found.' body is plain text, not JSON.
-
-    response.json() raises a JSONDecodeError on that payload, so the parser
-    must inspect raw text first and return []. This guards against an
-    exception escaping get_daily_bars and aborting refresh_universe.
-    """
-    import json
-
-    client = EODHDClient(api_key="test-key")
-    response = Mock()
-    response.content = b"Ticker Not Found."
-    response.text = "Ticker Not Found."
-    response.json.side_effect = json.JSONDecodeError("boom", "Ticker Not Found.", 0)
-    response.raise_for_status.return_value = None
-    client.session = Mock()
-    client.session.get.return_value = response
-
-    assert client.get_daily_bars("BOGUS.XX") == []
-
-
-# ── Issue #67 slice 2 — historical corp actions (raw + projection) ────────
-
-
-def _mock_corp_action_client(
-    *, dividends_payload: object, splits_payload: object,
-) -> EODHDClient:
-    """Build a mocked EODHDClient that returns one payload for /api/div
-    and another for /api/splits, dispatched by URL."""
-    client = EODHDClient(api_key="test-key")
-    client.session = Mock()
-
-    def _route_get(url, params=None, timeout=None):
-        response = Mock()
-        response.content = b"not-empty"
-        response.text = "[]"  # any JSON-ish string so the parser proceeds to .json()
-        response.raise_for_status.return_value = None
-        if "/div/" in url:
-            response.json.return_value = dividends_payload
-        elif "/splits/" in url:
-            response.json.return_value = splits_payload
-        else:
-            response.json.return_value = []
-        return response
-
-    client.session.get.side_effect = _route_get
-    return client
-
-
-def _aapl_dividends() -> list[dict]:
-    """Realistic /api/div/AAPL.US payload (probed live 2026-04-28)."""
-    return [
-        {"date": "2024-02-09", "declarationDate": "2024-02-01",
-         "recordDate": "2024-02-12", "paymentDate": "2024-02-15",
-         "period": "Quarterly", "value": 0.24, "unadjustedValue": 0.24,
-         "currency": "USD"},
-        {"date": "2024-05-10", "declarationDate": "2024-05-02",
-         "recordDate": "2024-05-13", "paymentDate": "2024-05-16",
-         "period": "Quarterly", "value": 0.25, "unadjustedValue": 0.25,
-         "currency": "USD"},
-        {"date": "2024-08-12", "declarationDate": "2024-08-01",
-         "recordDate": "2024-08-12", "paymentDate": "2024-08-15",
-         "period": "Quarterly", "value": 0.25, "unadjustedValue": 0.25,
-         "currency": "USD"},
-        {"date": "2024-11-08", "declarationDate": "2024-10-31",
-         "recordDate": "2024-11-11", "paymentDate": "2024-11-14",
-         "period": "Quarterly", "value": 0.25, "unadjustedValue": 0.25,
-         "currency": "USD"},
-    ]
-
-
-def _aapl_splits() -> list[dict]:
-    return [
-        {"date": "2020-08-31", "split": "4.000000/1.000000"},
-    ]
-
-
-def _aapl_test_universe():
-    """Single-entry custom universe for AAPL.US used by slice-2 tests."""
-    from ingestion.market._eodhd_universe import EODHDUniverseEntry
-
-    return (
-        EODHDUniverseEntry(
-            instrument_id="US_AAPL",
-            eodhd_ticker="AAPL.US",
-            primary_ticker="AAPL",
-            exchange_code="US",
-            name="Apple Inc.",
-            asset_class="equity",
-            market="United States equity market",
-            currency="USD",
-            description_for_agent="Apple — US mega-cap tech.",
-        ),
+    bar = EODHDDailyBar(
+        ticker="AAPL.US",
+        date="2026-01-05",
+        open=100.0,
+        high=110.0,
+        low=90.0,
+        close=100.0,
+        volume=1_000.0,
+        adj_open=None,
+        adj_high=None,
+        adj_low=None,
+        adj_close=50.0,
+        adj_volume=None,
+        div_cash=0.0,
+        split_factor=1.0,
     )
 
-
-def test_get_historical_dividends_parses_full_history() -> None:
-    client = _mock_corp_action_client(
-        dividends_payload=_aapl_dividends(),
-        splits_payload=[],
-    )
-    divs = client.get_historical_dividends("AAPL.US")
-    assert [d.date for d in divs] == [
-        "2024-02-09", "2024-05-10", "2024-08-12", "2024-11-08",
-    ]
-    assert all(d.value > 0 for d in divs)
-    assert divs[0].declaration_date == "2024-02-01"
-    assert divs[0].period == "Quarterly"
-    assert divs[0].currency == "USD"
-
-
-def test_get_historical_splits_parses_ratio() -> None:
-    client = _mock_corp_action_client(
-        dividends_payload=[], splits_payload=_aapl_splits(),
-    )
-    splits = client.get_historical_splits("AAPL.US")
-    assert len(splits) == 1
-    s = splits[0]
-    assert s.date == "2020-08-31"
-    assert s.new_shares == 4.0 and s.old_shares == 1.0
-    assert s.raw_ratio == "4.000000/1.000000"
-
-
-def test_refresh_corp_actions_populates_raw_and_projects_to_bars(
-    store: SQLiteEngineStore,
-) -> None:
-    """Acceptance: ``market_corp_actions_raw`` carries every dividend
-    + split, and ``market_price_bars`` rows for the matching dates land
-    with non-default ``dividend_cash`` / ``split_factor``."""
-    universe = _aapl_test_universe()
-    bars_payload = [
-        {"date": "2020-08-31", "open": 100.0, "high": 102.0, "low": 99.0,
-         "close": 101.0, "adjusted_close": 25.25, "volume": 1_000_000},
-        {"date": "2024-02-09", "open": 190.0, "high": 191.0, "low": 188.0,
-         "close": 189.0, "adjusted_close": 189.0, "volume": 50_000_000},
-        {"date": "2024-05-10", "open": 184.0, "high": 185.0, "low": 183.0,
-         "close": 184.5, "adjusted_close": 184.5, "volume": 50_000_000},
-        {"date": "2024-08-12", "open": 217.0, "high": 218.0, "low": 216.0,
-         "close": 217.5, "adjusted_close": 217.5, "volume": 50_000_000},
-        {"date": "2024-11-08", "open": 226.0, "high": 227.0, "low": 225.0,
-         "close": 226.5, "adjusted_close": 226.5, "volume": 50_000_000},
-    ]
-    client = EODHDClient(api_key="test-key")
-    client.session = Mock()
-
-    def _route_get(url, params=None, timeout=None):
-        response = Mock()
-        response.content = b"not-empty"
-        response.text = "[]"  # any JSON-ish string so the parser proceeds to .json()
-        response.raise_for_status.return_value = None
-        if "/div/" in url:
-            response.json.return_value = _aapl_dividends()
-        elif "/splits/" in url:
-            response.json.return_value = _aapl_splits()
-        elif "/eod/" in url:
-            response.json.return_value = bars_payload
-        else:
-            response.json.return_value = []
-        return response
-
-    client.session.get.side_effect = _route_get
-
-    provider = EODHDMarketDataProvider(
-        client=client, universe=universe, request_sleep=0,
-    )
-    provider.seed_universe(store)
-
-    # Step 1: populate market_price_bars via the existing path.
-    provider.refresh_market_history(store, "AAPL.US")
-    bars = store.list_market_price_bars("US_AAPL")
-    assert {b.date for b in bars} == {
-        "2020-08-31", "2024-02-09", "2024-05-10",
-        "2024-08-12", "2024-11-08",
-    }
-    # Pre-projection: missing-CA flag is set, dividend/split fields are
-    # the schema defaults.
-    assert all(b.has_missing_corp_acts for b in bars)
-    assert all(b.dividend_cash == 0.0 and b.split_factor == 1.0 for b in bars)
-
-    # Step 2: refresh_corp_actions lands raw rows + projects.
-    stats = provider.refresh_corp_actions(store, "AAPL.US")
-    assert stats.count >= 5, "every dividend + the split should write its bar"
-
-    raw_rows = store.latest_market_corp_actions_for_ticker(
-        provider="eodhd", ticker="AAPL.US",
-    )
-    by_action = {(r.action_type, r.event_date): r for r in raw_rows}
-    assert ("dividend", "2024-02-09") in by_action
-    assert ("dividend", "2024-05-10") in by_action
-    assert ("dividend", "2024-08-12") in by_action
-    assert ("dividend", "2024-11-08") in by_action
-    assert ("split", "2020-08-31") in by_action
-
-    # Step 3: bars now carry the projected values + the missing flag is
-    # cleared on rows that landed a corp-action snapshot.
-    bars_after = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
-    assert bars_after["2024-02-09"].dividend_cash == 0.24
-    assert bars_after["2024-05-10"].dividend_cash == 0.25
-    assert bars_after["2024-08-12"].dividend_cash == 0.25
-    assert bars_after["2024-11-08"].dividend_cash == 0.25
-    assert bars_after["2020-08-31"].split_factor == 4.0
-    for date in (
-        "2020-08-31", "2024-02-09", "2024-05-10",
-        "2024-08-12", "2024-11-08",
-    ):
-        assert not bars_after[date].has_missing_corp_acts, (
-            f"projection should clear missing-CA flag on {date}"
-        )
-
-
-def test_refresh_corp_actions_idempotent_on_unchanged_data(
-    store: SQLiteEngineStore,
-) -> None:
-    """Re-running the refresh on identical data inserts zero new rows
-    in market_corp_actions_raw — content_hash + INSERT OR IGNORE."""
-    universe = _aapl_test_universe()
-    bars_payload = [
-        {"date": "2024-02-09", "open": 190.0, "high": 191.0, "low": 188.0,
-         "close": 189.0, "adjusted_close": 189.0, "volume": 50_000_000},
-    ]
-    client = EODHDClient(api_key="test-key")
-    client.session = Mock()
-
-    def _route_get(url, params=None, timeout=None):
-        response = Mock()
-        response.content = b"not-empty"
-        response.text = "[]"  # any JSON-ish string so the parser proceeds to .json()
-        response.raise_for_status.return_value = None
-        if "/div/" in url:
-            response.json.return_value = _aapl_dividends()
-        elif "/splits/" in url:
-            response.json.return_value = _aapl_splits()
-        elif "/eod/" in url:
-            response.json.return_value = bars_payload
-        else:
-            response.json.return_value = []
-        return response
-
-    client.session.get.side_effect = _route_get
-
-    provider = EODHDMarketDataProvider(
-        client=client, universe=universe, request_sleep=0,
-    )
-    provider.seed_universe(store)
-    provider.refresh_corp_actions(store, "AAPL.US")
-    initial_rows = store.latest_market_corp_actions_for_ticker(
-        provider="eodhd", ticker="AAPL.US",
-    )
-    provider.refresh_corp_actions(store, "AAPL.US")
-    final_rows = store.latest_market_corp_actions_for_ticker(
-        provider="eodhd", ticker="AAPL.US",
-    )
-    assert len(final_rows) == len(initial_rows), (
-        "Re-running with identical data must not add new latest rows"
+    row = _bar_to_ch(
+        instrument=instrument,
+        bar=bar,
+        fetched_at=datetime(2026, 5, 3, tzinfo=timezone.utc),
     )
 
-
-def test_refresh_corp_actions_records_revision_on_changed_amount(
-    store: SQLiteEngineStore,
-) -> None:
-    """A revised dividend amount produces a NEW raw row (different
-    content_hash); old version is preserved; latest projects."""
-    universe = _aapl_test_universe()
-    bars_payload = [
-        {"date": "2024-02-09", "open": 190.0, "high": 191.0, "low": 188.0,
-         "close": 189.0, "adjusted_close": 189.0, "volume": 50_000_000},
-    ]
-    revised_dividends = [
-        {"date": "2024-02-09", "declarationDate": "2024-02-01",
-         "recordDate": "2024-02-12", "paymentDate": "2024-02-15",
-         "period": "Quarterly", "value": 0.30,  # restated
-         "unadjustedValue": 0.30, "currency": "USD"},
-    ]
-    original = [_aapl_dividends()[0]]  # value=0.24
-    div_payload = original
-
-    client = EODHDClient(api_key="test-key")
-    client.session = Mock()
-
-    def _route_get(url, params=None, timeout=None):
-        response = Mock()
-        response.content = b"not-empty"
-        response.text = "[]"  # any JSON-ish string so the parser proceeds to .json()
-        response.raise_for_status.return_value = None
-        if "/div/" in url:
-            response.json.return_value = div_payload
-        elif "/splits/" in url:
-            response.json.return_value = []
-        elif "/eod/" in url:
-            response.json.return_value = bars_payload
-        else:
-            response.json.return_value = []
-        return response
-
-    client.session.get.side_effect = _route_get
-
-    provider = EODHDMarketDataProvider(
-        client=client, universe=universe, request_sleep=0,
-    )
-    provider.seed_universe(store)
-    provider.refresh_market_history(store, "AAPL.US")
-    provider.refresh_corp_actions(store, "AAPL.US")
-    bars_v1 = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
-    assert bars_v1["2024-02-09"].dividend_cash == 0.24
-
-    # EODHD restates the dividend.
-    div_payload = revised_dividends
-    provider.refresh_corp_actions(store, "AAPL.US")
-
-    # Both revisions live in raw, the latest snapshot wins on projection.
-    with store.get_connection() as conn:
-        rows = conn.execute(
-            "SELECT content_hash, snapshot_epoch_ms FROM market_corp_actions_raw "
-            "WHERE provider='eodhd' AND ticker='AAPL.US' "
-            "AND action_type='dividend' AND event_date='2024-02-09' "
-            "ORDER BY snapshot_epoch_ms"
-        ).fetchall()
-    assert len(rows) == 2, "Restatement should add a second raw row"
-    assert rows[0]["content_hash"] != rows[1]["content_hash"]
-
-    bars_v2 = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
-    assert bars_v2["2024-02-09"].dividend_cash == 0.30, (
-        "Latest snapshot must drive the projection"
-    )
+    assert row.adjusted_open == 50.0
+    assert row.adjusted_high == 55.0
+    assert row.adjusted_low == 45.0
+    assert row.adjusted_close == 50.0
+    assert row.adjusted_volume == 2_000.0
+    assert row.time.date() == Date(2026, 1, 5)
 
 
-def test_refresh_corp_actions_clears_missing_flag_in_window(
-    store: SQLiteEngineStore,
-) -> None:
-    """Codex slice-2 round-1 P2: a refresh window with bars on
-    no-corp-action dates must clear ``has_missing_corp_acts`` on those
-    bars too — the audit lane just confirmed there's nothing missing
-    for those dates."""
-    universe = _aapl_test_universe()
-    bars_payload = [
-        {"date": "2024-01-15", "open": 185.0, "high": 186.0, "low": 184.0,
-         "close": 185.5, "adjusted_close": 185.5, "volume": 50_000_000},
-        {"date": "2024-02-09", "open": 190.0, "high": 191.0, "low": 188.0,
-         "close": 189.0, "adjusted_close": 189.0, "volume": 50_000_000},
-        {"date": "2024-03-15", "open": 195.0, "high": 196.0, "low": 194.0,
-         "close": 195.0, "adjusted_close": 195.0, "volume": 50_000_000},
-    ]
-    client = EODHDClient(api_key="test-key")
-    client.session = Mock()
+class _FakeClient:
+    def __init__(self) -> None:
+        self.active = [_symbol("AAPL")]
+        self.with_delisted = [_symbol("AAPL"), _symbol("LEH")]
 
-    def _route_get(url, params=None, timeout=None):
-        response = Mock()
-        response.content = b"not-empty"
-        response.text = "[]"
-        response.raise_for_status.return_value = None
-        if "/div/" in url:
-            response.json.return_value = [_aapl_dividends()[0]]  # 2024-02-09
-        elif "/splits/" in url:
-            response.json.return_value = []
-        elif "/eod/" in url:
-            response.json.return_value = bars_payload
-        else:
-            response.json.return_value = []
-        return response
+    def list_symbols_active(self, exchange: str = "US"):
+        return self.active
 
-    client.session.get.side_effect = _route_get
-
-    provider = EODHDMarketDataProvider(
-        client=client, universe=universe, request_sleep=0,
-    )
-    provider.seed_universe(store)
-    provider.refresh_market_history(store, "AAPL.US")
-    # Pre: every bar carries missing-CA.
-    pre = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
-    assert all(b.has_missing_corp_acts for b in pre.values())
-
-    provider.refresh_corp_actions(
-        store, "AAPL.US", start="2024-01-01", end="2024-03-31",
-    )
-
-    post = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
-    # The dividend date carries div_cash and is no longer missing.
-    assert post["2024-02-09"].dividend_cash == 0.24
-    assert not post["2024-02-09"].has_missing_corp_acts
-    # The two no-corp-action bars in window are also cleared — audit
-    # lane has confirmed the nothing-to-project state.
-    assert not post["2024-01-15"].has_missing_corp_acts
-    assert not post["2024-03-15"].has_missing_corp_acts
+    def list_symbols_with_delisted(self, exchange: str = "US"):
+        return self.with_delisted
 
 
-def test_refresh_market_history_preserves_projected_corp_action_values(
-    store: SQLiteEngineStore,
-) -> None:
-    """Codex slice-2 round-1 P2: after a corp-action projection lands
-    ``dividend_cash`` / ``split_factor`` on a bar, a subsequent
-    refresh_market_history call must NOT wipe those values back to the
-    EOD-endpoint defaults (0.0 / 1.0). The fix re-projects from raw
-    after every bar upsert in the refresh path.
+class _FakeStore:
+    def __init__(self) -> None:
+        self.rows = []
 
-    Round-2 follow-up: refresh_market_history does NOT clear missing-CA
-    on no-event bars (audit-window awareness is reserved for
-    refresh_corp_actions). Test only asserts on event-date bars because
-    that's the contract refresh_market_history maintains."""
-    universe = _aapl_test_universe()
-    bars_payload = [
-        {"date": "2024-02-09", "open": 190.0, "high": 191.0, "low": 188.0,
-         "close": 189.0, "adjusted_close": 189.0, "volume": 50_000_000},
-        {"date": "2020-08-31", "open": 100.0, "high": 102.0, "low": 99.0,
-         "close": 101.0, "adjusted_close": 25.25, "volume": 1_000_000},
-    ]
-    client = EODHDClient(api_key="test-key")
-    client.session = Mock()
-
-    def _route_get(url, params=None, timeout=None):
-        response = Mock()
-        response.content = b"not-empty"
-        response.text = "[]"
-        response.raise_for_status.return_value = None
-        if "/div/" in url:
-            response.json.return_value = [_aapl_dividends()[0]]
-        elif "/splits/" in url:
-            response.json.return_value = _aapl_splits()
-        elif "/eod/" in url:
-            response.json.return_value = bars_payload
-        else:
-            response.json.return_value = []
-        return response
-
-    client.session.get.side_effect = _route_get
-    provider = EODHDMarketDataProvider(
-        client=client, universe=universe, request_sleep=0,
-    )
-    provider.seed_universe(store)
-    provider.refresh_market_history(store, "AAPL.US")
-    provider.refresh_corp_actions(store, "AAPL.US")
-
-    bars_v1 = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
-    assert bars_v1["2024-02-09"].dividend_cash == 0.24
-    assert bars_v1["2020-08-31"].split_factor == 4.0
-
-    # A scheduled price refresh (refresh_market_history called again with
-    # the same bars) must NOT wipe the projected corp-action values.
-    provider.refresh_market_history(store, "AAPL.US")
-    bars_v2 = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
-    assert bars_v2["2024-02-09"].dividend_cash == 0.24, (
-        "Price refresh should preserve projected dividend_cash"
-    )
-    assert bars_v2["2020-08-31"].split_factor == 4.0, (
-        "Price refresh should preserve projected split_factor"
-    )
+    def upsert_market_instruments(self, instruments):
+        self.rows.extend(instruments)
+        return len(instruments)
 
 
-def test_refresh_corp_actions_sums_same_day_dividends(
-    store: SQLiteEngineStore,
-) -> None:
-    """Codex slice-2 round-1 P2: same ex-date can carry multiple
-    dividend rows (regular + special). The projection must sum them
-    instead of last-write-wins.
-    """
-    universe = _aapl_test_universe()
-    same_day_dividends = [
-        {"date": "2024-12-20", "declarationDate": "2024-12-01",
-         "recordDate": "2024-12-21", "paymentDate": "2024-12-30",
-         "period": "Quarterly", "value": 0.25, "unadjustedValue": 0.25,
-         "currency": "USD"},
-        {"date": "2024-12-20", "declarationDate": "2024-12-01",
-         "recordDate": "2024-12-21", "paymentDate": "2024-12-30",
-         "period": "Special", "value": 1.50, "unadjustedValue": 1.50,
-         "currency": "USD"},
-    ]
-    bars_payload = [
-        {"date": "2024-12-20", "open": 250.0, "high": 251.0, "low": 249.0,
-         "close": 250.5, "adjusted_close": 250.5, "volume": 50_000_000},
-    ]
-    client = EODHDClient(api_key="test-key")
-    client.session = Mock()
+def test_provider_seeds_clickhouse_instruments() -> None:
+    store = _FakeStore()
+    stats = EODHDMarketDataProvider(client=_FakeClient()).seed_us_universe(store)
 
-    def _route_get(url, params=None, timeout=None):
-        response = Mock()
-        response.content = b"not-empty"
-        response.text = "[]"
-        response.raise_for_status.return_value = None
-        if "/div/" in url:
-            response.json.return_value = same_day_dividends
-        elif "/splits/" in url:
-            response.json.return_value = []
-        elif "/eod/" in url:
-            response.json.return_value = bars_payload
-        else:
-            response.json.return_value = []
-        return response
-
-    client.session.get.side_effect = _route_get
-
-    provider = EODHDMarketDataProvider(
-        client=client, universe=universe, request_sleep=0,
-    )
-    provider.seed_universe(store)
-    provider.refresh_market_history(store, "AAPL.US")
-    provider.refresh_corp_actions(store, "AAPL.US")
-
-    bars = {b.date: b for b in store.list_market_price_bars("US_AAPL")}
-    # Quarterly 0.25 + Special 1.50 = 1.75; last-write-wins would have
-    # left the bar at 0.25 or 1.50 depending on iteration order.
-    assert bars["2024-12-20"].dividend_cash == pytest.approx(1.75), (
-        "Same-day dividends must accumulate, not overwrite"
-    )
+    assert stats.instruments == 2
+    assert {row.instrument_id for row in store.rows} == {"US_AAPL", "US_LEH"}
 
 
-def test_split_ratio_parsed_correctly() -> None:
-    """4-for-1 split lands as split_factor=4.0, matching the
-    market_price_bars convention (split_factor = new / old)."""
-    client = _mock_corp_action_client(
-        dividends_payload=[],
-        splits_payload=[{"date": "2020-08-31", "split": "4.000000/1.000000"}],
-    )
-    splits = client.get_historical_splits("AAPL.US")
-    s = splits[0]
-    assert s.new_shares / s.old_shares == 4.0
+class _CorpActionFailureClient:
+    def get_bulk_last_day(self, exchange: str, *, date: str | None = None):
+        return []
+
+    def get_bulk_dividends(self, exchange: str, *, date: str | None = None):
+        return [
+            EODHDDividend(
+                ticker="AAPL.US",
+                date="2026-02-09",
+                declaration_date=None,
+                record_date=None,
+                payment_date=None,
+                period=None,
+                value=0.25,
+                unadjusted_value=None,
+                currency="USD",
+            )
+        ]
+
+    def get_bulk_splits(self, exchange: str, *, date: str | None = None):
+        return []
+
+    def get_daily_bars(self, ticker: str):
+        raise EODHDAPIError("unit-test failure")
 
 
-# ── Issue #67 slice 3 — bulk EOD backfill ──────────────────────────────────
+class _CorpActionFailureStore:
+    def __init__(self) -> None:
+        self.corp_action_writes = 0
+
+    def list_instruments(self, *, active_only=None):
+        return [
+            {
+                "instrument_id": "US_AAPL",
+                "ticker": "AAPL",
+                "exchange": "NASDAQ",
+                "currency": "USD",
+                "metadata": json.dumps(
+                    {"eodhd_code": "AAPL", "eodhd_exchange": "US"}
+                ),
+            }
+        ]
+
+    def upsert_market_bars(self, rows):
+        return len(rows)
+
+    def has_dividend_hash(self, *, instrument_id, ex_date, content_hash):
+        return False
+
+    def has_split_hash(self, *, instrument_id, execution_date, content_hash):
+        return False
+
+    def upsert_corp_actions(self, *, dividends, splits):
+        self.corp_action_writes += 1
+        return len(dividends), len(splits)
+
+    def delete_bars_for_instrument(self, instrument_id):
+        return None
 
 
-def _bulk_payload_us_2024_06_14() -> list[dict]:
-    """Realistic bulk-EOD shape — fields exactly match the live probe.
-    Includes one universe-tracked ticker (AAPL) and four non-tracked
-    rows so the universe filter has something to skip."""
-    return [
-        {"code": "AAPL", "exchange_short_name": "US", "date": "2024-06-14",
-         "open": 213.85, "high": 215.17, "low": 213.4, "close": 212.5,
-         "adjusted_close": 211.7, "volume": 70_000_000},
-        {"code": "MSFT", "exchange_short_name": "US", "date": "2024-06-14",
-         "open": 420.1, "high": 422.0, "low": 419.0, "close": 421.5,
-         "adjusted_close": 421.5, "volume": 30_000_000},
-        {"code": "GOOG", "exchange_short_name": "US", "date": "2024-06-14",
-         "open": 175.0, "high": 176.5, "low": 174.5, "close": 176.0,
-         "adjusted_close": 176.0, "volume": 25_000_000},
-        {"code": "ZZZOF", "exchange_short_name": "US", "date": "2024-06-14",
-         "open": 0.11, "high": 0.11, "low": 0.11, "close": 0.11,
-         "adjusted_close": 0.11, "volume": 0},
-        {"code": "^TNX", "exchange_short_name": "US", "date": "2024-06-14",
-         "open": 4.31, "high": 4.35, "low": 4.31, "close": 4.336,
-         "adjusted_close": 4.336, "volume": 0},
-    ]
+def test_daily_bulk_keeps_failed_corp_action_hash_retryable() -> None:
+    store = _CorpActionFailureStore()
+    provider = EODHDMarketDataProvider(client=_CorpActionFailureClient())
 
-
-def test_get_bulk_last_day_parses_bulk_shape() -> None:
-    """Bulk rows carry `code` + `exchange_short_name` instead of being
-    URL-keyed. Parser must reconstruct the canonical CODE.EX form so
-    downstream universe routing matches what `get_daily_bars` returns."""
-    client = EODHDClient(api_key="test-key")
-    response = Mock()
-    response.content = b"not-empty"
-    response.text = "[]"
-    response.json.return_value = _bulk_payload_us_2024_06_14()
-    response.raise_for_status.return_value = None
-    client.session = Mock()
-    client.session.get.return_value = response
-
-    bars = client.get_bulk_last_day("US", date="2024-06-14")
-    assert len(bars) == 5
-    assert bars[0].ticker == "AAPL.US"
-    assert bars[0].date == "2024-06-14"
-    assert bars[0].close == pytest.approx(212.5)
-
-
-def test_get_bulk_last_day_handles_empty_body() -> None:
-    """Holiday / weekend bulk requests can return empty body; parser
-    must return [] without raising."""
-    client = EODHDClient(api_key="test-key")
-    response = Mock()
-    response.content = b""
-    response.text = ""
-    response.raise_for_status.return_value = None
-    client.session = Mock()
-    client.session.get.return_value = response
-    assert client.get_bulk_last_day("US", date="2024-06-14") == []
-
-
-def test_backfill_script_filters_universe_at_write(
-    store: SQLiteEngineStore,
-    tmp_path,
-) -> None:
-    """End-to-end test of the slice-3 backfill script: bulk returns 5
-    rows but only AAPL is in the universe, so only one row lands in
-    market_price_bars. Re-running on the same date is idempotent
-    (existing PK)."""
-    import sys as _sys
-    from unittest.mock import patch
-    from ingestion.market._eodhd_universe import EODHDUniverseEntry
-
-    # Stub the EODHD client so the script doesn't hit the network.
-    payload = _bulk_payload_us_2024_06_14()
-    response = Mock()
-    response.content = b"not-empty"
-    response.text = "[]"
-    response.json.return_value = payload
-    response.raise_for_status.return_value = None
-    fake_session = Mock()
-    fake_session.get.return_value = response
-
-    # Single-AAPL universe so MSFT/GOOG/ZZZOF/^TNX are filtered out.
-    custom_universe = (
-        EODHDUniverseEntry(
-            instrument_id="US_AAPL",
-            eodhd_ticker="AAPL.US",
-            primary_ticker="AAPL",
-            exchange_code="US",
-            name="Apple Inc.",
-            asset_class="equity",
-            market="United States equity market",
-            currency="USD",
-        ),
-    )
-
-    # Seed the universe in the store (script seeds via universe lookup,
-    # not seed_universe — but the universe-filter helper reads the module
-    # constant). Patch the module constant for the duration.
-    REPO_ROOT = Path(__file__).resolve().parents[1]
-    SCRIPT_PATH = REPO_ROOT / "scripts" / "backfill_market_bars_bulk.py"
-    _sys.path.insert(0, str(SCRIPT_PATH.parent))
     try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "backfill_market_bars_bulk", SCRIPT_PATH,
-        )
-        script_mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(script_mod)
+        provider.refresh_daily_bulk(store, date="2026-02-09")
+    except EODHDAPIError:
+        pass
+    else:
+        raise AssertionError("expected corp-action refill failure")
 
-        with patch.object(script_mod, "EODHD_GLOBAL_UNIVERSE", custom_universe), \
-             patch.object(
-                 script_mod.EODHDClient, "session",
-                 fake_session, create=True,
-             ):
-            # Patch out the network entry on a fresh client by replacing
-            # the constructor return. Cleanest path: subclass.
-            class StubbedClient(script_mod.EODHDClient):
-                def __init__(self, *args, **kwargs):
-                    self.api_key = "test-key"
-                    self.session = fake_session
-
-            with patch.object(script_mod, "EODHDClient", StubbedClient):
-                # Pre-seed the AAPL instrument so the bar write doesn't
-                # crash on FK / lookup expectations.
-                EODHDMarketDataProvider(
-                    universe=custom_universe, request_sleep=0,
-                ).seed_universe(store)
-
-                rc = script_mod.main([
-                    "--exchange", "US",
-                    "--date", "2024-06-14",
-                    "--db-path", str(store.db_path),
-                    "--request-sleep", "0",
-                    "--quiet",
-                    "--log-dir", str(tmp_path),
-                ])
-                assert rc == 0
-
-        bars = store.list_market_price_bars("US_AAPL")
-        assert len(bars) == 1, "Only AAPL is in the universe — others must be filtered"
-        assert bars[0].date == "2024-06-14"
-        assert bars[0].close == pytest.approx(212.5)
-        assert bars[0].source_name == "EODHD"
-
-        # Second run on the same date — idempotent via the PK
-        # (instrument_id, date, bar_interval, source_name, source_symbol).
-        with patch.object(script_mod, "EODHD_GLOBAL_UNIVERSE", custom_universe):
-            class StubbedClient2(script_mod.EODHDClient):
-                def __init__(self, *args, **kwargs):
-                    self.api_key = "test-key"
-                    self.session = fake_session
-
-            with patch.object(script_mod, "EODHDClient", StubbedClient2):
-                script_mod.main([
-                    "--exchange", "US",
-                    "--date", "2024-06-14",
-                    "--db-path", str(store.db_path),
-                    "--request-sleep", "0",
-                    "--quiet",
-                    "--log-dir", str(tmp_path),
-                ])
-        bars_again = store.list_market_price_bars("US_AAPL")
-        assert len(bars_again) == 1, "Re-running on same date must be idempotent"
-
-        # Issue #67 slice-3 codex-round-1 P2: backfill script must seed
-        # the identity rows so the public read path resolves the bar.
-        # get_market_history goes via market_instruments first; if seeding
-        # was skipped the bar would land but the read would return [].
-        history = EODHDMarketDataProvider(
-            universe=custom_universe, request_sleep=0,
-        ).get_market_history(store, "AAPL.US")
-        assert len(history) == 1
-        assert history[0]["ticker"] == "AAPL"
-        assert history[0]["date"] == "2024-06-14"
-    finally:
-        _sys.path.remove(str(SCRIPT_PATH.parent))
+    assert store.corp_action_writes == 0
 
 
-def test_backfill_script_seeds_identity_rows_on_fresh_db(
-    tmp_path,
-) -> None:
-    """Codex slice-3 round-1 P2: a fresh DB without any prior
-    ``EODHDMarketDataProvider.seed_universe`` call must still result in
-    ``market_instruments`` rows for the touched tickers — otherwise
-    backfilled bars are orphans the read path can't resolve."""
-    import importlib.util
-    import sys as _sys
-    from unittest.mock import patch
-    from ingestion.market._eodhd_universe import EODHDUniverseEntry as _UE
+class _Response:
+    def __init__(self, payload) -> None:
+        self.payload = payload
+        self.content = b"json"
+        self.text = json.dumps(payload)
+        self.status_code = 200
 
-    payload = _bulk_payload_us_2024_06_14()
-    response = Mock()
-    response.content = b"not-empty"
-    response.text = "[]"
-    response.json.return_value = payload
-    response.raise_for_status.return_value = None
-    fake_session = Mock()
-    fake_session.get.return_value = response
+    def raise_for_status(self) -> None:
+        return None
 
-    custom_universe = (
-        _UE(
-            instrument_id="US_AAPL", eodhd_ticker="AAPL.US",
-            primary_ticker="AAPL", exchange_code="US",
-            name="Apple Inc.", asset_class="equity",
-            market="United States equity market", currency="USD",
-        ),
-    )
-
-    db_path = tmp_path / "fresh.db"
-    fresh_store = SQLiteEngineStore(db_path=db_path)
-    # Crucially: NO seed_universe call before the script runs. The
-    # script's own seeding step is what we're exercising.
-    assert fresh_store.get_market_instrument("US_AAPL") is None
-
-    REPO_ROOT = Path(__file__).resolve().parents[1]
-    SCRIPT_PATH = REPO_ROOT / "scripts" / "backfill_market_bars_bulk.py"
-    _sys.path.insert(0, str(SCRIPT_PATH.parent))
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "backfill_market_bars_bulk", SCRIPT_PATH,
-        )
-        script_mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(script_mod)
-
-        class StubbedClient(script_mod.EODHDClient):
-            def __init__(self, *args, **kwargs):
-                self.api_key = "test-key"
-                self.session = fake_session
-
-        with patch.object(script_mod, "EODHD_GLOBAL_UNIVERSE", custom_universe), \
-             patch.object(script_mod, "EODHDClient", StubbedClient):
-            rc = script_mod.main([
-                "--exchange", "US",
-                "--date", "2024-06-14",
-                "--db-path", str(db_path),
-                "--request-sleep", "0",
-                "--quiet",
-                "--log-dir", str(tmp_path),
-            ])
-        assert rc == 0
-        # Identity row landed.
-        instrument = fresh_store.get_market_instrument("US_AAPL")
-        assert instrument is not None
-        assert instrument.primary_ticker == "AAPL"
-        # Bar landed.
-        bars = fresh_store.list_market_price_bars("US_AAPL")
-        assert len(bars) == 1
-        # Read path resolves both.
-        history = EODHDMarketDataProvider(
-            universe=custom_universe, request_sleep=0,
-        ).get_market_history(fresh_store, "AAPL.US")
-        assert len(history) == 1
-    finally:
-        _sys.path.remove(str(SCRIPT_PATH.parent))
+    def json(self):
+        return self.payload
 
 
-def test_backfill_trading_days_includes_weekends_for_crypto() -> None:
-    """Codex slice-3 round-2 P2: ``.CC`` exchange trades 24/7 so the
-    ``--start ... --end ...`` walk must include Saturdays/Sundays.
-    Equity exchanges keep the Mon-Fri filter."""
-    import importlib.util
-    REPO_ROOT = Path(__file__).resolve().parents[1]
-    SCRIPT_PATH = REPO_ROOT / "scripts" / "backfill_market_bars_bulk.py"
-    spec = importlib.util.spec_from_file_location(
-        "backfill_market_bars_bulk", SCRIPT_PATH,
-    )
-    script_mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(script_mod)
+class _Session:
+    def __init__(self, payload) -> None:
+        self.payload = payload
+        self.calls = []
 
-    import datetime as _dt
-    # 2024-06-14 (Fri) → 2024-06-17 (Mon): Sat 15 + Sun 16 should be
-    # included for CC, excluded for US.
-    start = _dt.date(2024, 6, 14)
-    end = _dt.date(2024, 6, 17)
-    cc_days = script_mod._trading_days(start, end, exchange="CC")
-    us_days = script_mod._trading_days(start, end, exchange="US")
-    assert cc_days == ["2024-06-14", "2024-06-15", "2024-06-16", "2024-06-17"]
-    assert us_days == ["2024-06-14", "2024-06-17"]
+    def get(self, url, *, params, timeout):
+        self.calls.append({"url": url, "params": params, "timeout": timeout})
+        return _Response(self.payload)
 
 
-def test_backfill_aborts_on_missing_credentials(tmp_path) -> None:
-    """Codex slice-3 round-2 P2: missing EODHD_API_KEY must produce a
-    non-zero exit instead of silently completing with zero rows."""
-    import importlib.util
-    import sys as _sys
-    from unittest.mock import patch
-    REPO_ROOT = Path(__file__).resolve().parents[1]
-    SCRIPT_PATH = REPO_ROOT / "scripts" / "backfill_market_bars_bulk.py"
-    _sys.path.insert(0, str(SCRIPT_PATH.parent))
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "backfill_market_bars_bulk", SCRIPT_PATH,
-        )
-        script_mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(script_mod)
+def test_client_symbol_list_parses_identity_fields() -> None:
+    session = _Session([
+        {
+            "Code": "AAPL",
+            "Name": "Apple Inc.",
+            "Exchange": "NASDAQ",
+            "Currency": "USD",
+            "Type": "Common Stock",
+            "Isin": "US0378331005",
+            "FIGI": "BBG000B9XRY4",
+            "CompositeFIGI": "BBG000B9XRY4",
+            "ListingDate": "1980-12-12",
+        }
+    ])
+    client = EODHDClient(api_key="unit-test")
+    client.session = session
 
-        # Stub the EODHDClient so api_key resolves to "" regardless of
-        # the operator's .env contents.
-        class NoKeyClient(script_mod.EODHDClient):
-            def __init__(self, *args, **kwargs):
-                self.api_key = ""
-                self.session = None
+    rows = client.list_symbols_with_delisted("US")
 
-        # Empty universe filter would short-circuit before the
-        # credential check, so use a real entry's exchange and patch
-        # the universe to one row.
-        from ingestion.market._eodhd_universe import EODHDUniverseEntry as _UE
-        custom = (
-            _UE(instrument_id="US_AAPL", eodhd_ticker="AAPL.US",
-                primary_ticker="AAPL", exchange_code="US",
-                name="Apple", asset_class="equity",
-                market="US", currency="USD"),
-        )
-        with patch.object(script_mod, "EODHD_GLOBAL_UNIVERSE", custom), \
-             patch.object(script_mod, "EODHDClient", NoKeyClient):
-            db_path = tmp_path / "fresh.db"
-            rc = script_mod.main([
-                "--exchange", "US",
-                "--date", "2024-06-14",
-                "--db-path", str(db_path),
-                "--request-sleep", "0",
-                "--quiet",
-                "--log-dir", str(tmp_path),
-            ])
-        assert rc == 2, "Missing API key must abort with non-zero exit"
-    finally:
-        _sys.path.remove(str(SCRIPT_PATH.parent))
+    assert rows[0].code == "AAPL"
+    assert rows[0].isin == "US0378331005"
+    assert session.calls[0]["params"]["delisted"] == "1"
 
 
-def test_backfill_script_does_not_set_pre2018_delisted_flag(
-    store: SQLiteEngineStore,
-    tmp_path,
-) -> None:
-    """Codex slice-3 round-1 P2: bulk path can't run
-    ``check_adjustment_applied`` (needs a per-ticker series) so it
-    must NOT set ``has_pre2018_delisted`` based on date alone —
-    otherwise adjusted history before 2018 surfaces as falsely
-    flagged. Operators rely on per-ticker ``refresh_market_history``
-    to set the flag correctly."""
-    import importlib.util
-    import sys as _sys
-    from unittest.mock import patch
-    from ingestion.market._eodhd_universe import EODHDUniverseEntry as _UE
+def test_client_bulk_dividend_accepts_dividend_field_name() -> None:
+    session = _Session([
+        {
+            "code": "AAPL",
+            "exchange_short_name": "US",
+            "date": "2026-02-09",
+            "dividend": 0.25,
+            "currency": "USD",
+        }
+    ])
+    client = EODHDClient(api_key="unit-test")
+    client.session = session
 
-    pre2018_payload = [
-        {"code": "AAPL", "exchange_short_name": "US", "date": "2017-06-14",
-         "open": 144.0, "high": 145.0, "low": 143.0, "close": 144.5,
-         "adjusted_close": 144.5, "volume": 50_000_000},
-    ]
-    response = Mock()
-    response.content = b"not-empty"
-    response.text = "[]"
-    response.json.return_value = pre2018_payload
-    response.raise_for_status.return_value = None
-    fake_session = Mock()
-    fake_session.get.return_value = response
+    rows = client.get_bulk_dividends("US", date="2026-02-09")
 
-    custom_universe = (
-        _UE(
-            instrument_id="US_AAPL", eodhd_ticker="AAPL.US",
-            primary_ticker="AAPL", exchange_code="US",
-            name="Apple Inc.", asset_class="equity",
-            market="United States equity market", currency="USD",
-        ),
-    )
-
-    REPO_ROOT = Path(__file__).resolve().parents[1]
-    SCRIPT_PATH = REPO_ROOT / "scripts" / "backfill_market_bars_bulk.py"
-    _sys.path.insert(0, str(SCRIPT_PATH.parent))
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "backfill_market_bars_bulk", SCRIPT_PATH,
-        )
-        script_mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(script_mod)
-
-        class StubbedClient(script_mod.EODHDClient):
-            def __init__(self, *args, **kwargs):
-                self.api_key = "test-key"
-                self.session = fake_session
-
-        with patch.object(script_mod, "EODHD_GLOBAL_UNIVERSE", custom_universe), \
-             patch.object(script_mod, "EODHDClient", StubbedClient):
-            script_mod.main([
-                "--exchange", "US",
-                "--date", "2017-06-14",
-                "--db-path", str(store.db_path),
-                "--request-sleep", "0",
-                "--quiet",
-                "--log-dir", str(tmp_path),
-            ])
-        bars = store.list_market_price_bars("US_AAPL")
-        assert len(bars) == 1
-        assert bars[0].date == "2017-06-14"
-        assert not bars[0].has_pre2018_delisted, (
-            "Bulk path can't determine adjustment_applied — must not "
-            "claim pre-2018 delisted on adjusted history"
-        )
-    finally:
-        _sys.path.remove(str(SCRIPT_PATH.parent))
-
-
-def test_refresh_universe_ingests_custom_universe_entries(
-    store: SQLiteEngineStore,
-) -> None:
-    """Custom universes must resolve via self.universe, not the module maps."""
-    from ingestion.market._eodhd_universe import EODHDUniverseEntry
-
-    custom = (
-        EODHDUniverseEntry(
-            instrument_id="UK_FOO",
-            eodhd_ticker="FOO.LSE",
-            primary_ticker="FOO",
-            exchange_code="LSE",
-            name="Foo plc",
-            asset_class="equity",
-            market="United Kingdom equity market (LSE)",
-            currency="GBP",
-        ),
-    )
-    provider = EODHDMarketDataProvider(
-        client=_mock_client(_sample_rows()),
-        universe=custom,
-        request_sleep=0,
-    )
-    stats = provider.refresh_universe(store, lookback_days=30)
-    assert stats.count == 3
-    bars = store.list_market_price_bars("UK_FOO")
-    assert len(bars) == 3
+    assert rows[0].ticker == "AAPL.US"
+    assert rows[0].value == 0.25
+    assert session.calls[0]["params"]["type"] == "dividends"

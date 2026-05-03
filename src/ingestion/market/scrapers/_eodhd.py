@@ -1,30 +1,19 @@
-"""EODHD EOD API client — global equities/ETFs/indices/rates/FX/crypto/spot metals.
+"""EODHD market-data HTTP client.
 
 Endpoints wired here:
 
-* ``/api/eod/{TICKER}.{EXCHANGE}`` — daily bars (open/high/low/close/volume +
-  adjusted_close). Same endpoint covers equities, ETFs, indices, government
-  bond yields (``.GBOND``), FX (``.FOREX``), crypto (``.CC``), and spot metals
-  (``.FOREX``). Dividend
-  / split fields are not on this endpoint — they live on the per-ticker
-  endpoints below and are projected into ``market_price_bars`` by the
-  market-corp-actions lane (issue #67 slice 2).
+* ``/api/exchanges-list/`` and ``/api/exchange-symbol-list/{EXCHANGE}``
+  seed the instrument universe.
+* ``/api/eod/{TICKER}.{EXCHANGE}`` returns daily bars with
+  ``adjusted_close``.
 * ``/api/div/{TICKER}.{EXCHANGE}`` — full per-ticker dividend history
-  (back to listing inception; AAPL goes to 1987). Returns a top-level
-  array; rows carry ex-date / declarationDate / recordDate / paymentDate
-  / period / value / unadjustedValue / currency.
+  with ex-date / declarationDate / recordDate / paymentDate / period /
+  value / unadjustedValue / currency.
 * ``/api/splits/{TICKER}.{EXCHANGE}`` — full per-ticker split history.
   Top-level array of ``{date, split: "new/old"}``.
-
-The two corp-action endpoints are NOT redundant with EODHD's
-``/api/calendar/{dividends,splits}`` discovery feeds (wired separately
-under ``ingestion.calendar.eodhd_api`` for the calendar lane). Calendar
-endpoints index by date window with ~2015 floor; per-ticker endpoints
-index by ticker and reach back to instrument inception. Same EODHD data,
-different access shapes, different downstream consumers — see issue #67
-slice-2 module docstring on ``EODHDMarketDataProvider.refresh_corp_actions``
-and the ``market_corp_actions_raw`` table comment for the full
-no-deduplicate-across-tables rationale.
+* ``/api/eod-bulk-last-day/{EXCHANGE}`` powers daily bars, dividends,
+  and splits refreshes.
+* ``/api/real-time/{TICKER}.{EXCHANGE}`` powers spot checks.
 """
 
 from __future__ import annotations
@@ -76,11 +65,8 @@ def _raise_for_status(response: requests.Response, *, ticker: str) -> None:
 class EODHDDailyBar:
     """Normalized EODHD EOD row.
 
-    EODHD's EOD endpoint does not include dividend / split data, so
-    ``div_cash`` and ``split_factor`` are fixed at 0.0 and 1.0 here;
-    real corp-action values are projected into ``market_price_bars``
-    from the audit lane (``market_corp_actions_raw``) by issue #67
-    slice 2's ``EODHDMarketDataProvider.refresh_corp_actions``.
+    The EOD endpoint carries price/volume fields. Dividends and splits
+    come from their dedicated endpoints.
     """
 
     ticker: str                     # full EODHD ticker e.g. "VWRL.LSE"
@@ -104,10 +90,7 @@ def _parse_eodhd_bars(
 ) -> list["EODHDDailyBar"]:
     """Parse an ``/api/eod`` array into typed ``EODHDDailyBar`` rows.
 
-    Standalone helper so the issue #69 re-projection path can replay a
-    stored ``market_price_bars_raw`` payload through the same parser the
-    live HTTP path uses — no behavior drift between live ingest and
-    audit replay.
+    Standalone helper shared by per-ticker and maintenance paths.
     """
     bars: list[EODHDDailyBar] = []
     for row in payload:
@@ -187,6 +170,36 @@ class EODHDSplit:
     raw_ratio: str                  # original "new/old" string for audit
 
 
+@dataclass(frozen=True)
+class EODHDExchange:
+    code: str
+    name: str
+    country: str
+    currency: str
+
+
+@dataclass(frozen=True)
+class EODHDSymbol:
+    code: str
+    name: str
+    exchange: str
+    currency: str
+    type: str
+    isin: str
+    figi: str
+    composite_figi: str
+    list_date: str | None
+    raw: dict
+
+
+@dataclass(frozen=True)
+class EODHDRealTimeQuote:
+    ticker: str
+    close: float
+    timestamp: int | None
+    raw: dict
+
+
 class EODHDClient:
     """Low-level HTTP client for https://eodhd.com/api/eod/<ticker>."""
 
@@ -195,6 +208,109 @@ class EODHDClient:
     def __init__(self, api_key: str | None = None) -> None:
         self.api_key = api_key or get_env_value("EODHD_API_KEY")
         self.session = requests.Session()
+
+    def list_exchanges(self) -> list[EODHDExchange]:
+        """Fetch the EODHD exchange registry."""
+        payload = self._get_json_array("exchanges-list/", ticker="EXCHANGES")
+        out: list[EODHDExchange] = []
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            code = _first_text(row, "Code", "code", "Exchange", "exchange")
+            if not code:
+                continue
+            out.append(
+                EODHDExchange(
+                    code=code,
+                    name=_first_text(row, "Name", "name"),
+                    country=_first_text(row, "Country", "country"),
+                    currency=_first_text(row, "Currency", "currency"),
+                )
+            )
+        return out
+
+    def list_symbols_active(self, exchange: str = "US") -> list[EODHDSymbol]:
+        """Fetch active symbols for an EODHD exchange."""
+        return self._list_exchange_symbols(exchange, include_delisted=False)
+
+    def list_symbols_with_delisted(self, exchange: str = "US") -> list[EODHDSymbol]:
+        """Fetch active plus delisted symbols for an EODHD exchange."""
+        return self._list_exchange_symbols(exchange, include_delisted=True)
+
+    def _list_exchange_symbols(
+        self, exchange: str, *, include_delisted: bool
+    ) -> list[EODHDSymbol]:
+        params = {"delisted": "1"} if include_delisted else None
+        payload = self._get_json_array(
+            f"exchange-symbol-list/{exchange}",
+            ticker=f"SYMBOLS:{exchange}",
+            extra_params=params,
+        )
+        out: list[EODHDSymbol] = []
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            code = _first_text(row, "Code", "code")
+            if not code:
+                continue
+            out.append(
+                EODHDSymbol(
+                    code=code,
+                    name=_first_text(row, "Name", "name"),
+                    exchange=(
+                        _first_text(
+                            row,
+                            "Exchange",
+                            "exchange",
+                            "ExchangeCode",
+                            "exchange_code",
+                            "exchange_short_name",
+                        )
+                        or exchange
+                    ),
+                    currency=_first_text(row, "Currency", "currency"),
+                    type=_first_text(row, "Type", "type"),
+                    isin=_first_text(row, "Isin", "ISIN", "isin"),
+                    figi=_first_text(row, "FIGI", "Figi", "figi"),
+                    composite_figi=_first_text(
+                        row,
+                        "CompositeFIGI",
+                        "CompositeFigi",
+                        "composite_figi",
+                    ),
+                    list_date=_as_optional_date(
+                        row.get("ListingDate")
+                        or row.get("listing_date")
+                        or row.get("ListDate")
+                    ),
+                    raw=row,
+                )
+            )
+        return out
+
+    def get_realtime_quote(self, ticker: str) -> EODHDRealTimeQuote | None:
+        """Fetch the latest realtime close for a ticker."""
+        payload = self._get_json(
+            f"real-time/{ticker}",
+            ticker=ticker,
+            extra_params={"fmt": "json"},
+            timeout=30,
+        )
+        if not isinstance(payload, dict):
+            return None
+        close = _as_optional_float(
+            payload.get("close")
+            or payload.get("close_price")
+            or payload.get("previousClose")
+        )
+        if close is None:
+            return None
+        timestamp_value = payload.get("timestamp") or payload.get("gmtoffset")
+        try:
+            timestamp = int(timestamp_value) if timestamp_value is not None else None
+        except (TypeError, ValueError):
+            timestamp = None
+        return EODHDRealTimeQuote(ticker=ticker, close=close, timestamp=timestamp, raw=payload)
 
     def get_daily_bars(
         self,
@@ -223,12 +339,8 @@ class EODHDClient:
     ) -> tuple[list[EODHDDailyBar], list, dict[str, str]]:
         """Fetch daily bars and return parsed bars + raw payload + request params.
 
-        Used by the issue #69 ``market_price_bars_raw`` write path. The
-        raw payload is the ``/api/eod`` JSON array verbatim — the audit
-        lane stores it so a parser bug or schema rename is recoverable
-        without re-fetching from EODHD (zero quota cost). A ticker-not-
-        found response yields ``([], [], params)`` so the caller can
-        skip the audit write naturally.
+        A ticker-not-found response yields ``([], [], params)`` so the
+        caller can skip the write path naturally.
         """
         request_params: dict[str, str] = {"fmt": "json"}
         if start_date:
@@ -356,6 +468,69 @@ class EODHDClient:
                 continue
         return bars
 
+    def get_bulk_dividends(
+        self,
+        exchange: str,
+        *,
+        date: str | None = None,
+    ) -> list[EODHDDividend]:
+        """Fetch bulk dividend rows for one exchange/day."""
+        payload = self._get_bulk_payload(exchange, date=date, kind="dividends")
+        out: list[EODHDDividend] = []
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            code = str(row.get("code", "") or "").strip()
+            ex = str(row.get("exchange_short_name", "") or exchange).strip()
+            ticker = f"{code}.{ex}" if code and ex else code
+            try:
+                parsed = self._parse_dividend_row(ticker=ticker, row=row)
+            except (TypeError, ValueError):
+                logger.debug("EODHD bulk dividend row skipped for %s: %s", ticker, row)
+                continue
+            if parsed is not None:
+                out.append(parsed)
+        out.sort(key=lambda r: (r.ticker, r.date))
+        return out
+
+    def get_bulk_splits(
+        self,
+        exchange: str,
+        *,
+        date: str | None = None,
+    ) -> list[EODHDSplit]:
+        """Fetch bulk split rows for one exchange/day."""
+        payload = self._get_bulk_payload(exchange, date=date, kind="splits")
+        out: list[EODHDSplit] = []
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            code = str(row.get("code", "") or "").strip()
+            ex = str(row.get("exchange_short_name", "") or exchange).strip()
+            ticker = f"{code}.{ex}" if code and ex else code
+            try:
+                parsed = self._parse_split_row(ticker=ticker, row=row)
+            except (TypeError, ValueError):
+                logger.debug("EODHD bulk split row skipped for %s: %s", ticker, row)
+                continue
+            if parsed is not None:
+                out.append(parsed)
+        out.sort(key=lambda r: (r.ticker, r.date))
+        return out
+
+    def _get_bulk_payload(
+        self, exchange: str, *, date: str | None, kind: str
+    ) -> list:
+        params: dict[str, str] = {"type": kind}
+        if date:
+            params["date"] = date
+        return self._get_json_array(
+            f"eod-bulk-last-day/{exchange}",
+            ticker=f"BULK:{exchange}:{kind}",
+            extra_params=params,
+            timeout=120,
+        )
+
     def get_historical_dividends(
         self,
         ticker: str,
@@ -467,6 +642,9 @@ class EODHDClient:
         date_str = str(row.get("date", ""))[:10]
         if not date_str:
             return None
+        value = row.get("value")
+        if value in (None, ""):
+            value = row.get("dividend")
         return EODHDDividend(
             ticker=ticker,
             date=date_str,
@@ -474,7 +652,7 @@ class EODHDClient:
             record_date=_as_optional_date(row.get("recordDate")),
             payment_date=_as_optional_date(row.get("paymentDate")),
             period=_as_optional_str(row.get("period")),
-            value=_as_float(row.get("value")),
+            value=_as_float(value),
             unadjusted_value=_as_optional_float(row.get("unadjustedValue")),
             currency=str(row.get("currency") or ""),
         )
@@ -499,6 +677,55 @@ class EODHDClient:
             old_shares=old_shares,
             raw_ratio=ratio,
         )
+
+    def _get_json_array(
+        self,
+        path: str,
+        *,
+        ticker: str,
+        extra_params: dict[str, str] | None = None,
+        timeout: int = 60,
+    ) -> list:
+        payload = self._get_json(
+            path,
+            ticker=ticker,
+            extra_params=extra_params,
+            timeout=timeout,
+        )
+        return payload if isinstance(payload, list) else []
+
+    def _get_json(
+        self,
+        path: str,
+        *,
+        ticker: str,
+        extra_params: dict[str, str] | None = None,
+        timeout: int = 60,
+    ) -> object:
+        if not self.api_key:
+            logger.warning("EODHD_API_KEY not set; skipping %s", path)
+            return []
+        params: dict[str, str] = {"api_token": self.api_key, "fmt": "json"}
+        if extra_params:
+            params.update(extra_params)
+        response = self.session.get(
+            f"{self.BASE_URL}/{path}",
+            params=params,
+            timeout=timeout,
+        )
+        _raise_for_status(response, ticker=ticker)
+        text_body = response.text if response.content else ""
+        stripped = text_body.strip()
+        if not stripped:
+            return []
+        if not stripped.startswith(("[", "{")):
+            logger.info("EODHD reported %r for %s", stripped[:120], path)
+            return []
+        try:
+            return response.json()
+        except ValueError:
+            logger.warning("EODHD returned non-JSON body for %s: %r", path, stripped[:120])
+            return []
 
 
 def _as_float(value: object, *, default: float | None = None) -> float:
@@ -535,3 +762,14 @@ def _as_optional_date(value: object) -> str | None:
     if text.startswith("0000"):
         return None
     return text[:10]
+
+
+def _first_text(row: dict, *keys: str) -> str:
+    for key in keys:
+        value = row.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""

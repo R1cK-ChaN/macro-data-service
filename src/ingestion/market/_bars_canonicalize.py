@@ -1,12 +1,4 @@
-"""Canonicalization for ``market_price_bars_raw`` content hashing (issue #69 slice 2).
-
-Both EODHD ``/api/eod/{ticker}`` and Tiingo
-``/tiingo/daily/{ticker}/prices`` return JSON arrays of bar dicts. The
-canonical form sorts bars by ``date`` and serializes with sorted keys —
-that way map-insertion order, server-side reordering, or identical-bars
-+ new-fetch-time can't masquerade as a revision and INSERT OR IGNORE
-correctly dedupes the daily refresh.
-"""
+"""Canonicalization for EODHD bar payload content hashing."""
 
 from __future__ import annotations
 
@@ -18,11 +10,8 @@ from typing import Any
 def canonicalize_bars_payload(payload: list[dict[str, Any]]) -> str:
     """Sort by ``date`` and emit sorted-key JSON for hashing.
 
-    Both providers ship volatile envelope fields per bar that are
-    request-time noise rather than facts about the bar — sorting by
-    date plus ``sort_keys=True`` removes any source of nondeterminism.
-    A revised close (corrected adjusted_close, late corp-action
-    backfill, etc.) flips the hash and lands as a new audit row.
+    EODHD ships arrays keyed by ``date``. Sorting by date plus
+    ``sort_keys=True`` gives stable hashes across identical payloads.
     """
     if not isinstance(payload, list):
         return json.dumps(payload, sort_keys=True, ensure_ascii=False)

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily EODHD market refresh
+
+[Timer]
+OnCalendar=*-*-* 22:00:00 America/New_York
+AccuracySec=1m
+Persistent=true
+Unit=macro-data-market-refresh.service
+
+[Install]
+WantedBy=timers.target

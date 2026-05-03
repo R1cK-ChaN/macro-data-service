@@ -38,7 +38,7 @@ class MarketInstrumentRecord:
     share_class_figi: str = ""
     cusip: str = ""
     lei: str = ""
-    primary_provider: str = "tiingo"
+    primary_provider: str = "eodhd"
     provider_symbols_json: dict[str, str] = field(default_factory=dict)
     history_status: str = "provider_continuous"  # provider_continuous|break_detected|stitched|manual_review
     description_for_agent: str = ""
@@ -71,7 +71,7 @@ class MarketPriceBarRecord:
     low: float
     close: float
     volume: float
-    source_name: str                        # "Tiingo"
+    source_name: str                        # provider display name
     source_symbol: str                      # ticker used at the provider
     source_segment_id: str = ""
     adjusted_open: float | None = None
@@ -114,18 +114,17 @@ class MarketPriceBarsRawRecord:
     Mirrors ``MarketCorpActionsRawRecord`` in shape but at the per-fetch
     granularity rather than per-event: one row per HTTP response per
     ``(provider, ticker)``. ``payload_json`` holds the full
-    ``/api/eod/{ticker}`` (EODHD) or ``/tiingo/daily/{ticker}/prices``
-    (Tiingo) body verbatim; ``content_hash`` is sha256 over the
+    ``/api/eod/{ticker}`` body verbatim; ``content_hash`` is sha256 over the
     canonicalized bar array (sorted by date with envelope timestamps
     dropped) so an unchanged daily refresh dedupes via INSERT OR IGNORE.
 
     Same payoff as the calendar/corp-actions lanes: every value in
     ``market_price_bars`` is reproducible from raw, so projection logic
-    can be re-run after a fix without re-spending Tiingo / EODHD quota.
+    can be re-run after a fix without re-spending provider quota.
     """
 
-    provider: str           # "eodhd" | "tiingo"
-    ticker: str             # full provider ticker, e.g. "AAPL.US" (eodhd) | "AAPL" (tiingo)
+    provider: str           # "eodhd"
+    ticker: str             # full provider ticker, e.g. "AAPL.US"
     snapshot_epoch_ms: int  # when WE fetched this snapshot, UTC ms
     content_hash: str       # sha256 over canonicalized bar array
     payload_json: str       # full HTTP response body, verbatim
