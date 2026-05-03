@@ -583,6 +583,24 @@ class IngestionOrchestrator:
             store=self._store_indicator_observations,
         )
 
+    def _build_vintage_fetcher_source(
+        self,
+        name: str,
+        fetcher: Any,
+        *,
+        interval_seconds: int | None = 86_400,
+        lookback_days: int = 365,
+    ) -> IngestionSourceDefinition:
+        return IngestionSourceDefinition(
+            name=name,
+            interval_seconds=interval_seconds,
+            prepare=self._ensure_obs_seed,
+            fetch=lambda: self._fetch_with_obs_raw(fetcher, lookback_days=lookback_days),
+            normalize=self._raw_vintage_series_to_records,
+            deduplicate=self._deduplicate_vintages,
+            store=self._store_indicator_vintages,
+        )
+
     def _fetch_with_obs_raw(
         self, fetcher: Any, *, lookback_days: int,
     ) -> list[Any]:
@@ -633,6 +651,30 @@ class IngestionOrchestrator:
         except Exception:
             logger.warning("obs_raw write failed", exc_info=True)
             return 0
+
+    def _raw_vintage_series_to_records(
+        self, raw_series_list: list[Any],
+    ) -> list[IndicatorVintageRecord]:
+        records: list[IndicatorVintageRecord] = []
+        lookup = self._family_lookup or {}
+        for rs in raw_series_list:
+            storage_source = getattr(rs, "storage_source", rs.source)
+            fam_id = lookup.get((storage_source, rs.series_id))
+            series_metadata = getattr(rs, "series_metadata", {}) or {}
+            vintage_quality = getattr(rs, "vintage_quality", "single_observation")
+            for vintage in getattr(rs, "vintages", ()):
+                provider_metadata = getattr(vintage, "provider_metadata", {}) or {}
+                records.append(IndicatorVintageRecord(
+                    series_id=rs.series_id,
+                    source=storage_source,
+                    observation_date=vintage.date,
+                    vintage_date=vintage.vintage_date,
+                    value=vintage.value,
+                    metadata={**provider_metadata, **series_metadata},
+                    obs_family_id=fam_id,
+                    vintage_quality=vintage_quality,
+                ))
+        return records
 
     # ── Per-domain source builders ────────────────────────────────────
     def _build_calendar_source(self) -> IngestionSourceDefinition:
@@ -866,14 +908,11 @@ class IngestionOrchestrator:
         )
 
     def _build_fred_vintages_source(self) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="fred_vintages",
-            interval_seconds=86_400,
-            prepare=self._ensure_obs_seed,
-            execute=lambda: self.fred.refresh_vintages(
-                self.store,
-                family_lookup=self._family_lookup or None,
-            ).count,
+        from ingestion.fetchers._vintages import FredVintageFetcher
+
+        return self._build_vintage_fetcher_source(
+            "fred_vintages",
+            FredVintageFetcher(client=self.fred.client, raise_on_error=False),
         )
 
     def _build_nyfed_rates_source(self) -> IngestionSourceDefinition:
@@ -1199,11 +1238,30 @@ class IngestionOrchestrator:
             lambda observation: (observation.source, observation.series_id, observation.date),
         )
 
+    def _deduplicate_vintages(
+        self,
+        vintages: list[IndicatorVintageRecord],
+    ) -> list[IndicatorVintageRecord]:
+        return self._deduplicate_by_key(
+            vintages,
+            lambda vintage: (
+                vintage.source,
+                vintage.series_id,
+                vintage.observation_date,
+                vintage.vintage_date,
+            ),
+        )
+
     def _store_indicator_observations(self, observations: list[IndicatorObservationRecord]) -> int:
         self._run_sanity_checks(observations)
         for observation in observations:
             self.store.upsert_indicator_observation(observation)
         return len(observations)
+
+    def _store_indicator_vintages(self, vintages: list[IndicatorVintageRecord]) -> int:
+        for vintage in vintages:
+            self.store.upsert_indicator_vintage(vintage)
+        return len(vintages)
 
     def _run_sanity_checks(self, observations: list[IndicatorObservationRecord]) -> None:
         """Pre-store sanity check: flag values that deviate from recent history."""

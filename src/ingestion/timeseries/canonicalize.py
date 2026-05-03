@@ -59,6 +59,37 @@ def fred_content_hash(payload: dict[str, Any]) -> str:
     return _hash_canonical(canonicalize_fred_payload(payload))
 
 
+def canonicalize_fred_vintages_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize an ALFRED vintage response.
+
+    ``realtime_start`` / ``realtime_end`` are data-bearing vintage fields
+    in ALFRED responses, so this keeps them on each observation while
+    still dropping top-level request echoes.
+    """
+    obs = payload.get("observations") or []
+    cleaned = [
+        {
+            "date": row.get("date"),
+            "realtime_start": row.get("realtime_start"),
+            "realtime_end": row.get("realtime_end"),
+            "value": row.get("value"),
+        }
+        for row in obs
+        if isinstance(row, dict)
+    ]
+    cleaned.sort(key=lambda r: (
+        r.get("date") or "",
+        r.get("realtime_start") or "",
+        r.get("realtime_end") or "",
+        str(r.get("value") or ""),
+    ))
+    return json.dumps({"observations": cleaned}, sort_keys=True, ensure_ascii=False)
+
+
+def fred_vintages_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_fred_vintages_payload(payload))
+
+
 # ── BLS ───────────────────────────────────────────────────────────────────
 
 # BLS wraps everything in ``status`` / ``responseTime`` / ``message`` plus
@@ -530,6 +561,7 @@ _HASH_BY_SOURCE = {
     "ism": ism_content_hash,
     "redbook": redbook_content_hash,
     "sentix": sentix_content_hash,
+    "fred_vintages": fred_vintages_content_hash,
 }
 
 

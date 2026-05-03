@@ -36,6 +36,64 @@ def _round_trip(payload: dict) -> dict:
     return json.loads(json.dumps(payload, sort_keys=True, ensure_ascii=False))
 
 
+# ── FRED vintages ─────────────────────────────────────────────────────────
+
+
+def test_fred_vintages_bronze_replay_matches_silver():
+    from ingestion.fetchers._vintages import FredVintageFetcher
+    from ingestion.timeseries.scrapers.fred import (
+        FredVintageObservation, _parse_fred_vintage_observations,
+    )
+
+    payload = {
+        "observations": [
+            {
+                "date": "2024-01-01",
+                "realtime_start": "2024-02-01",
+                "realtime_end": "2024-03-31",
+                "value": "100.0",
+            },
+            {
+                "date": "2024-01-01",
+                "realtime_start": "2024-04-01",
+                "realtime_end": "9999-12-31",
+                "value": "101.5",
+            },
+        ],
+    }
+    expected = _parse_fred_vintage_observations(payload, series_id="GDP")
+
+    fake_client = MagicMock()
+    fake_client.get_vintages_with_raw.return_value = (
+        expected,
+        payload,
+        {"series_id": "GDP", "observation_start": "2023-01-01"},
+    )
+    fetcher = FredVintageFetcher(
+        client=fake_client,
+        series_ids=("GDP",),
+        series_config={"GDP": {"name": "GDP"}},
+        request_delay_seconds=0,
+    )
+    [rs] = fetcher.fetch()
+    silver = [(o.date, o.vintage_date, o.value) for o in rs.vintages]
+
+    replayed = _parse_fred_vintage_observations(
+        _round_trip(rs.raw_payload), series_id="GDP",
+    )
+    replay = [(o.date, o.vintage_date, o.value) for o in replayed]
+
+    assert silver == replay
+    assert silver == [
+        ("2024-01-01", "2024-02-01", 100.0),
+        ("2024-01-01", "2024-04-01", 101.5),
+    ]
+    assert rs.source == "fred_vintages"
+    assert rs.storage_source == "fred"
+    assert rs.content_hash is not None
+    assert isinstance(replayed[0], FredVintageObservation)
+
+
 # ── EIA ───────────────────────────────────────────────────────────────────
 
 

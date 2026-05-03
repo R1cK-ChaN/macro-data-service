@@ -8,8 +8,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from ingestion.sources import IngestionOrchestrator
-from ingestion.timeseries._config import MACRO_SERIES
-from ingestion.timeseries.scrapers.fred import FredObservation
+from ingestion.timeseries._config import MACRO_SERIES, VINTAGE_SERIES
+from ingestion.timeseries.scrapers.fred import FredObservation, FredVintageObservation
 
 
 def _bare_orchestrator() -> IngestionOrchestrator:
@@ -87,3 +87,70 @@ def test_issue_131_fred_daily_surfaces_fetch_errors() -> None:
     assert report.source == "fred_daily"
     assert report.stored == 0
     assert report.error == "fred outage"
+
+
+def test_issue_131_fred_vintages_uses_fetcher_pipeline(monkeypatch) -> None:
+    monkeypatch.setattr("ingestion.timeseries.fetchers._vintages.time.sleep", lambda _seconds: None)
+    calls: list[tuple[str, str]] = []
+
+    class FakeFredClient:
+        def get_vintages_with_raw(self, series_id: str, *, start_date: str):
+            calls.append((series_id, start_date))
+            payload = {
+                "observations": [
+                    {
+                        "date": "2026-01-01",
+                        "realtime_start": "2026-02-01",
+                        "value": "1.0",
+                    }
+                ],
+            }
+            params = {"series_id": series_id, "observation_start": start_date}
+            return [
+                FredVintageObservation(series_id, "2026-01-01", "2026-02-01", 1.0)
+            ], payload, params
+
+    orchestrator = _bare_orchestrator()
+    orchestrator.fred = SimpleNamespace(client=FakeFredClient())
+
+    definition = orchestrator._build_fred_vintages_source()
+    rows = definition.fetch()
+
+    assert definition.execute is None
+    assert {row.source for row in rows} == {"fred_vintages"}
+    assert {row.storage_source for row in rows} == {"fred"}
+    assert {series_id for series_id, _start in calls} == set(VINTAGE_SERIES)
+
+
+def test_issue_131_fred_vintages_preserves_partial_failures(monkeypatch) -> None:
+    monkeypatch.setattr("ingestion.timeseries.fetchers._vintages.time.sleep", lambda _seconds: None)
+    failed_series = VINTAGE_SERIES[1]
+    calls: list[str] = []
+
+    class FakeFredClient:
+        def get_vintages_with_raw(self, series_id: str, *, start_date: str):
+            calls.append(series_id)
+            if series_id == failed_series:
+                raise RuntimeError("alfred outage")
+            payload = {
+                "observations": [
+                    {
+                        "date": "2026-01-01",
+                        "realtime_start": "2026-02-01",
+                        "value": "1.0",
+                    }
+                ],
+            }
+            params = {"series_id": series_id, "observation_start": start_date}
+            return [
+                FredVintageObservation(series_id, "2026-01-01", "2026-02-01", 1.0)
+            ], payload, params
+
+    orchestrator = _bare_orchestrator()
+    orchestrator.fred = SimpleNamespace(client=FakeFredClient())
+
+    definition = orchestrator._build_fred_vintages_source()
+    rows = definition.fetch()
+
+    assert calls == list(VINTAGE_SERIES)
+    assert {row.series_id for row in rows} == set(VINTAGE_SERIES) - {failed_series}
