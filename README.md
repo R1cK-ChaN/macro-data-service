@@ -255,12 +255,14 @@ Calendar and fundamentals use the same replay shape. `cal_econ_raw`, `cal_corp_r
 
 - `GET /health`      customer-facing source health matrix
 - `GET /healthz`     lightweight liveness probe
+- `GET /v1/manifest` data availability manifest for consumer routing
 - `POST /v1/ops/<operation>`
 
 Key operations:
 
 | Operation | Description |
 |---|---|
+| `get_data_manifest` | Dataset availability manifest with status, row counts, freshness, and quality status |
 | `resolve_indicator` | Highest-priority observation for a concept; accepts `as_of` for PIT vintage reads |
 | `resolve_indicator_history` | Resolved time series with best source per date; accepts `as_of` |
 | `get_release_schedule` | Release calendar for all/single concept |

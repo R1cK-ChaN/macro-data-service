@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ._calendar import CalendarOpsMixin
 from ._documents import DocumentsOpsMixin
+from ._manifest import ManifestOpsMixin
 from ._market import MarketOpsMixin
 from ._news import NewsOpsMixin
 from ._ops_health import OpsHealthMixin
@@ -17,6 +18,7 @@ class LocalMacroDataService(
     DocumentsOpsMixin,
     NewsOpsMixin,
     MarketOpsMixin,
+    ManifestOpsMixin,
     OpsHealthMixin,
     LocalMacroDataServiceBase,
 ):

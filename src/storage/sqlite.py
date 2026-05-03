@@ -70,6 +70,7 @@ from storage.queries.calendar import (
 from storage.queries.documents import _DocumentsQueriesMixin
 from storage.queries.fundamentals import _FundamentalsQueriesMixin
 from storage.queries.indicator import _IndicatorQueriesMixin
+from storage.queries.manifest import _ManifestQueriesMixin
 from storage.queries.news import _NewsQueriesMixin
 from storage.queries.sentiment import _SentimentQueriesMixin
 from storage.schema import apply_schema
@@ -85,6 +86,7 @@ class SQLiteEngineStore(
     _DocumentsQueriesMixin,
     _FundamentalsQueriesMixin,
     _IndicatorQueriesMixin,
+    _ManifestQueriesMixin,
     _NewsQueriesMixin,
     _SentimentQueriesMixin,
 ):

@@ -52,7 +52,7 @@ def _validate_read_only_bootstrap(store: SQLiteEngineStore) -> None:
         )
 
 
-def _build_clickhouse_market_store() -> Any | None:
+def _build_clickhouse_market_store(*, initialize_schema: bool = True) -> Any | None:
     """Build a ``ClickHouseMarketStore`` from env vars.
 
     Returns ``None`` when ``clickhouse_connect`` cannot reach the server
@@ -75,7 +75,8 @@ def _build_clickhouse_market_store() -> Any | None:
         return None
     try:
         client = clickhouse_client_from_env()
-        apply_clickhouse_schema(client)
+        if initialize_schema:
+            apply_clickhouse_schema(client)
     except Exception as exc:  # pragma: no cover - exercised by smoke test
         logger.warning("ClickHouse unavailable — market lane disabled: %s", exc)
         return None
@@ -95,7 +96,9 @@ def build_local_macro_data_service(db_path: Path | None = None) -> LocalMacroDat
 def build_read_only_macro_data_service(db_path: Path | None = None) -> LocalMacroDataService:
     store = SQLiteEngineStore(db_path=db_path, read_only=True)
     _validate_read_only_bootstrap(store)
+    market_store = _build_clickhouse_market_store(initialize_schema=False)
     return LocalMacroDataService(
         store=store,
+        market_store=market_store,
         health=_ReadOnlyHealthBackend(store),
     )

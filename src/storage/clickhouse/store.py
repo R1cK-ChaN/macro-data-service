@@ -7,6 +7,8 @@ needs to serve market reads and route market writes:
   adjusted OHLCV per the caller flag.
 * ``latest_market_snapshot`` — most-recent bar per instrument_id (powers
   ``_op_get_market_snapshot``).
+* ``get_manifest_stats`` — low-cost market availability stats for the
+  public data manifest.
 * ``upsert_market_bars`` / ``upsert_corp_actions`` /
   ``upsert_market_instrument`` — batch writers used by ingestion.
 * ``lookup_instrument`` — by ``instrument_id`` or ``ticker``, used by
@@ -202,6 +204,39 @@ class ClickHouseMarketStore:
             )
             for row in result.result_rows
         ]
+
+    def get_manifest_stats(self) -> dict[str, Any]:
+        """Metadata-backed availability stats for the consumer manifest.
+
+        ``system.parts`` keeps this public endpoint cheap on large
+        backfills. ``row_count`` reflects active MergeTree part rows, so
+        it may include replacements that background merges have yet to
+        collapse; the manifest only needs availability and freshness.
+        """
+        sql = (
+            "SELECT sum(rows) AS row_count, max(max_time) AS latest_timestamp, "
+            "max(modification_time) AS latest_ingested_at "
+            "FROM system.parts "
+            "WHERE database = {database:String} "
+            "AND table = {table:String} "
+            "AND active"
+        )
+        result = self._client.query(
+            sql,
+            parameters={"database": self._database, "table": "bars_1d"},
+        )
+        row = (
+            dict(zip(result.column_names, result.result_rows[0], strict=True))
+            if result.result_rows
+            else {}
+        )
+        row = self._stringify_temporal(row)
+        row_count = int(row.get("row_count") or 0)
+        return {
+            "row_count": row_count,
+            "latest_timestamp": row.get("latest_timestamp") if row_count else None,
+            "latest_ingested_at": row.get("latest_ingested_at") if row_count else None,
+        }
 
     def lookup_instrument(
         self,

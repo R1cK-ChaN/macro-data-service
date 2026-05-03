@@ -82,7 +82,7 @@ and respect the handoff invariants below.
 |---|---|---|---|
 | **Bronze** | `obs_raw`, `cal_econ_raw`, `cal_corp_raw`, `fundamentals_raw` (SQLite, macro line) | Raw HTTP payloads, audit + replay only | Append-only; idempotent on `(source, series_id, content_hash)` (or domain-equivalent key). Per-source canonicalization (`ingestion/timeseries/canonicalize.py`, calendar equivalents) drops query-time envelope echoes — `realtime_*` / `responseTime` / SDMX `header.prepared` / pagination links / Eurostat `updated` / EIA `request` — so the same observations hash to the same row across daily refreshes and `INSERT OR IGNORE` dedupes. Module-level `_parse_X(payload, …)` helpers re-project bronze through the same parser the live HTTP path uses; a parser fix replays from bronze with zero quota cost. Market corp actions are append-shaped in `market.dividends` / `market.splits`: content hashes preserve provider revisions and trigger bar refills. |
 | **Silver** | `indicator_vintages`, `cal_econ_event`, `document` (+ `document_blob` / `document_extra`), `news_articles`, `fundamentals_company` / `_financials` / `_highlights` / `_estimates` (SQLite); `market.bars_1d` / `dividends` / `splits` / `instruments` (ClickHouse, issue #118) | Parsed, schema-conformant, point-in-time | Append-only at the vintage / event / article level; PIT-queryable via `as_of=YYYY-MM-DD` for the macro line. `vintage_quality` (`native_pit` / `synthetic_snapshot` / `single_observation`, per #114 P0) tags how the vintage was sourced. `obs_family_id` joins to the `obs_family` catalog so projections + concept resolution share one identity layer. Schema-conformant means: every silver column must be derivable by parsing the corresponding bronze payload — no live-only headers, no run-time enrichment. CH market silver uses ReplacingMergeTree to absorb retried ingests at merge time (bars dedupe on `(instrument_id, time)`; dividends / splits dedupe on `(instrument_id, ex_date / execution_date, content_hash)` so revisions still preserve the chain). |
-| **Gold** | `indicators` view, `resolve_indicator` / `resolve_indicator_history` / `list_items` / `get_document` / `get_release_schedule` / `get_release_status` ops, public-read HTTP surface | Latest projection + cross-source ranking, derived | Read-only views over silver. `indicators` is a SQL view over `indicator_vintages` (latest vintage per `(source, series_id, observation_date)` per #114 P1). `resolve_indicator` ranks sources by `concept_map.priority`; calendar fallback augments thin projections from `cal_econ_event.actual` (#114 P3, tagged `provenance='calendar'`). The `PUBLIC_READ_OPS` allowlist in `macro_data/server.py` bounds what downstream services can hit unauthenticated. |
+| **Gold** | `indicators` view, `resolve_indicator` / `resolve_indicator_history` / `list_items` / `get_document` / `get_release_schedule` / `get_release_status` / `get_data_manifest` ops, public-read HTTP surface | Latest projection + cross-source ranking, derived | Read-only views over silver. `indicators` is a SQL view over `indicator_vintages` (latest vintage per `(source, series_id, observation_date)` per #114 P1). `resolve_indicator` ranks sources by `concept_map.priority`; calendar fallback augments thin projections from `cal_econ_event.actual` (#114 P3, tagged `provenance='calendar'`). The `PUBLIC_READ_OPS` allowlist in `macro_data/server.py` bounds what downstream services can hit unauthenticated. |
 
 **Handoff invariants** (must hold for every new fetcher / storage table):
 
@@ -161,6 +161,9 @@ family fan-out) stay a service-level operation.
     (`market.bars_1m` / `_5m` / …) share the column type without
     cross-table casts. Storage cost trivial (+2 bytes × 200M ≈
     +400 MB raw, less after compression).
+    Manifest availability reads active part metadata (`system.parts`)
+    for row count, latest bar time, and ingest freshness, keeping
+    `/v1/manifest` bounded by active-part metadata size.
   - `market.dividends` — ReplacingMergeTree(`fetched_at`) on
     `(instrument_id, ex_date, content_hash)`. Putting `content_hash`
     in the sort key means a revised payout (different hash) lands
@@ -430,15 +433,17 @@ defeats the whole aggregation-layer premise.
   opens live WAL paths with `mode=ro` when WAL sidecars exist and
   checkpointed snapshots with `mode=ro&immutable=1`, schema/seed bootstrap
   writes are disabled, and `/health` reads existing capability/checkpoint
-  rows through a reader health backend. Startup validates `concept_map`,
+  rows through a reader health backend. The public service also attaches a
+  ClickHouse market store without schema initialization so `/v1/manifest`
+  reports market-bar availability from the market lane. Startup validates `concept_map`,
   `release_schedule`, `source_capability`, `subjects`, and
   `subject_aliases` contain rows.
   `POST /v1/ops/<op>` is locked to a read-only allowlist
   (`PUBLIC_READ_OPS` in `macro_data/server.py`, issue #104):
-  `resolve_indicator`, `resolve_indicator_history`, `list_items`,
-  `get_document`, `get_release_schedule`, `get_release_status`. Anything
+  `resolve_indicator`, `resolve_indicator_history`, `get_data_manifest`,
+  `list_items`, `get_document`, `get_release_schedule`, `get_release_status`. Anything
   else returns HTTP 403, even with a valid bearer token. Existing
-  `GET` routes (`/healthz`, `/health`, `/v1/calendar`,
+  `GET` routes (`/healthz`, `/health`, `/v1/manifest`, `/v1/calendar`,
   `/v1/calendar/revisions`, `/v1/fundamentals/{ticker}`) stay public.
   Admin / write ops (`refresh_*`, `run_schedule`, `fundamentals_fetch`,
   `sync_catalog_*`, …) reach the same in-process service through the CLI
@@ -490,6 +495,7 @@ src/
       _calendar.py          calendar econ + corp ops + event_to_dict
       _timeseries.py        indicator/catalog/concept/release/surprise/fed-comm ops
       _documents.py         document feed + cross-type list_items
+      _manifest.py          dataset availability manifest
       _news.py              news + article fetcher
       _market.py            market snapshot + live-markets fetcher
       _ops_health.py        refresh-all/run-schedule/source listing/health/alerts
