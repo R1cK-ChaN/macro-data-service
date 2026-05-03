@@ -72,7 +72,7 @@ def test_issue_131_fred_daily_uses_fetcher_pipeline(monkeypatch) -> None:
     rows = definition.fetch()
 
     daily = {sid for sid, meta in MACRO_SERIES.items() if meta["freq"] == "daily"}
-    assert definition.execute is None
+    assert definition.fetch is not None and definition.store is not None
     assert {series_id for series_id, _start, _limit in calls} == daily
     assert {limit for _series_id, _start, limit in calls} == {5}
     assert {row.series_id for row in rows} == daily
@@ -96,7 +96,7 @@ def test_issue_131_fred_nondaily_uses_fetcher_pipeline(monkeypatch) -> None:
     rows = definition.fetch()
 
     nondaily = {sid for sid, meta in MACRO_SERIES.items() if meta["freq"] != "daily"}
-    assert definition.execute is None
+    assert definition.fetch is not None and definition.store is not None
     assert {series_id for series_id, _start, _limit in calls} == nondaily
     assert {limit for _series_id, _start, limit in calls} == {10}
     assert {row.series_id for row in rows} == nondaily
@@ -144,7 +144,7 @@ def test_issue_131_fred_vintages_uses_fetcher_pipeline(monkeypatch) -> None:
     definition = orchestrator._build_fred_vintages_source()
     rows = definition.fetch()
 
-    assert definition.execute is None
+    assert definition.fetch is not None and definition.store is not None
     assert {row.source for row in rows} == {"fred_vintages"}
     assert {row.storage_source for row in rows} == {"fred"}
     assert {series_id for series_id, _start in calls} == set(VINTAGE_SERIES)
@@ -221,7 +221,7 @@ def test_issue_131_imf_vintages_uses_fetcher_pipeline() -> None:
         IMF_SERIES[series_key]["series_id"]
         for series_key in IMF_VINTAGE_SERIES
     }
-    assert definition.execute is None
+    assert definition.fetch is not None and definition.store is not None
     assert {row.source for row in rows} == {"imf_vintages"}
     assert {row.storage_source for row in rows} == {"imf"}
     assert {row.vintage_quality for row in rows} == {"synthetic_snapshot"}
@@ -320,7 +320,7 @@ def test_issue_131_worldbank_catalog_uses_fetcher_pipeline() -> None:
     rows = definition.fetch()
     records = definition.normalize(rows)
 
-    assert definition.execute is None
+    assert definition.fetch is not None and definition.store is not None
     assert {row.source for row in rows} == {"worldbank_catalog"}
     assert {row.series_id for row in rows} == {"WB_SP.POP.TOTL"}
     assert {record.source for record in records} == {"worldbank"}
@@ -436,7 +436,7 @@ def test_issue_131_eia_route_uses_fred_fallback(monkeypatch) -> None:
     records = definition.normalize(fallback_rows)
     stored_count = definition.store(records)
 
-    assert definition.execute is None
+    assert definition.fetch is not None and definition.store is not None
     assert fallback_rows[0].raw_payload["fallback_source"] == "fred"
     assert fallback_rows[0].content_hash is not None
     assert stored_count == 1

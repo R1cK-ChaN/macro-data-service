@@ -235,7 +235,6 @@ class IngestionSourceDefinition:
     validate: Callable[[list[Any]], Iterable[Any]] | None = None
     deduplicate: Callable[[list[Any]], Iterable[Any]] | None = None
     store: Callable[[list[Any]], int | None] | None = None
-    execute: Callable[[], int] | None = None
     max_retries: int = 0
     retry_backoff_seconds: float = 0.0
 
@@ -452,19 +451,6 @@ class IngestionOrchestrator:
             try:
                 if definition.prepare is not None:
                     definition.prepare()
-
-                if definition.execute is not None:
-                    stored = int(definition.execute())
-                    report = IngestionRunReport(
-                        source=definition.name,
-                        stored=stored,
-                        family=definition.family,
-                        duration_ms=int((time.perf_counter() - started) * 1000),
-                        retries=attempt,
-                    )
-                    report = self._run_validation(definition.name, report)
-                    self._last_run_reports[definition.name] = report
-                    return report
 
                 if definition.fetch is None or definition.store is None:
                     raise ValueError(f"source {definition.name} is missing pipeline stages")
@@ -752,18 +738,17 @@ class IngestionOrchestrator:
     def _build_calendar_source(self) -> IngestionSourceDefinition:
         return IngestionSourceDefinition(
             name="calendar",
-            execute=lambda: 0,
+            fetch=lambda: [],
+            store=lambda _items: 0,
         )
 
     # ── Corp calendar (EODHD) forward sources — issue #63 ────────────
     # Window: today − lookback_days … today + lookforward_days.
     # 7-day backward look catches restatements + late-arriving actuals;
-    # 90-day forward look catches schedule announcements. Each source's
-    # ``execute`` is a single-subtype call: per-subtype isolation comes
-    # from caller-side error handling (sweep service op or systemd
-    # script) since ``IngestionOrchestrator._run_definition`` already
-    # converts an exception into an error-tagged report rather than
-    # propagating it.
+    # 90-day forward look catches schedule announcements. Per-subtype
+    # isolation comes from caller-side error handling (sweep service op
+    # or systemd script) since ``IngestionOrchestrator._run_definition``
+    # converts an exception into an error-tagged report.
     _CORP_LOOKBACK_DAYS = 7
     _CORP_LOOKFORWARD_DAYS = 90
     _CORP_MAX_REQUESTS = 30
@@ -775,14 +760,16 @@ class IngestionOrchestrator:
         return IngestionSourceDefinition(
             name=f"corp_calendar_{subtype}",
             interval_seconds=86_400,
-            execute=lambda: self._run_corp_calendar_subtype(subtype),
+            fetch=lambda: [subtype],
+            store=lambda _items: self._run_corp_calendar_subtype(subtype),
         )
 
     def _build_corp_calendar_dividend_details_source(self) -> IngestionSourceDefinition:
         return IngestionSourceDefinition(
             name="corp_calendar_dividend_details",
             interval_seconds=86_400,
-            execute=self._run_corp_calendar_dividend_details,
+            fetch=lambda: ["dividend_details"],
+            store=lambda _items: self._run_corp_calendar_dividend_details(),
         )
 
     def _run_corp_calendar_subtype(self, subtype: str) -> int:
@@ -843,308 +830,6 @@ class IngestionOrchestrator:
         finally:
             connection.close()
         return int(summary.events_upserted)
-
-    def _build_fed_source(self) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="fed",
-            interval_seconds=14_400,
-            fetch=self.fed.fetch_communications,
-            validate=self._validate_fed_communications,
-            deduplicate=self._deduplicate_fed_communications,
-            store=lambda items: self.fed.store_communications(self.store, items),
-        )
-
-    @staticmethod
-    def _validate_fed_communications(
-        communications: list[CentralBankCommunicationRecord],
-    ) -> list[CentralBankCommunicationRecord]:
-        return [item for item in communications if item.title.strip() and item.url.strip()]
-
-    def _deduplicate_fed_communications(
-        self,
-        communications: list[CentralBankCommunicationRecord],
-    ) -> list[CentralBankCommunicationRecord]:
-        return self._deduplicate_by_key(
-            communications,
-            lambda item: (item.url, item.timestamp, item.title),
-        )
-
-    def _build_news_source(self, *, category: str | None = None) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="news",
-            interval_seconds=300 if category is None else None,
-            fetch=lambda: self.news.fetch_entries(category=category),
-            normalize=self.news.normalize_entries,
-            validate=self.news.validate_entries,
-            deduplicate=lambda items: self.news.deduplicate_entries(self.store, items),
-            store=lambda items: self.news.store_articles(self.store, items),
-            max_retries=1,
-            retry_backoff_seconds=1.0,
-        )
-
-    def _build_rate_probability_source(self) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="rate_probability",
-            interval_seconds=3600,
-            fetch=self._fetch_rate_probability_observations,
-            deduplicate=self._deduplicate_observations,
-            store=self._store_indicator_observations,
-        )
-
-    def _fetch_rate_probability_observations(self) -> list[IndicatorObservationRecord]:
-        prob = self.rate_probability.fetch_probabilities()
-        as_of = prob.as_of[:10] if len(prob.as_of) >= 10 else prob.as_of
-        observations: list[IndicatorObservationRecord] = []
-        # Concept-mapped daily midpoint: this is the series resolve_indicator
-        # returns for concept FEDWATCH_US and that the subject vocabulary
-        # aliases under rate.us.fedwatch.
-        if as_of and prob.midpoint is not None:
-            observations.append(
-                IndicatorObservationRecord(
-                    series_id="FEDWATCH_MIDPOINT",
-                    source="rateprobability",
-                    date=as_of,
-                    value=float(prob.midpoint),
-                    metadata={
-                        "current_band": prob.current_band,
-                        "effr": prob.effr,
-                    },
-                )
-            )
-        # Per-meeting forward curve: one observation per FOMC meeting, not
-        # concept-mapped because the meeting set rolls over each cycle.
-        for meeting in prob.meetings:
-            observations.append(
-                IndicatorObservationRecord(
-                    series_id=f"FEDPROB_{meeting.meeting_date}",
-                    source="rateprobability",
-                    date=as_of,
-                    value=meeting.implied_rate,
-                    metadata={
-                        "prob_move_pct": meeting.prob_move_pct,
-                        "is_cut": meeting.is_cut,
-                        "num_moves": meeting.num_moves,
-                        "change_bps": meeting.change_bps,
-                        "current_band": prob.current_band,
-                    },
-                )
-            )
-        return observations
-
-    def _build_fred_daily_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._fred import FredFetcher
-
-        daily_series = {
-            sid: meta for sid, meta in MACRO_SERIES.items()
-            if meta["freq"] == "daily"
-        }
-        return self._build_fetcher_source(
-            "fred_daily",
-            FredFetcher(
-                client=self.fred.client,
-                series_config=daily_series,
-                limit=5,
-                raise_on_error=True,
-            ),
-            lookback_days=7,
-        )
-
-    def _build_fred_nondaily_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._fred import FredFetcher
-
-        nondaily = {
-            sid: meta for sid, meta in MACRO_SERIES.items()
-            if meta["freq"] != "daily"
-        }
-        return self._build_fetcher_source(
-            "fred_nondaily",
-            FredFetcher(
-                client=self.fred.client,
-                series_config=nondaily,
-                limit=10,
-                request_delay_seconds=1.0,
-                raise_on_error=True,
-            ),
-            interval_seconds=21_600,
-            lookback_days=120,
-        )
-
-    def _build_fred_full_source(self, *, lookback_days: int = 365) -> IngestionSourceDefinition:
-        from ingestion.fetchers._fred import FredFetcher
-
-        return self._build_fetcher_source(
-            "fred_full",
-            FredFetcher(client=self.fred.client, limit=100, raise_on_error=True),
-            interval_seconds=None,
-            lookback_days=lookback_days,
-        )
-
-    def _build_fred_vintages_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._vintages import FredVintageFetcher
-
-        return self._build_vintage_fetcher_source(
-            "fred_vintages",
-            FredVintageFetcher(client=self.fred.client, raise_on_error=False),
-        )
-
-    def _build_nyfed_rates_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._nyfed import NYFedFetcher
-        return self._build_fetcher_source(
-            "nyfed_rates", NYFedFetcher(client=self.nyfed),
-        )
-
-    def _build_gov_reports_source(self) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="gov_reports",
-            interval_seconds=21_600,
-            fetch=self.gov_report.fetch_items,
-            validate=self._validate_gov_report_items,
-            deduplicate=self._deduplicate_gov_report_items,
-            store=lambda items: self.gov_report.store_items(self.store, items),
-        )
-
-    @staticmethod
-    def _validate_gov_report_items(items: list[GovReportItem]) -> list[GovReportItem]:
-        return [item for item in items if item.title.strip() and item.url.strip() and item.source_id.strip()]
-
-    def _deduplicate_gov_report_items(self, items: list[GovReportItem]) -> list[GovReportItem]:
-        return self._deduplicate_by_key(items, lambda item: canonicalize_url(item.url))
-
-    def _build_eia_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._eia import EIAFetcher
-
-        fetcher = EIAFetcher(
-            client=self.eia.client,
-            fred_client=self.eia._fred,
-            series_config=EIA_SERIES,
-            history_loader=lambda series_id, limit: self.store.get_indicator_history(
-                series_id, limit=limit,
-            ),
-            live_limit=30,
-            request_delay_seconds=0.5,
-        )
-        return IngestionSourceDefinition(
-            name="eia",
-            interval_seconds=86_400,
-            prepare=self._ensure_obs_seed,
-            fetch=lambda: self._fetch_with_obs_raw(fetcher, lookback_days=365),
-            normalize=self._raw_eia_items_to_records,
-            deduplicate=self._deduplicate_eia_items,
-            store=self._store_eia_items,
-            max_retries=1,
-            retry_backoff_seconds=5.0,
-        )
-
-    def _build_treasury_fiscal_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._treasury import TreasuryFetcher
-        return self._build_fetcher_source(
-            "treasury_fiscal", TreasuryFetcher(client=self.treasury_fiscal.client),
-        )
-
-    def _build_imf_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._sdmx import SDMXFetcher
-        return self._build_fetcher_source(
-            "imf", SDMXFetcher(self.imf.client, "imf", IMF_SERIES),
-        )
-
-    def _build_imf_vintages_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._vintages import IMFVintageFetcher
-
-        return self._build_vintage_fetcher_source(
-            "imf_vintages",
-            IMFVintageFetcher(client=self.imf.client),
-        )
-
-    def _build_eurostat_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._eurostat import EurostatFetcher
-        return self._build_fetcher_source(
-            "eurostat", EurostatFetcher(client=self.eurostat.client),
-        )
-
-    def _build_bis_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._sdmx import SDMXFetcher
-        return self._build_fetcher_source(
-            "bis", SDMXFetcher(self.bis.client, "bis", BIS_SERIES),
-        )
-
-    def _build_ecb_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._sdmx import SDMXFetcher
-        return self._build_fetcher_source(
-            "ecb", SDMXFetcher(self.ecb.client, "ecb", ECB_SERIES),
-        )
-
-    def _build_bundesbank_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._sdmx import SDMXFetcher
-        return self._build_fetcher_source(
-            "bundesbank",
-            SDMXFetcher(self.bundesbank.client, "bundesbank", BUNDESBANK_SERIES),
-        )
-
-    def _build_mof_jp_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._mof_jgb import MOFJGBFetcher
-        return self._build_fetcher_source(
-            "mof_jp", MOFJGBFetcher(client=self.mof_jp, series_config=MOF_JGB_SERIES),
-        )
-
-    def _build_aisi_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._aisi import AISIFetcher
-        return self._build_fetcher_source(
-            "aisi",
-            AISIFetcher(client=self.aisi, series_config=AISI_WEEKLY_STEEL_SERIES),
-        )
-
-    def _build_ism_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._ism import ISMFetcher
-        return self._build_fetcher_source(
-            "ism",
-            ISMFetcher(client=self.ism, series_config=ISM_REPORT_SERIES),
-        )
-
-    def _build_redbook_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._redbook import RedbookFetcher
-        return self._build_fetcher_source(
-            "redbook",
-            RedbookFetcher(client=self.redbook, series_config=REDBOOK_SERIES),
-        )
-
-    def _build_sentix_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._sentix import SentixFetcher
-        return self._build_fetcher_source(
-            "sentix",
-            SentixFetcher(client=self.sentix, series_config=SENTIX_SERIES),
-        )
-
-    def _build_oecd_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._oecd import OECDFetcher
-        return self._build_fetcher_source(
-            "oecd", OECDFetcher(client=self.oecd.client),
-        )
-
-    def _build_worldbank_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._worldbank import WorldBankFetcher
-        return self._build_fetcher_source(
-            "worldbank", WorldBankFetcher(client=self.worldbank.client),
-        )
-
-    def _build_worldbank_catalog_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._worldbank import WorldBankCatalogFetcher
-
-        return IngestionSourceDefinition(
-            name="worldbank_catalog",
-            interval_seconds=86_400 * 7,
-            prepare=self._ensure_obs_seed,
-            fetch=lambda: self._fetch_with_obs_raw(
-                WorldBankCatalogFetcher(client=self.worldbank.client),
-                lookback_days=365,
-            ),
-            normalize=self._raw_worldbank_catalog_series_to_records,
-            deduplicate=self._deduplicate_observations,
-            store=self._store_indicator_observations,
-        )
-
-    def _build_bls_source(self) -> IngestionSourceDefinition:
-        from ingestion.fetchers._bls import BLSFetcher
-        return self._build_fetcher_source("bls", BLSFetcher())
 
     # ── Indicator-driven ingestion ───────────────────────────────
 
@@ -1921,3 +1606,15 @@ class IngestionOrchestrator:
             }
             for a in alerts
         ]
+
+
+def _install_source_methods() -> None:
+    from importlib import import_module
+
+    for module_name in ("us", "eu", "jp", "cn", "global"):
+        module = import_module(f"{__name__}.{module_name}")
+        for name, method in module.SOURCE_METHODS.items():
+            setattr(IngestionOrchestrator, name, method)
+
+
+_install_source_methods()
