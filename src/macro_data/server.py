@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 PUBLIC_READ_OPS: frozenset[str] = frozenset({
     "resolve_indicator",
     "resolve_indicator_history",
+    "get_data_manifest",
     "list_items",
     "get_document",
     "get_release_schedule",
@@ -52,6 +53,16 @@ class MacroDataRequestHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 logger.exception("macro-data health request failed")
                 self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"status": "error", "error": str(exc)})
+                return
+            self._write_json(HTTPStatus.OK, payload)
+            return
+        if parsed.path == "/v1/manifest":
+            service = self.server.service  # type: ignore[attr-defined]
+            try:
+                payload = service.invoke("get_data_manifest", {})
+            except Exception as exc:
+                logger.exception("GET /v1/manifest failed")
+                self._write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
                 return
             self._write_json(HTTPStatus.OK, payload)
             return

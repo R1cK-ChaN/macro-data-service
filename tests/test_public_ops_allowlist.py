@@ -82,6 +82,7 @@ def test_public_read_ops_matches_issue_104_contract() -> None:
     assert PUBLIC_READ_OPS == frozenset({
         "resolve_indicator",
         "resolve_indicator_history",
+        "get_data_manifest",
         "list_items",
         "get_document",
         "get_release_schedule",

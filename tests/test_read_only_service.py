@@ -192,6 +192,33 @@ def test_writable_factory_keeps_orchestrator(
     assert service._store.get_source_capability("fred") is not None
 
 
+def test_read_only_factory_wires_market_store_for_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "engine.db"
+    _seed_reader_fixture(db_path)
+    sentinel_market = object()
+    calls: list[bool] = []
+
+    def fake_build_clickhouse_market_store(
+        *,
+        initialize_schema: bool = True,
+    ) -> object:
+        calls.append(initialize_schema)
+        return sentinel_market
+
+    monkeypatch.setattr(
+        factory,
+        "_build_clickhouse_market_store",
+        fake_build_clickhouse_market_store,
+    )
+
+    service = build_read_only_macro_data_service(db_path=db_path)
+
+    assert calls == [False]
+    assert service._market_store is sentinel_market
+
+
 def test_read_only_factory_requires_bootstrap_rows(tmp_path: Path) -> None:
     db_path = tmp_path / "engine.db"
     SQLiteEngineStore(db_path=db_path)

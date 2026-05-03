@@ -5,7 +5,7 @@ uses (HTTP server, CLI, tests, scripts). It owns no business logic — every
 public method routes through `invoke(operation, params)`, which dispatches
 to the matching `_op_<operation>` method via `getattr`.
 
-The class is composed from one base + six domain mixins. Tier 1.1 of
+The class is composed from one base + seven domain mixins. Tier 1.1 of
 issue #58 split a 5,566-line `service.py` into this package; method
 bodies are byte-equivalent to the pre-split version and the public
 import path (`from macro_data.service import LocalMacroDataService`) is
@@ -23,6 +23,7 @@ service/
   _timeseries.py — 23 ops for indicators, catalog, concepts,
                    release-schedule, release-status
   _documents.py  — 4 ops: list_items, get_document, subjects, backfill
+  _manifest.py   — 1 op: data availability manifest
   _news.py       — 5 ops: recent, search, live, article fetch
   _market.py     — 2 ops: snapshot, live_markets
   _ops_health.py — 8 ops: refresh_all, run_schedule, source listing,
@@ -43,6 +44,7 @@ the one matching method regardless.
    - Touches `obs_*` / `concept_*` / `release_schedule*` /
      `indicator_*` → `_timeseries.py`.
    - Touches `document` / `doc_*` / subjects / backfill → `_documents.py`.
+   - Touches cross-domain availability counts / freshness → `_manifest.py`.
    - Touches `news_*` / article fetch → `_news.py`.
    - Touches `market_prices` / live market quotes → `_market.py`.
    - Cross-cutting refresh / scheduler / health / alerts →
