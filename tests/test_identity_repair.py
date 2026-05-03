@@ -71,8 +71,8 @@ def _seed_broken_instrument(
         exchange_code=exchange_code,
         currency="USD",
         isin=isin,
-        primary_provider="tiingo",
-        provider_symbols_json={"tiingo": primary_ticker},
+        primary_provider="eodhd",
+        provider_symbols_json={"eodhd": f"{primary_ticker}.US"},
         history_status="break_detected",
     )
     store.upsert_market_instrument(record)
@@ -498,13 +498,11 @@ def test_orchestrator_registers_identity_repair_source(store: SQLiteEngineStore)
 
 
 def test_source_registration_runs_after_market_providers(store: SQLiteEngineStore) -> None:
-    """Repair must follow tiingo/eodhd so their break-detection has already
-    flagged the affected instruments."""
+    """Repair follows market backfills after break detection flags instruments."""
     from ingestion.sources import IngestionOrchestrator
 
     orch = IngestionOrchestrator(store=store)
     order = [s["name"] for s in orch.list_sources()]
-    assert order.index("tiingo_market") < order.index("identity_repair")
     assert order.index("eodhd_market") < order.index("identity_repair")
 
 
@@ -567,9 +565,7 @@ def test_repair_only_stitches_after_successful_refetch(
 def test_repair_maps_nysearca_to_us_for_delisted_scan(
     store: SQLiteEngineStore,
 ) -> None:
-    """Tiingo seeds NYSE Arca ETFs with exchange_code='NYSEARCA', but EODHD
-    expects 'US'. The repair flow must translate before calling
-    list_exchange_symbols."""
+    """NYSE Arca ETF rows use exchange_code='NYSEARCA'; EODHD expects 'US'."""
     _seed_broken_instrument(
         store,
         instrument_id="US_SPY",
@@ -588,7 +584,7 @@ def test_repair_maps_nysearca_to_us_for_delisted_scan(
     service = IdentityRepairService(eodhd=eodhd, openfigi=openfigi)
     service.repair(store, "US_SPY")
 
-    # Verify the translated code ("US") was used, not "NYSEARCA".
+    # Verify the translated code ("US") was used.
     eodhd.list_exchange_symbols.assert_called_once()
     args, kwargs = eodhd.list_exchange_symbols.call_args
     assert args[0] == "US"

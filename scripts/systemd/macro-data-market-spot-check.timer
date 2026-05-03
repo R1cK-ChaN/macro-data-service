@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily market close spot check
+
+[Timer]
+OnCalendar=*-*-* 22:30:00 America/New_York
+AccuracySec=1m
+Persistent=true
+Unit=macro-data-market-spot-check.service
+
+[Install]
+WantedBy=timers.target

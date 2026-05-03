@@ -212,11 +212,7 @@ class SourceFamilyTaggingTest(unittest.TestCase):
         self.assertTrue(all(set(r.keys()) == {"name", "family"} for r in rows))
         by_name = {r["name"]: r["family"] for r in rows}
         # Spot-check one entry per family bucket. Issue #118 P4
-        # retired the SQLite market lane and unregistered the
-        # ``tiingo_market`` / ``eodhd_market`` / ``macro_market`` /
-        # ``identity_repair`` sources from the orchestrator default
-        # roster — the follow-up backfill issue re-registers them
-        # against ``ClickHouseMarketStore``.
+        # retired the SQLite market lane and its orchestrator sources.
         self.assertEqual(by_name["fred_daily"], "economic_data")
         self.assertEqual(by_name["gov_reports"], "release_report")
         self.assertEqual(by_name["fed"], "release_report")

@@ -304,7 +304,7 @@ def test_list_sources_returns_name_family_rows(tmp_path: Path) -> None:
     store = SQLiteEngineStore(db_path=tmp_path / "engine.db")
     ingestion = _StubIngestion([
         {"name": "fred_daily", "family": "economic_data"},
-        {"name": "tiingo_market", "family": "market_price"},
+        {"name": "eodhd_market", "family": "market_price"},
         {"name": "news", "family": "news"},
     ])
     svc = LocalMacroDataService(store=store, ingestion=ingestion)
@@ -317,13 +317,13 @@ def test_list_sources_filters_by_family(tmp_path: Path) -> None:
     store = SQLiteEngineStore(db_path=tmp_path / "engine.db")
     ingestion = _StubIngestion([
         {"name": "fred_daily", "family": "economic_data"},
-        {"name": "tiingo_market", "family": "market_price"},
+        {"name": "eodhd_market", "family": "market_price"},
         {"name": "news", "family": "news"},
     ])
     svc = LocalMacroDataService(store=store, ingestion=ingestion)
     resp = svc.invoke("list_sources", {"family": "market_price"})
     assert resp["total"] == 1
-    assert resp["sources"] == [{"name": "tiingo_market", "family": "market_price"}]
+    assert resp["sources"] == [{"name": "eodhd_market", "family": "market_price"}]
 
 
 def test_list_sources_without_ingestion_returns_error(tmp_path: Path) -> None:

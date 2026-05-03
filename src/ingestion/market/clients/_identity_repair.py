@@ -14,9 +14,9 @@ Implements the flow described in issue #1 under "Lazy Repair Flow":
 
 The repair service is side-effect driven: it only writes to
 ``market_symbol_history`` and updates ``history_status``. Re-fetch of
-underlying bars is handled by the Tiingo / EODHD providers through their
-normal ``refresh_market_history`` path; this service just publishes the
-segment metadata so those providers know what ticker windows to query.
+underlying bars is handled by the EODHD provider through its normal
+``refresh_market_history`` path; this service just publishes segment
+metadata for ticker windows.
 """
 
 from __future__ import annotations
@@ -341,9 +341,8 @@ def _segment_from_symbol_list_entry(
 
 
 # Map provider-local exchange codes to EODHD exchange codes. EODHD treats
-# NYSE, NYSE Arca, Nasdaq and OTC as a single "US" universe, while our
-# Tiingo seed uses the more specific codes. When a code is already a valid
-# EODHD code (e.g. "XETRA", "HK") we pass it through unchanged.
+# NYSE, NYSE Arca, Nasdaq and OTC as a single "US" universe. When a code
+# is already a valid EODHD code (e.g. "XETRA", "HK") we pass it through.
 _EODHD_EXCHANGE_ALIAS: dict[str, str] = {
     "NYSEARCA": "US",
     "NASDAQ": "US",

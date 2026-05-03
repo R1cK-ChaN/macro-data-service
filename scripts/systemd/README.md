@@ -9,6 +9,9 @@ Files in this directory wire the recurring calendar jobs into
 | `calendar-value-sweep.timer` | hourly at :15 | every value-side connector fills `actual` on recent rows | #31 |
 | `parity-daily.timer` | daily 06:00 UTC | TE-vs-official parity tripwire (depends on the 04:00 refresh having run) | #22 |
 | `fundamentals-forward.timer` | daily 23:00 ET | EODHD `/api/fundamentals/` snapshot for the seeded universe (~17 tickers) | #68 |
+| `macro-data-market-refresh.timer` | daily 22:00 ET | EODHD US bulk bars/dividends/splits refresh | #119 |
+| `macro-data-market-self-heal.timer` | weekly Sunday 03:00 ET | stale-bar refetch and delisting detection | #119 |
+| `macro-data-market-spot-check.timer` | daily 22:30 ET | realtime-close spot check against stored closes | #119 |
 
 # Parity tripwire systemd unit
 
@@ -198,4 +201,32 @@ scripts/backfill_fundamentals_wrapper.sh --tickers AAPL.US MSFT.US
 
 # Plan-only via the python entry-point (no --execute):
 PYTHONPATH=src python3 scripts/backfill_fundamentals.py
+```
+
+## EODHD market daily refresh and self-heal (issue #119)
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp scripts/systemd/macro-data-market-refresh.service ~/.config/systemd/user/
+cp scripts/systemd/macro-data-market-refresh.timer   ~/.config/systemd/user/
+cp scripts/systemd/macro-data-market-self-heal.service ~/.config/systemd/user/
+cp scripts/systemd/macro-data-market-self-heal.timer   ~/.config/systemd/user/
+cp scripts/systemd/macro-data-market-spot-check.service ~/.config/systemd/user/
+cp scripts/systemd/macro-data-market-spot-check.timer   ~/.config/systemd/user/
+
+systemctl --user daemon-reload
+systemctl --user enable --now macro-data-market-refresh.timer
+systemctl --user enable --now macro-data-market-self-heal.timer
+systemctl --user enable --now macro-data-market-spot-check.timer
+```
+
+Manual run:
+
+```bash
+PYTHONPATH=src python3 scripts/seed_market_universe.py
+PYTHONPATH=src python3 scripts/backfill_market_history.py --status active
+PYTHONPATH=src python3 scripts/backfill_market_history.py --status delisted
+scripts/market_daily_refresh_wrapper.sh
+scripts/market_self_heal_wrapper.sh
+scripts/market_spot_check_wrapper.sh
 ```

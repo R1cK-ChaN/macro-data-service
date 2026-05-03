@@ -10,13 +10,13 @@ from ~25 free/licensed upstreams instead of BBG's paid feed.
 resolves macro + market + calendar + document data from ~25 upstreams into a
 single SQLite store that downstream services (analyst UI, RAG, agents) read
 through one service interface.
-**Last updated:** 2026-05-03 (branch `feat/issue-118-clickhouse-market-backend`: P0+P1+P2+P3+P4 landed. P0 — local ClickHouse via docker-compose with persistent storage at `.macro-data/clickhouse/`, healthcheck script, env vars, `clickhouse-connect>=0.7` dep. P1 — `storage/clickhouse/schema.py` defines `market.bars_1d` / `dividends` / `splits` / `instruments` under the `market` database; `apply_clickhouse_schema(client)` is idempotent. P2 — `ClickHouseMarketStore` adapter wraps `clickhouse_connect` with `get_market_history` / `latest_market_snapshot` / `lookup_instrument` reads (FINAL + LIMIT 1 BY) and batch upsert writes. P3 — `LocalMacroDataService(*, store, market_store)`; market ops route to the CH adapter, factory wires CH alongside SQLite. P4 — dropped six SQLite market tables (`market_prices` / `_instruments` / `_symbol_history` / `_price_bars` / `_price_bars_raw` / `_corp_actions_raw`), deleted `storage/queries/market.py`, removed `_MarketQueriesMixin` from `SQLiteEngineStore`, removed `MarketX` re-exports from `storage/sqlite.py` (preserved on `storage/__init__.py` via `storage.models.market`), deleted `MarketPriceClient` (yfinance), unregistered the four market sources from `IngestionOrchestrator`, deleted `list_subject_market_bars` + the dead `MarketSnapshot` contract, skip-marked the dormant Tiingo / EODHD / macro_market test files pending the follow-up backfill rewire.)
+**Last updated:** 2026-05-03 (branch `feat/issue-119-market-us-active-backfill`: EODHD is the market-data provider. The US active plus delisted universe is discovered dynamically from `/api/exchange-symbol-list/US`; `market.instruments` carries the active flag from default-list versus `?delisted=1` set membership. Historical backfill uses per-ticker EOD/div/splits endpoints with `.macro-data/market_backfill_cursor.json`; daily refresh uses `/api/eod-bulk-last-day/US` bars/dividends/splits and refills bars via DELETE plus per-ticker EOD fetch on corp-action changes. Market self-heal and spot-check scripts are wired through systemd timers.)
 
 ### Bloomberg-capability coverage (current → 1.0)
 
 | BBG capability | Our equivalent | Status |
 |---|---|---|
-| Real-time quotes, EOD bars | `market.bars_1d` (ClickHouse) + Tiingo/EODHD/macro projection | shipped (issue #1; storage moved to CH in #118) |
+| Real-time quotes, EOD bars | `market.bars_1d` (ClickHouse) + EODHD | shipped (issue #119) |
 | `<GO>` command surface (HDB, ECO, CALT, …) | `macro-data-service` CLI + thin HTTP | shipped; expanding |
 | ECO — economic calendar | `cal_econ_*` + official sources (BLS/BEA/Census/ISM/Fed/ECB/NBS/BoJ/Statistics Bureau JP/INSEE/ZEW/Ifo/GfK/HCOB); TE retained as historical source | shipped (issues #8, #9, #13 P2, #14 P1/P2, #15 P4a/P4b/P4c/P5, #23) |
 | EVTS — corporate calendar | `cal_corp_*` + EODHD | in flight (issue #8) |
@@ -80,7 +80,7 @@ and respect the handoff invariants below.
 
 | Tier | Tables / surfaces | Role | Properties |
 |---|---|---|---|
-| **Bronze** | `obs_raw`, `cal_econ_raw`, `cal_corp_raw`, `fundamentals_raw` (SQLite, macro line) | Raw HTTP payloads, audit + replay only | Append-only; idempotent on `(source, series_id, content_hash)` (or domain-equivalent key). Per-source canonicalization (`ingestion/timeseries/canonicalize.py`, calendar equivalents) drops query-time envelope echoes — `realtime_*` / `responseTime` / SDMX `header.prepared` / pagination links / Eurostat `updated` / EIA `request` — so the same observations hash to the same row across daily refreshes and `INSERT OR IGNORE` dedupes. Module-level `_parse_X(payload, …)` helpers re-project bronze through the same parser the live HTTP path uses; a parser fix replays from bronze with zero quota cost. The market bronze lane (`market_price_bars_raw`, `market_corp_actions_raw`) retired with the SQLite market tables in #118; the follow-up backfill issue rebuilds the equivalent audit floor on top of `ClickHouseMarketStore`. |
+| **Bronze** | `obs_raw`, `cal_econ_raw`, `cal_corp_raw`, `fundamentals_raw` (SQLite, macro line) | Raw HTTP payloads, audit + replay only | Append-only; idempotent on `(source, series_id, content_hash)` (or domain-equivalent key). Per-source canonicalization (`ingestion/timeseries/canonicalize.py`, calendar equivalents) drops query-time envelope echoes — `realtime_*` / `responseTime` / SDMX `header.prepared` / pagination links / Eurostat `updated` / EIA `request` — so the same observations hash to the same row across daily refreshes and `INSERT OR IGNORE` dedupes. Module-level `_parse_X(payload, …)` helpers re-project bronze through the same parser the live HTTP path uses; a parser fix replays from bronze with zero quota cost. Market corp actions are append-shaped in `market.dividends` / `market.splits`: content hashes preserve provider revisions and trigger bar refills. |
 | **Silver** | `indicator_vintages`, `cal_econ_event`, `document` (+ `document_blob` / `document_extra`), `news_articles`, `fundamentals_company` / `_financials` / `_highlights` / `_estimates` (SQLite); `market.bars_1d` / `dividends` / `splits` / `instruments` (ClickHouse, issue #118) | Parsed, schema-conformant, point-in-time | Append-only at the vintage / event / article level; PIT-queryable via `as_of=YYYY-MM-DD` for the macro line. `vintage_quality` (`native_pit` / `synthetic_snapshot` / `single_observation`, per #114 P0) tags how the vintage was sourced. `obs_family_id` joins to the `obs_family` catalog so projections + concept resolution share one identity layer. Schema-conformant means: every silver column must be derivable by parsing the corresponding bronze payload — no live-only headers, no run-time enrichment. CH market silver uses ReplacingMergeTree to absorb retried ingests at merge time (bars dedupe on `(instrument_id, time)`; dividends / splits dedupe on `(instrument_id, ex_date / execution_date, content_hash)` so revisions still preserve the chain). |
 | **Gold** | `indicators` view, `resolve_indicator` / `resolve_indicator_history` / `list_items` / `get_document` / `get_release_schedule` / `get_release_status` ops, public-read HTTP surface | Latest projection + cross-source ranking, derived | Read-only views over silver. `indicators` is a SQL view over `indicator_vintages` (latest vintage per `(source, series_id, observation_date)` per #114 P1). `resolve_indicator` ranks sources by `concept_map.priority`; calendar fallback augments thin projections from `cal_econ_event.actual` (#114 P3, tagged `provenance='calendar'`). The `PUBLIC_READ_OPS` allowlist in `macro_data/server.py` bounds what downstream services can hit unauthenticated. |
 
@@ -127,7 +127,7 @@ and respect the handoff invariants below.
 - **Clients:** `NewsIngestionClient` over 140 RSS feeds (`ingestion/news/_config.py`). Fingerprinting in `article_fingerprint` handles de-dup; Jaccard token overlap on titles (24h window) catches near-duplicates before storage.
 - **Storage:** `news_articles` carries the slim raw row (title, url, description, content, language, authors). Issue #113 P1 deleted the LLM-extraction path (`_extract.py`) and the 14 derived columns (`impact_level`, `finance_category`, `confidence`, `institution`, `country`, `market`, `asset_class`, `sector`, `document_type`, `event_type`, `subject`, `subject_id`, `data_period`, `contains_commentary`, `extraction_provider`). Downstream services that want enrichment run their own pipeline against these rows.
 
-### 4. Market data (issue #118 — bilingual storage swap)
+### 4. Market data (issue #119 — EODHD US universe)
 
 The market lane lives in **ClickHouse** from issue #118 onwards.
 SQLite still owns the macro line (calendar / indicators / documents /
@@ -135,8 +135,8 @@ news / fundamentals); ClickHouse owns market. The two stores never
 JOIN inside the database — cross-domain reads (e.g. `list_items`
 family fan-out) stay a service-level operation.
 
-- **Why CH for market:** the follow-up full-EODHD-active-universe
-  backfill projects ~180–225M bar rows (US active tickers × ~30 years).
+- **Why CH for market:** the full EODHD US universe backfill projects
+  ~180-225M bar rows (US active + delisted tickers over full provider history).
   That crosses SQLite's ~50 GB realistic ceiling and sits in CH's
   sweet spot (columnar time-series, native partition-by-month).
   Macro tables (calendar / indicators / news) stay sub-billion-row
@@ -177,6 +177,9 @@ family fan-out) stay a service-level operation.
   - `market.instruments` — ReplacingMergeTree(`last_seen`),
     ORDER BY `instrument_id`. Reads use `FINAL` so the latest row
     surfaces immediately rather than waiting for background merge.
+    Universe discovery writes Common Stock / ETF / INDEX rows from
+    `/api/exchange-symbol-list/US`; `is_active` comes from set
+    membership in the active listing versus `?delisted=1`.
 
 - **Adapter** (`storage/clickhouse/store.py`):
   `ClickHouseMarketStore` wraps a `clickhouse_connect` HTTP client
@@ -188,7 +191,10 @@ family fan-out) stay a service-level operation.
   the primary index). Writes (`upsert_market_bars`,
   `upsert_corp_actions`, `upsert_market_instrument`) batch through
   `client.insert(table, rows, column_names=…)` — ReplacingMergeTree
-  absorbs duplicates on merge. Temporal columns (`date`, `time`,
+  absorbs duplicates on merge. Additional writers support batch
+  instrument upserts, active-flag changes, existing corp-action hash
+  checks, latest-bar scans, and `ALTER TABLE ... DELETE` before
+  restatement refills. Temporal columns (`date`, `time`,
   `last_seen`, `list_date`) are stringified at the storage boundary
   (`datetime → ISO-8601 UTC`, `date → YYYY-MM-DD`) so the CLI +
   HTTP server can `json.dumps` responses without a custom encoder.
@@ -206,6 +212,31 @@ family fan-out) stay a service-level operation.
   `market_store=None` with a logged warning so the macro lane
   still boots in CI without docker.
 
+- **Provider** (`ingestion/market/clients/_eodhd.py`,
+  `ingestion/market/scrapers/_eodhd.py`):
+  - Universe: `list_symbols_active("US")` plus
+    `list_symbols_with_delisted("US")`; delisted rows are the set
+    difference. `scripts/seed_market_universe.py` writes
+    `market.instruments`.
+  - Historical: `scripts/backfill_market_history.py` walks
+    `market.instruments`, calls `/api/eod/{T}.US`,
+    `/api/div/{T}.US`, and `/api/splits/{T}.US`, and records endpoint
+    completion in `.macro-data/market_backfill_cursor.json`.
+  - Daily: `scripts/market_daily_refresh.py` calls
+    `/api/eod-bulk-last-day/US` for bars, dividends, and splits.
+    Bulk corp actions are diffed by `(instrument_id, date,
+    content_hash)`; new rows append, then bars are deleted and the
+    ticker's lifetime EOD bars are re-fetched.
+  - Adjustments: EODHD `adjusted_close` is trusted. Adjusted open/high/low
+    and volume derive from `adjusted_close / close` at write time.
+
+- **Operations:** `scripts/systemd/macro-data-market-refresh.timer`
+  runs the daily bulk refresh at 22:00 ET. Weekly self-heal
+  (`detect_missing_bars.py`) refetches active tickers missing recent
+  bars and flips stale tickers inactive when they leave the active
+  EODHD list. Daily spot check (`spot_check_close.py`) samples 10
+  latest closes against `/api/real-time/` with a 0.5% threshold.
+
 - **Local install:** `docker-compose.yml` boots
   `clickhouse/clickhouse-server:24.8` with persistent storage at
   `.macro-data/clickhouse/{data,tmp,user_files,logs}` — the host
@@ -217,17 +248,9 @@ family fan-out) stay a service-level operation.
   in-container client so credentialed deployments don't get marked
   unhealthy by a hard-coded default-empty-password probe.
 
-- **Out of scope (this issue):** any data ingestion. The follow-up
-  backfill issue rewires `EODHDMarketDataProvider` /
-  `TiingoMarketDataProvider` / `MacroMarketProvider` /
-  `IdentityRepairService` to write through the CH adapter, walks
-  the full EODHD active US universe back to the inception floor,
-  and re-enables the market test suite (`test_eodhd_market_data` /
-  `test_tiingo_market_data` / `test_macro_market_mapping`,
-  module-level skip-marked here). The yfinance snapshot lane
-  (`MarketPriceClient`) was deleted in P4 per the issue's explicit
-  default — the rows were regenerable daily snapshots and the
-  bilingual split made the lane redundant with `bars_1d`.
+- **Deferred:** global exchanges, intraday data, fundamentals expansion,
+  continuous futures, self-implemented adjustment math, and a separate
+  raw market-price bronze table.
 
 ### 4a. Fundamentals (issue #68 — shipped end-to-end)
 
@@ -236,7 +259,7 @@ Sister lane to the market price/corp-actions tables, lives under `src/ingestion/
 - **Provider:** EODHD `/api/fundamentals/{TICKER}.{EX}` (single endpoint per ticker, returns one nested dict covering General / Highlights / Valuation / SharesStats / Financials.{IS,BS,CF}.{quarterly,yearly} / Earnings / AnalystRatings / Holders / ESGScores). Slice 1 projects four highest-impact streams: General → company; Highlights+Valuation+SharesStats merged → highlights; Financials.{IS,BS,CF}×{Q,A} → financials. Estimates table created in slice 1 schema, populated by a future slice that wires `Earnings.Trend` / `AnalystRatings`.
 - **Audit + PIT:** raw lane is append-only on `(provider, ticker, content_hash)`; projections only update when incoming `observed_at_epoch_ms` is at least as recent as stored. Restated past quarters land as a new raw row plus a `fundamentals revised provider=eodhd ticker=… versions=N` INFO log (mirrors `cal_corp_raw` revision logger from #66). PIT reads (`as_of` cutoff) reconstruct both `highlights` and `financials` by re-parsing the latest `fundamentals_raw` row at-or-before the cutoff — bypasses the projection grain (highlights' `(ticker, as_of_date)` would leak intra-day post-cutoff values).
 - **Service + HTTP:** `fundamentals_fetch(tickers, sections=[...], dry_run=True, max_requests=20)` and `get_fundamentals(ticker, as_of=None, statement=None, period=None, limit=100)` ops in `_timeseries.py`; `GET /v1/fundamentals/{ticker}` exposes the read op with the same query params. Execute-mode fetches reject partial-section payloads — they would corrupt PIT reconstruction by leaving sections empty in the raw snapshot anchor.
-- **Backfill + maintenance:** `scripts/backfill_fundamentals.py` walks both seeded universes (Tiingo + EODHD), filtering to issuer asset classes (equity / equity_etf / bond_etf / commodity_etf / index → 17 default tickers), and calls the service op with `--max-requests 25`. ETF / index tickers land a General row + raw audit but ship empty Financials — that's expected (their fundamentals payload uses a Holdings shape, deferred to a follow-up sub-issue). Daily forward sweep wired through `scripts/backfill_fundamentals_wrapper.sh` + `scripts/systemd/fundamentals-forward.{service,timer}` at 23:00 ET, staggered behind the 22:00 ET corp calendar timer so they don't race the engine DB lock.
+- **Backfill + maintenance:** `scripts/backfill_fundamentals.py` walks a curated EODHD fundamentals seed (17 default tickers), filtering to issuer asset classes (equity / equity_etf / bond_etf / commodity_etf / index), and calls the service op with `--max-requests 25`. ETF / index tickers land a General row + raw audit but ship empty Financials — that's expected (their fundamentals payload uses a Holdings shape, deferred to a follow-up sub-issue). Daily forward sweep wired through `scripts/backfill_fundamentals_wrapper.sh` + `scripts/systemd/fundamentals-forward.{service,timer}` at 23:00 ET, staggered behind the 22:00 ET corp calendar timer so they don't race the engine DB lock.
 - **Live validation:** `scripts/validate_fundamentals_acquisition.py` (sibling to `validate_calendar_acquisition.py` — the calendar's row-diff Probe machinery doesn't fit the nested fundamentals shape). Probes 4 representative tickers (US large-cap / EU / HK / ETF) and writes `docs/validation/eodhd_fundamentals.md`. Default dry-run; `--execute --yes` for live.
 
 ### 5. Calendar (issues #8 + #9 complete — official sources are the recurring ingestion path; TE retained as historical source)
@@ -490,8 +513,8 @@ Closed recently (context only — the code is the source of truth):
    with a route or it doesn't ship. (See "Service boundary" above for the full
    rule.)
 2. **Revisions are never lost.** `indicator_vintages`, `cal_econ_raw` /
-   `cal_corp_raw`, `obs_raw`, `market_corp_actions_raw`, `market_price_bars_raw`
-   append; PIT projections are derived views over them.
+   `cal_corp_raw`, `obs_raw`, and market corp-action content hashes preserve
+   revision chains; PIT projections are derived views over them.
 3. **The service layer exposes one contract.** Storage lanes can split (macro
    vs calendar vs corporate) but resolution presents a single shape —
    `resolve_indicator`, `get_market_history`, `list_items`, and (coming)

@@ -34,7 +34,7 @@ def test_universe_resolver_returns_17_default_tickers() -> None:
         asset_classes=backfill_fundamentals.DEFAULT_ASSET_CLASSES,
     )
     assert len(tickers) == 17
-    # Tiingo entries get the ``.US`` suffix; EODHD entries keep theirs.
+    # US entries carry the ``.US`` suffix; listed global entries keep theirs.
     assert "SPY.US" in tickers
     assert "VWRL.LSE" in tickers
 
@@ -43,9 +43,8 @@ def test_universe_resolver_respects_asset_class_filter() -> None:
     tickers = backfill_fundamentals._resolve_universe_tickers(
         asset_classes=frozenset({"equity"}),
     )
-    # The 'equity' asset class only matches EODHD entries (Tiingo is all ETFs).
     assert tickers
-    assert all(not t.endswith(".US") or t in {"TSM.US"} for t in tickers)
+    assert {"SAP.XETRA", "0700.HK"} <= set(tickers)
 
 
 def test_universe_resolver_dedupes() -> None:

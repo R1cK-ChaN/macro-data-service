@@ -637,10 +637,7 @@ storage/models/
   market.py       — MarketPriceRecord, MarketInstrumentRecord,
                     MarketSymbolHistoryRecord, MarketPriceBarRecord,
                     MarketCorpActionsRawRecord. Records survive after
-                    issue #118 retired the SQLite tables — the dormant
-                    Tiingo / EODHD / macro_market ingestion clients
-                    still build them pending the follow-up backfill
-                    rewire against ClickHouse. The new
+                    issue #118 retired the SQLite tables. The
                     ClickHouse-shaped records (CHBar / CHDividend /
                     CHSplit / CHInstrument) live under
                     `storage/clickhouse/records.py`.

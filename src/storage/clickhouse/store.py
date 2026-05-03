@@ -32,7 +32,7 @@ import json
 import logging
 import os
 from collections.abc import Iterable
-from datetime import date as Date
+from datetime import date as Date, datetime, timezone
 from typing import Any
 
 from .records import CHBar, CHDividend, CHInstrument, CHSplit
@@ -305,6 +305,133 @@ class ClickHouseMarketStore:
             column_names=list(self._INSTRUMENT_COLUMNS),
         )
 
+    def upsert_market_instruments(self, instruments: Iterable[CHInstrument]) -> int:
+        """Batch-insert instrument rows. Returns the number written."""
+        rows = [self._instrument_row(i) for i in instruments]
+        if not rows:
+            return 0
+        self._client.insert(
+            f"{self._database}.instruments",
+            rows,
+            column_names=list(self._INSTRUMENT_COLUMNS),
+        )
+        return len(rows)
+
+    def list_instruments(self, *, active_only: bool | None = None) -> list[dict[str, Any]]:
+        """Return latest instrument rows from ``market.instruments``."""
+        where = ""
+        if active_only is True:
+            where = " WHERE is_active = 1"
+        elif active_only is False:
+            where = " WHERE is_active = 0"
+        sql = f"SELECT * FROM {self._database}.instruments FINAL{where} ORDER BY ticker"
+        result = self._client.query(sql)
+        return [
+            self._stringify_temporal(
+                dict(zip(result.column_names, row, strict=True))
+            )
+            for row in result.result_rows
+        ]
+
+    def has_dividend_hash(
+        self, *, instrument_id: str, ex_date: Date | str, content_hash: str
+    ) -> bool:
+        sql = (
+            f"SELECT 1 FROM {self._database}.dividends FINAL "
+            f"WHERE instrument_id = {{instrument_id:String}} "
+            f"AND ex_date = {{ex_date:Date}} "
+            f"AND content_hash = {{content_hash:String}} LIMIT 1"
+        )
+        result = self._client.query(
+            sql,
+            parameters={
+                "instrument_id": instrument_id,
+                "ex_date": str(ex_date),
+                "content_hash": content_hash,
+            },
+        )
+        return bool(result.result_rows)
+
+    def has_split_hash(
+        self, *, instrument_id: str, execution_date: Date | str, content_hash: str
+    ) -> bool:
+        sql = (
+            f"SELECT 1 FROM {self._database}.splits FINAL "
+            f"WHERE instrument_id = {{instrument_id:String}} "
+            f"AND execution_date = {{execution_date:Date}} "
+            f"AND content_hash = {{content_hash:String}} LIMIT 1"
+        )
+        result = self._client.query(
+            sql,
+            parameters={
+                "instrument_id": instrument_id,
+                "execution_date": str(execution_date),
+                "content_hash": content_hash,
+            },
+        )
+        return bool(result.result_rows)
+
+    def delete_bars_for_instrument(self, instrument_id: str, *, sync: bool = True) -> None:
+        """Delete all bars for an instrument before a provider restatement refill."""
+        sql = (
+            f"ALTER TABLE {self._database}.bars_1d "
+            f"DELETE WHERE instrument_id = {{instrument_id:String}}"
+        )
+        if sync:
+            sql += " SETTINGS mutations_sync = 1"
+        self._client.command(sql, parameters={"instrument_id": instrument_id})
+
+    def latest_bar_dates(self, *, active_only: bool = True) -> dict[str, str]:
+        """Return ``instrument_id -> latest YYYY-MM-DD bar date``."""
+        join = ""
+        if active_only:
+            join = (
+                f" INNER JOIN {self._database}.instruments FINAL AS i "
+                f"ON b.instrument_id = i.instrument_id AND i.is_active = 1"
+            )
+        sql = (
+            f"SELECT b.instrument_id, toDate(max(b.time)) AS latest_date "
+            f"FROM {self._database}.bars_1d FINAL AS b{join} "
+            f"GROUP BY b.instrument_id"
+        )
+        result = self._client.query(sql)
+        rows = [
+            self._stringify_temporal(
+                dict(zip(result.column_names, row, strict=True))
+            )
+            for row in result.result_rows
+        ]
+        return {str(row["instrument_id"]): str(row["latest_date"]) for row in rows}
+
+    def set_instrument_active(
+        self,
+        instrument_id: str,
+        *,
+        is_active: bool,
+        last_seen: datetime | None = None,
+    ) -> bool:
+        """Write a new latest identity row with the desired active flag."""
+        row = self.lookup_instrument(instrument_id=instrument_id)
+        if row is None:
+            return False
+        instrument = CHInstrument(
+            instrument_id=str(row["instrument_id"]),
+            isin=str(row.get("isin") or ""),
+            figi=str(row.get("figi") or ""),
+            composite_figi=str(row.get("composite_figi") or ""),
+            ticker=str(row.get("ticker") or ""),
+            exchange=str(row.get("exchange") or ""),
+            asset_class=str(row.get("asset_class") or ""),
+            currency=str(row.get("currency") or ""),
+            name=str(row.get("name") or ""),
+            list_date=_date_from_value(row.get("list_date")),
+            is_active=is_active,
+            last_seen=last_seen or datetime.now(timezone.utc),
+            metadata=str(row.get("metadata") or "{}"),
+        )
+        self.upsert_market_instrument(instrument)
+        return True
+
     # ─────────────────────────────────────────────────────────────────
     # Row marshalling
     # ─────────────────────────────────────────────────────────────────
@@ -368,21 +495,26 @@ def compute_dividend_hash(
     *, instrument_id: str, ex_date: Date | str,
     cash_amount: float, unadjusted_amount: float,
     currency: str = "",
+    declaration_date: Date | str | None = None,
+    record_date: Date | str | None = None,
+    payment_date: Date | str | None = None,
+    period: str = "",
 ) -> str:
     """Canonical hash for one dividend row.
 
-    SHA-256 over a stable JSON encoding of the mutable fields. The
-    declaration / record / payment dates are intentionally excluded —
-    the bulk endpoint leaves them ``null`` for most tickers, and we
-    don't want a same-payout row from the per-ticker endpoint to look
-    like a revision just because it filled them in.
+    SHA-256 over a stable JSON encoding of the mutable EODHD fields. The
+    per-ticker and bulk paths share a stable revision detector.
     """
+    del instrument_id
     payload = {
-        "instrument_id": instrument_id,
         "ex_date": str(ex_date),
-        "cash_amount": float(cash_amount),
-        "unadjusted_amount": float(unadjusted_amount),
+        "value": float(cash_amount),
+        "unadjustedValue": float(unadjusted_amount),
+        "period": period or "",
         "currency": currency,
+        "declarationDate": str(declaration_date) if declaration_date else "",
+        "recordDate": str(record_date) if record_date else "",
+        "paymentDate": str(payment_date) if payment_date else "",
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
@@ -395,8 +527,8 @@ def compute_split_hash(
 ) -> str:
     """Canonical hash for one split row. Same contract as
     :func:`compute_dividend_hash`."""
+    del instrument_id
     payload = {
-        "instrument_id": instrument_id,
         "execution_date": str(execution_date),
         "to_factor": float(to_factor),
         "from_factor": float(from_factor),
@@ -404,6 +536,14 @@ def compute_split_hash(
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
     ).hexdigest()
+
+
+def _date_from_value(value: Any) -> Date | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, Date):
+        return value
+    return Date.fromisoformat(str(value)[:10])
 
 
 __all__ = [

@@ -2,15 +2,10 @@
 """Universe-bounded fundamentals backfill — issue #68 slice 3.
 
 Pulls one ``/api/fundamentals/{TICKER}.{EX}`` snapshot per ticker
-across the seeded universes (``_tiingo_universe.py`` +
-``_eodhd_universe.py``) and writes raw + projection rows via the
-``fundamentals_fetch`` service op. Default: all 17 names that map to
-EODHD fundamentals (11 Tiingo ETFs flagged by the suffix
-inference + 6 EODHD non-FX/crypto/commodity entries). FX / crypto /
-spot-metal / index entries are skipped — they don't ship financial
-statements; an ETF entry returns an empty ``Financials`` block but
-still lands a ``General`` row plus the raw audit trail, so leaving
-them in the default keeps the audit lane representative.
+across a curated issuer/index seed and writes raw + projection rows via
+the ``fundamentals_fetch`` service op. The broad US market universe now
+lives in ClickHouse ``market.instruments`` and is seeded separately by
+``scripts/seed_market_universe.py``.
 
 Operator usage::
 
@@ -45,10 +40,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from ingestion.market._eodhd_universe import EODHD_GLOBAL_UNIVERSE  # noqa: E402
-from ingestion.market._tiingo_universe import (  # noqa: E402
-    TIINGO_MACRO_ETF_UNIVERSE,
-)
 from macro_data.service import LocalMacroDataService  # noqa: E402
 from storage import SQLiteEngineStore, default_engine_db_path  # noqa: E402
 
@@ -73,6 +64,26 @@ DEFAULT_ASSET_CLASSES: frozenset[str] = frozenset({
     "index",
 })
 
+DEFAULT_FUNDAMENTALS_UNIVERSE: tuple[tuple[str, str], ...] = (
+    ("SPY.US", "equity_etf"),
+    ("QQQ.US", "equity_etf"),
+    ("IWM.US", "equity_etf"),
+    ("DIA.US", "equity_etf"),
+    ("TLT.US", "bond_etf"),
+    ("IEF.US", "bond_etf"),
+    ("HYG.US", "bond_etf"),
+    ("LQD.US", "bond_etf"),
+    ("GLD.US", "commodity_etf"),
+    ("SLV.US", "commodity_etf"),
+    ("USO.US", "commodity_etf"),
+    ("VWRL.LSE", "equity_etf"),
+    ("SAP.XETRA", "equity"),
+    ("0700.HK", "equity"),
+    ("N225.INDX", "index"),
+    ("GDAXI.INDX", "index"),
+    ("HSI.INDX", "index"),
+)
+
 
 def _append_log(log_path: Path, payload: dict) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -83,19 +94,12 @@ def _append_log(log_path: Path, payload: dict) -> None:
 def _resolve_universe_tickers(
     *, asset_classes: frozenset[str],
 ) -> list[str]:
-    """Walk both seeded universes; return EODHD-shaped tickers.
-
-    Tiingo entries are US listings, so the EODHD ticker is
-    ``{ticker}.US``. EODHD entries already carry their ``eodhd_ticker``
-    suffix verbatim.
-    """
-    tickers: list[str] = []
-    for entry in TIINGO_MACRO_ETF_UNIVERSE:
-        if entry.asset_class in asset_classes:
-            tickers.append(f"{entry.ticker}.US")
-    for entry in EODHD_GLOBAL_UNIVERSE:
-        if entry.asset_class in asset_classes:
-            tickers.append(entry.eodhd_ticker)
+    """Return EODHD-shaped tickers from the fundamentals seed."""
+    tickers = [
+        ticker
+        for ticker, asset_class in DEFAULT_FUNDAMENTALS_UNIVERSE
+        if asset_class in asset_classes
+    ]
     # de-duplicate while preserving first-seen order.
     seen: set[str] = set()
     deduped: list[str] = []
