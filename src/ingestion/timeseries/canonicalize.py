@@ -343,6 +343,24 @@ def canonicalize_eia_payload(payload: dict[str, Any]) -> str:
     would collapse to the same sort key, and a tie-order flip on
     identical content would mint a fresh hash and defeat dedupe.
     """
+    if payload.get("fallback_source") == "fred":
+        fallback_source = str(payload.get("fallback_source", ""))
+        fallback_series_id = str(payload.get("fallback_series_id", ""))
+        response = payload.get("response", {})
+        fred_canonical = (
+            json.loads(canonicalize_fred_payload(response))
+            if isinstance(response, dict) else {"observations": []}
+        )
+        return json.dumps(
+            {
+                "fallback_source": fallback_source,
+                "fallback_series_id": fallback_series_id,
+                **fred_canonical,
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+
     response = payload.get("response", {})
     if not isinstance(response, dict):
         return json.dumps({"response": {}}, sort_keys=True, ensure_ascii=False)

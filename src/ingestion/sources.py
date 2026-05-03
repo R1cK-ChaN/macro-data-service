@@ -697,6 +697,57 @@ class IngestionOrchestrator:
                 ))
         return records
 
+    def _raw_eia_items_to_records(self, raw_items: list[Any]) -> list[Any]:
+        from ingestion.normalization import normalize_observation_date
+
+        records: list[Any] = []
+        lookup = self._family_lookup or {}
+        for item in raw_items:
+            if getattr(item, "cache_hit_count", None) is not None:
+                records.append(item)
+                continue
+            series_metadata = getattr(item, "series_metadata", {}) or {}
+            frequency = str(series_metadata.get("freq", "daily"))
+            category = series_metadata.get("category", "energy")
+            fam_id = lookup.get(("eia", item.series_id))
+            for obs in getattr(item, "observations", ()):
+                provider_metadata = getattr(obs, "provider_metadata", {}) or {}
+                records.append(IndicatorObservationRecord(
+                    series_id=item.series_id,
+                    source="eia",
+                    date=normalize_observation_date(obs.date, frequency),
+                    value=obs.value,
+                    metadata={"category": category, **provider_metadata},
+                    obs_family_id=fam_id,
+                ))
+        return records
+
+    def _deduplicate_eia_items(self, items: list[Any]) -> list[Any]:
+        observations = [
+            item for item in items
+            if getattr(item, "cache_hit_count", None) is None
+        ]
+        cache_hits = [
+            item for item in items
+            if getattr(item, "cache_hit_count", None) is not None
+        ]
+        return [
+            *self._deduplicate_observations(observations),
+            *self._deduplicate_by_key(cache_hits, lambda hit: hit.series_id),
+        ]
+
+    def _store_eia_items(self, items: list[Any]) -> int:
+        observations = [
+            item for item in items
+            if getattr(item, "cache_hit_count", None) is None
+        ]
+        cache_count = sum(
+            int(getattr(item, "cache_hit_count"))
+            for item in items
+            if getattr(item, "cache_hit_count", None) is not None
+        )
+        return self._store_indicator_observations(observations) + cache_count
+
     # ── Per-domain source builders ────────────────────────────────────
     def _build_calendar_source(self) -> IngestionSourceDefinition:
         return IngestionSourceDefinition(
@@ -960,15 +1011,26 @@ class IngestionOrchestrator:
         return self._deduplicate_by_key(items, lambda item: canonicalize_url(item.url))
 
     def _build_eia_source(self) -> IngestionSourceDefinition:
+        from ingestion.fetchers._eia import EIAFetcher
+
+        fetcher = EIAFetcher(
+            client=self.eia.client,
+            fred_client=self.eia._fred,
+            series_config=EIA_SERIES,
+            history_loader=lambda series_id, limit: self.store.get_indicator_history(
+                series_id, limit=limit,
+            ),
+            live_limit=30,
+            request_delay_seconds=0.5,
+        )
         return IngestionSourceDefinition(
             name="eia",
             interval_seconds=86_400,
             prepare=self._ensure_obs_seed,
-            execute=lambda: self.eia.refresh_subset(
-                self.store,
-                series_configs=EIA_SERIES,
-                family_lookup=self._family_lookup or None,
-            ).count,
+            fetch=lambda: self._fetch_with_obs_raw(fetcher, lookback_days=365),
+            normalize=self._raw_eia_items_to_records,
+            deduplicate=self._deduplicate_eia_items,
+            store=self._store_eia_items,
             max_retries=1,
             retry_backoff_seconds=5.0,
         )

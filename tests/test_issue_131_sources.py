@@ -7,13 +7,16 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from storage import IndicatorObservationRecord
 from ingestion.sources import IngestionOrchestrator
 from ingestion.timeseries._config import (
+    EIA_SERIES,
     IMF_SERIES,
     IMF_VINTAGE_SERIES,
     MACRO_SERIES,
     VINTAGE_SERIES,
 )
+from ingestion.timeseries.scrapers.eia import EIAObservation
 from ingestion.timeseries.sdmx.providers.imf import IMFVintageObservation
 from ingestion.timeseries.scrapers.fred import FredObservation, FredVintageObservation
 from ingestion.timeseries.scrapers.worldbank import (
@@ -35,6 +38,20 @@ def _bare_orchestrator() -> IngestionOrchestrator:
     orchestrator._deduplicate_observations = lambda rows: rows
     orchestrator._store_indicator_observations = lambda rows: len(rows)
     return orchestrator
+
+
+def _raw_series_to_indicator_records(raw_series_list):
+    return [
+        IndicatorObservationRecord(
+            series_id=rs.series_id,
+            source=rs.source,
+            date=obs.date,
+            value=obs.value,
+            metadata={**obs.provider_metadata, **rs.series_metadata},
+        )
+        for rs in raw_series_list
+        for obs in rs.observations
+    ]
 
 
 def test_issue_131_fred_daily_uses_fetcher_pipeline(monkeypatch) -> None:
@@ -313,3 +330,115 @@ def test_issue_131_worldbank_catalog_uses_fetcher_pipeline() -> None:
     }
     assert {record.metadata["category"] for record in records} == {"catalog"}
     assert calls == [("SP.POP.TOTL", "all", 1500, 1000, True)]
+
+
+def test_issue_131_eia_uses_fetcher_pipeline(monkeypatch) -> None:
+    monkeypatch.setattr("ingestion.timeseries.fetchers._eia.time.sleep", lambda _seconds: None)
+    calls: list[tuple[str, int]] = []
+    stored: list[IndicatorObservationRecord] = []
+
+    class FakeEIAClient:
+        def get_series_with_raw(self, route, *, params, series_id, limit):
+            calls.append((series_id, limit))
+            payload = {
+                "response": {
+                    "data": [
+                        {"period": "2026-01-01", "value": 82.5, "units": "usd"},
+                    ],
+                }
+            }
+            return [
+                EIAObservation(series_id, "2026-01-01", 82.5, "usd")
+            ], payload, {"route": route}
+
+    class FakeFredClient:
+        def get_series_with_raw(self, *args, **kwargs):
+            raise AssertionError("fred fallback should stay idle")
+
+    orchestrator = _bare_orchestrator()
+    orchestrator.eia = SimpleNamespace(client=FakeEIAClient(), _fred=FakeFredClient())
+    orchestrator.store = SimpleNamespace(get_indicator_history=lambda _series_id, limit: [])
+    orchestrator._raw_series_to_records = _raw_series_to_indicator_records
+    orchestrator._store_indicator_observations = (
+        lambda rows: stored.extend(rows) or len(rows)
+    )
+
+    report = orchestrator._run_definition(orchestrator._build_eia_source())
+
+    assert report.source == "eia"
+    assert report.stored == len(EIA_SERIES)
+    assert calls[0] == ("EIA_BRENT", 30)
+    assert {record.source for record in stored} == {"eia"}
+    assert stored[0].metadata == {"category": "energy", "unit": "usd"}
+
+
+def test_issue_131_eia_route_counts_recent_cache(monkeypatch) -> None:
+    monkeypatch.setattr("ingestion.timeseries.fetchers._eia.time.sleep", lambda _seconds: None)
+    stored: list[IndicatorObservationRecord] = []
+
+    class FakeEIAClient:
+        def get_series_with_raw(self, route, *, params, series_id, limit):
+            raise RuntimeError("upstream down")
+
+    class FakeFredClient:
+        def get_series_with_raw(self, *args, **kwargs):
+            raise AssertionError("cache hit should short-circuit fallback")
+
+    orchestrator = _bare_orchestrator()
+    orchestrator.eia = SimpleNamespace(client=FakeEIAClient(), _fred=FakeFredClient())
+    orchestrator.store = SimpleNamespace(
+        get_indicator_history=lambda _series_id, limit: [
+            SimpleNamespace(date="2099-01-01")
+        ],
+    )
+    orchestrator._raw_series_to_records = _raw_series_to_indicator_records
+    orchestrator._store_indicator_observations = (
+        lambda rows: stored.extend(rows) or len(rows)
+    )
+
+    report = orchestrator._run_definition(orchestrator._build_eia_source())
+
+    assert report.source == "eia"
+    assert report.stored == len(EIA_SERIES)
+    assert stored == []
+
+
+def test_issue_131_eia_route_uses_fred_fallback(monkeypatch) -> None:
+    monkeypatch.setattr("ingestion.timeseries.fetchers._eia.time.sleep", lambda _seconds: None)
+    stored: list[IndicatorObservationRecord] = []
+
+    class FakeEIAClient:
+        def get_series_with_raw(self, route, *, params, series_id, limit):
+            return [], {}, {"route": route}
+
+    class FakeFredClient:
+        def get_series_with_raw(self, series_id, *, start_date, limit):
+            payload = {
+                "observations": [
+                    {"date": "2026-03-19", "value": "68.5"},
+                ],
+            }
+            return [
+                FredObservation(series_id, "2026-03-19", 68.5)
+            ], payload, {"series_id": series_id, "observation_start": start_date}
+
+    orchestrator = _bare_orchestrator()
+    orchestrator.eia = SimpleNamespace(client=FakeEIAClient(), _fred=FakeFredClient())
+    orchestrator.store = SimpleNamespace(get_indicator_history=lambda _series_id, limit: [])
+    orchestrator._raw_series_to_records = _raw_series_to_indicator_records
+    orchestrator._store_indicator_observations = (
+        lambda rows: stored.extend(rows) or len(rows)
+    )
+
+    definition = orchestrator._build_eia_source()
+    rows = definition.fetch()
+    fallback_rows = [row for row in rows if row.series_id == "EIA_BRENT"]
+    records = definition.normalize(fallback_rows)
+    stored_count = definition.store(records)
+
+    assert definition.execute is None
+    assert fallback_rows[0].raw_payload["fallback_source"] == "fred"
+    assert fallback_rows[0].content_hash is not None
+    assert stored_count == 1
+    assert stored[0].series_id == "EIA_BRENT"
+    assert stored[0].metadata["fallback_source"] == "fred"

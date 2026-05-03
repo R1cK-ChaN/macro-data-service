@@ -347,6 +347,59 @@ def test_eia_bronze_replay_matches_silver():
     assert isinstance(replayed[0], EIAObservation)
 
 
+def test_eia_fred_fallback_bronze_replay_matches_silver():
+    from ingestion.fetchers._eia import EIAFetcher
+    from ingestion.timeseries.scrapers.eia import _parse_eia_observations
+    from ingestion.timeseries.scrapers.fred import FredObservation
+
+    fred_payload = {
+        "observations": [
+            {"date": "2026-03-19", "value": "68.5"},
+            {"date": "2026-03-20", "value": "69.0"},
+        ],
+    }
+    fake_eia = MagicMock()
+    fake_eia.get_series_with_raw.return_value = (
+        [], {}, {"route": "petroleum/pri/spt/data"},
+    )
+    fake_fred = MagicMock()
+    fake_fred.get_series_with_raw.return_value = (
+        [
+            FredObservation("DCOILWTICO", "2026-03-19", 68.5),
+            FredObservation("DCOILWTICO", "2026-03-20", 69.0),
+        ],
+        fred_payload,
+        {"series_id": "DCOILWTICO"},
+    )
+    fetcher = EIAFetcher(
+        client=fake_eia,
+        fred_client=fake_fred,
+        history_loader=lambda _series_id, _limit: [],
+        series_config={
+            "wti": {
+                "route": "petroleum/pri/spt/data",
+                "params": {"frequency": "daily"},
+                "series_id": "EIA_WTI",
+                "category": "energy",
+            },
+        },
+    )
+    [rs] = fetcher.fetch()
+    silver = [(o.date, o.value) for o in rs.observations]
+
+    replayed = _parse_eia_observations(
+        _round_trip(rs.raw_payload), series_id="EIA_WTI", value_col="value",
+    )
+    replay = [(o.date, o.value) for o in replayed]
+
+    assert silver == replay == [
+        ("2026-03-19", 68.5),
+        ("2026-03-20", 69.0),
+    ]
+    assert rs.raw_payload["fallback_source"] == "fred"
+    assert rs.content_hash is not None
+
+
 # ── Treasury Fiscal ───────────────────────────────────────────────────────
 
 
