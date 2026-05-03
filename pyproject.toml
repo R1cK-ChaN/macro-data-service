@@ -9,6 +9,7 @@ description = "Standalone macro-data service extracted from analyst-project"
 requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4",
+    "clickhouse-connect>=0.7",
     "curl_cffi",
     "feedparser",
     "httpx",
