@@ -1,8 +1,3 @@
-from .scrapers import (
-    ForexFactoryCalendarClient,
-    InvestingCalendarClient,
-    TradingEconomicsCalendarClient,
-)
 from .sources import (
     FREDIngestionClient,
     FedIngestionClient,
@@ -17,13 +12,10 @@ from .sources import (
 __all__ = [
     "FREDIngestionClient",
     "FedIngestionClient",
-    "ForexFactoryCalendarClient",
     "IngestionRunReport",
     "IngestionSourceDefinition",
     "IngestionOrchestrator",
-    "InvestingCalendarClient",
     "NewsIngestionClient",
     "RedditTrendIngestionClient",
     "WeiboTrendIngestionClient",
-    "TradingEconomicsCalendarClient",
 ]

@@ -24,9 +24,6 @@ from ingestion.news._classify import Deduplicator
 from ingestion.news._config import get_feeds
 from ingestion.news._fetcher import ArticleFetcher
 from ingestion._shared.url_canon import canonicalize_url, content_hash
-from ingestion.calendar.scrapers.forexfactory import ForexFactoryCalendarClient
-from ingestion.calendar.scrapers.investing import InvestingCalendarClient
-from ingestion.calendar.scrapers.tradingeconomics import TradingEconomicsCalendarClient
 from ingestion.documents.scrapers.gov_report import GovReportClient, GovReportItem
 from ingestion.timeseries.sdmx.providers.bis import BISClient
 from ingestion.timeseries.sdmx.providers.ecb import ECBClient
@@ -60,7 +57,6 @@ from storage import (
     ObsRawRecord,
     ReleaseStatusRecord,
     SQLiteEngineStore,
-    StoredEventRecord,
     TrendTopicRecord,
 )
 
@@ -284,9 +280,6 @@ class IngestionOrchestrator:
         store: SQLiteEngineStore,
         *,
         fred: FREDIngestionClient | None = None,
-        investing: InvestingCalendarClient | None = None,
-        forexfactory: ForexFactoryCalendarClient | None = None,
-        tradingeconomics: TradingEconomicsCalendarClient | None = None,
         fed: FedIngestionClient | None = None,
         news: NewsIngestionClient | None = None,
         reddit_trends: RedditTrendIngestionClient | None = None,
@@ -313,9 +306,6 @@ class IngestionOrchestrator:
         self.store = store
         self._validation = validation_engine
         self.fred = fred or FREDIngestionClient()
-        self.investing = investing or InvestingCalendarClient()
-        self.forexfactory = forexfactory or ForexFactoryCalendarClient()
-        self.tradingeconomics = tradingeconomics or TradingEconomicsCalendarClient()
         self.fed = fed or FedIngestionClient()
         self.news = news or NewsIngestionClient()
         self.reddit_trends = reddit_trends or RedditTrendIngestionClient()
@@ -338,7 +328,6 @@ class IngestionOrchestrator:
         self.oecd = oecd or OECDIngestionClient()
         self.worldbank = worldbank or WorldBankIngestionClient()
         self._obs_seeded = False
-        self._cal_seeded = False
         self._family_lookup: dict[tuple[str, str], str] = {}
         self._sources: dict[str, IngestionSourceDefinition] = {}
         self._default_refresh_order: list[str] = []
@@ -355,12 +344,6 @@ class IngestionOrchestrator:
         self._family_lookup = self.store.build_obs_family_lookup()
         self._obs_seeded = True
 
-    def _ensure_calendar_indicator_seed(self) -> None:
-        if self._cal_seeded:
-            return
-        self.store.seed_calendar_indicators()
-        self._cal_seeded = True
-
     def _ensure_capability_manager(self) -> None:
         if hasattr(self, "_capability_manager"):
             return
@@ -369,14 +352,6 @@ class IngestionOrchestrator:
             self.store,
             orchestrator=self,
         )
-
-    def _resolve_calendar_indicator(self, event: StoredEventRecord) -> StoredEventRecord:
-        indicator_id = self.store.resolve_calendar_alias(
-            event.indicator, event.source, event.country
-        )
-        if indicator_id:
-            return dataclasses.replace(event, indicator_id=indicator_id)
-        return event
 
     def register_source(self, definition: IngestionSourceDefinition) -> None:
         if not definition.family:
@@ -686,38 +661,6 @@ class IngestionOrchestrator:
             name="calendar",
             execute=lambda: 0,
         )
-
-    def _fetch_calendar_events(self) -> list[StoredEventRecord]:
-        events: list[StoredEventRecord] = []
-        providers = [
-            ("Investing.com", lambda: self.investing.fetch_range(days_back=1, days_forward=3)),
-            ("ForexFactory", self.forexfactory.fetch),
-            ("TradingEconomics", self.tradingeconomics.fetch),
-        ]
-        for label, fetch_fn in providers:
-            try:
-                events.extend(list(fetch_fn()))
-            except Exception:
-                logger.warning("%s calendar refresh failed", label, exc_info=True)
-        return events
-
-    def _normalize_calendar_events(self, events: list[StoredEventRecord]) -> list[StoredEventRecord]:
-        return [self._resolve_calendar_indicator(event) for event in events]
-
-    @staticmethod
-    def _validate_calendar_events(events: list[StoredEventRecord]) -> list[StoredEventRecord]:
-        return [
-            event for event in events
-            if event.event_id and event.indicator and event.country and event.timestamp > 0
-        ]
-
-    def _deduplicate_calendar_events(self, events: list[StoredEventRecord]) -> list[StoredEventRecord]:
-        return self._deduplicate_by_key(events, lambda event: (event.source, event.event_id))
-
-    def _store_calendar_events(self, events: list[StoredEventRecord]) -> int:
-        for event in events:
-            self.store.upsert_calendar_event(event)
-        return len(events)
 
     # ── Corp calendar (EODHD) forward sources — issue #63 ────────────
     # Window: today − lookback_days … today + lookforward_days.

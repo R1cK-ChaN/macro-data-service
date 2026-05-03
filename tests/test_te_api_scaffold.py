@@ -142,7 +142,7 @@ def test_country_code_maps_supra_national_aggregates_from_user_assigned_range() 
     range so the column stays alpha-2-conformant. These five codes must
     also show up in SUPRA_NATIONAL_CODES — downstream uses that set
     because LIKE 'Q%' would catch Qatar (QA)."""
-    from ingestion.calendar.scrapers.tradingeconomics import SUPRA_NATIONAL_CODES
+    from ingestion.calendar.te_api._country_map import SUPRA_NATIONAL_CODES
     expected = {
         "IMF":   "QM",
         "OPEC":  "QP",

@@ -2,7 +2,7 @@
 
 Institutional-grade macro-data ingestion, resolution, and observability platform. Ingests 86 economic concepts from 11 core sources, supports a 25-source capability registry, and includes release-calendar-aware scheduling, availability verification, cross-source fallback, and a ClickHouse-backed EODHD market-data layer for US active plus delisted instruments.
 
-**Last updated:** 2026-05-03 (issue #122 README sweep: post-#113 cleanup, #114 vintage view, #116 bronze replay, #118 ClickHouse market store.)
+**Last updated:** 2026-05-03 (issue #123 calendar scraper retirement: source-owned calendar APIs, `te_api`, and EODHD corporate calendar remain.)
 
 ## Architecture
 
@@ -95,8 +95,6 @@ src/
                       bls_api, boc_api, boe_api, boj_api, ecb_api, ...)
       te_api/         TradingEconomics historical bootstrap + updates
       eodhd_api/      EODHD earnings, IPOs, splits, dividends
-      scrapers/       Auxiliary legacy HTML scrapers:
-                      forexfactory.py, investing.py, tradingeconomics.py
       scheduler.py    Recurring schedule/value refresh driver
       agency_registry.py  Agency attribution map for parity filings
       parity.py       TE-vs-official parity harness

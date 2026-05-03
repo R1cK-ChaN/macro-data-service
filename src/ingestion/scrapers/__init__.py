@@ -87,7 +87,6 @@ from .eia import (
     EIAResponseError,
     EIARoute,
 )
-from .forexfactory import ForexFactoryCalendarClient, ForexFactoryNewsClient
 from .fred import (
     FredAPIError,
     FredClient,
@@ -98,7 +97,6 @@ from .fred import (
 from ingestion.sdmx._errors import IMFAPIError, IMFRateLimitError
 from ingestion.sdmx._types import SDMXObservation as IMFObservation
 from ingestion.sdmx.providers.imf import IMFClient, IMFVintageObservation
-from .investing import InvestingCalendarClient, InvestingNewsClient
 from ingestion.sdmx._errors import OECDAPIError, OECDRateLimitError, OECDResponseFormatError
 from ingestion.sdmx.providers.oecd import (
     OECDClient,
@@ -170,12 +168,6 @@ from .rateprobability import (
     RateProbabilityClient,
 )
 from .reddit import RedditTrendClient, RedditTrendPost
-from .tradingeconomics import (
-    TradingEconomicsCalendarClient,
-    TradingEconomicsIndicatorsClient,
-    TradingEconomicsMarketsClient,
-    TradingEconomicsNewsClient,
-)
 from .weibo import WeiboTrendClient, WeiboTrendItem
 
 __all__ = [
@@ -298,17 +290,10 @@ __all__ = [
     "WorldBankResponseFormatError",
     "WorldBankSource",
     "WorldBankTopic",
-    # Calendar
-    "ForexFactoryCalendarClient",
-    "InvestingCalendarClient",
-    "TradingEconomicsCalendarClient",
     # News
     "BloombergNewsClient",
     "FTNewsClient",
-    "ForexFactoryNewsClient",
-    "InvestingNewsClient",
     "ReutersNewsClient",
-    "TradingEconomicsNewsClient",
     "WSJNewsClient",
     # Articles
     "BloombergArticleClient",
@@ -339,9 +324,6 @@ __all__ = [
     "TreasuryFiscalClient",
     "UNSDClient",
     "WorldBankClient",
-    # Indicators & Markets
-    "TradingEconomicsIndicatorsClient",
-    "TradingEconomicsMarketsClient",
     # Rate Probabilities & Reference Rates
     "NYFedRatesClient",
     "RateProbabilityClient",

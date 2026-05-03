@@ -86,6 +86,24 @@ def test_unknown_operation_raises_key_error(service: LocalMacroDataService) -> N
         service.invoke("does_not_exist", {})
 
 
+def test_fetch_live_news_reports_retired_free_sources(
+    service: LocalMacroDataService,
+) -> None:
+    resp = service.invoke("fetch_live_news", {"sources": "free"})
+    assert resp["total"] == 0
+    assert resp["items"] == []
+    assert resp["sources_requested"] == [
+        "investing",
+        "forexfactory",
+        "tradingeconomics",
+    ]
+    assert resp["errors"] == [
+        "investing: live Investing.com news scraper retired in issue #123",
+        "forexfactory: live ForexFactory news scraper retired in issue #123",
+        "tradingeconomics: live TradingEconomics news scraper retired in issue #123",
+    ]
+
+
 # ── list_subjects ───────────────────────────────────────────────────────
 
 

@@ -14,6 +14,12 @@ from .base import (
 
 
 class NewsOpsMixin(LocalMacroDataServiceBase):
+    _RETIRED_LIVE_NEWS_SOURCES: dict[str, str] = {
+        "investing": "Investing.com",
+        "forexfactory": "ForexFactory",
+        "tradingeconomics": "TradingEconomics",
+    }
+
     def _op_refresh_news(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if self._ingestion is None:
             return {"error": "news refresh unavailable"}
@@ -156,20 +162,14 @@ class NewsOpsMixin(LocalMacroDataServiceBase):
         from ingestion.scrapers import (
             BloombergNewsClient,
             FTNewsClient,
-            ForexFactoryNewsClient,
-            InvestingNewsClient,
             ReutersNewsClient,
-            TradingEconomicsNewsClient,
             WSJNewsClient,
         )
 
-        if source == "investing":
-            raw = InvestingNewsClient().fetch_news(category=section)[:limit]
-        elif source == "forexfactory":
-            raw = ForexFactoryNewsClient().fetch_news()[:limit]
-        elif source == "tradingeconomics":
-            raw = TradingEconomicsNewsClient().fetch_news(count=limit)
-        elif source == "reuters":
+        retired_label = self._RETIRED_LIVE_NEWS_SOURCES.get(source)
+        if retired_label:
+            raise RuntimeError(f"live {retired_label} news scraper retired in issue #123")
+        if source == "reuters":
             raw = ReutersNewsClient().fetch_news(section=section)[:limit]
         elif source == "bloomberg":
             with BloombergNewsClient() as client:
