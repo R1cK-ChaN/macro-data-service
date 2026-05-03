@@ -379,35 +379,11 @@ class TimeseriesOpsMixin(LocalMacroDataServiceBase):
         }
 
     def _op_fetch_country_indicators(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        from ingestion.scrapers import TradingEconomicsIndicatorsClient
-
-        country = (arguments.get("country") or "united-states").lower().strip()
-        category_filter = (arguments.get("category") or "").lower().strip()
-        limit = min(int(arguments.get("limit", 50)), 100)
-        try:
-            indicators = TradingEconomicsIndicatorsClient().fetch_indicators(country=country)
-        except Exception as exc:
-            logger.warning("Live indicators fetch failed for %s: %s", country, exc)
-            return {"error": str(exc), "indicators": []}
-        items = [
-            {
-                "name": indicator.name,
-                "last": indicator.last,
-                "previous": indicator.previous,
-                "highest": indicator.highest,
-                "lowest": indicator.lowest,
-                "unit": indicator.unit,
-                "date": indicator.date,
-                "category": indicator.category,
-            }
-            for indicator in indicators
-        ]
-        if category_filter:
-            items = [
-                item for item in items
-                if category_filter in str(item["category"]).lower() or category_filter in str(item["name"]).lower()
-            ]
-        return {"country": country, "total": len(items[:limit]), "indicators": items[:limit]}
+        del arguments
+        return {
+            "error": "live TradingEconomics indicator scraper retired in issue #123",
+            "indicators": [],
+        }
 
     def _op_fetch_reference_rates(self, arguments: dict[str, Any]) -> dict[str, Any]:
         from ingestion.scrapers import NYFedRatesClient

@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ingestion._shared.common import IMPORTANCE_MAP
-from ingestion.calendar.scrapers.tradingeconomics import TE_COUNTRY_MAP
+from ingestion.calendar.te_api._country_map import TE_COUNTRY_MAP
 
 PROVIDER = "tradingeconomics"
 

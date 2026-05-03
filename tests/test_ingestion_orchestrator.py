@@ -17,9 +17,6 @@ class IngestionOrchestratorTest(unittest.TestCase):
         orchestrator = IngestionOrchestrator(
             store=Mock(),
             fred=Mock(),
-            investing=Mock(),
-            forexfactory=Mock(),
-            tradingeconomics=Mock(),
             fed=Mock(),
 
             news=Mock(),
@@ -103,9 +100,6 @@ class IngestionOrchestratorTest(unittest.TestCase):
         orchestrator = IngestionOrchestrator(
             store=Mock(),
             fred=Mock(),
-            investing=Mock(),
-            forexfactory=Mock(),
-            tradingeconomics=Mock(),
             fed=Mock(),
 
             news=Mock(),
@@ -149,9 +143,6 @@ class IngestionOrchestratorTest(unittest.TestCase):
         orchestrator = IngestionOrchestrator(
             store=Mock(),
             fred=Mock(),
-            investing=Mock(),
-            forexfactory=Mock(),
-            tradingeconomics=Mock(),
             fed=Mock(),
 
             news=Mock(),
@@ -192,8 +183,7 @@ class SourceFamilyTaggingTest(unittest.TestCase):
     def _build_orchestrator(self) -> IngestionOrchestrator:
         return IngestionOrchestrator(
             store=Mock(),
-            fred=Mock(), investing=Mock(), forexfactory=Mock(),
-            tradingeconomics=Mock(), fed=Mock(),
+            fred=Mock(), fed=Mock(),
             news=Mock(), reddit_trends=Mock(), weibo_trends=Mock(),
             rate_probability=Mock(), nyfed=Mock(), gov_report=Mock(),
             eia=Mock(), treasury_fiscal=Mock(), imf=Mock(),
@@ -228,9 +218,6 @@ class SourceFamilyTaggingTest(unittest.TestCase):
         self.assertEqual(report.stored, 0)
         self.assertIsNone(report.fetched)
         self.assertNotIn("calendar", orch._default_refresh_order)
-        orch.investing.fetch_range.assert_not_called()
-        orch.forexfactory.fetch.assert_not_called()
-        orch.tradingeconomics.fetch.assert_not_called()
 
     def test_registered_definition_picks_up_family_from_registry(self) -> None:
         orch = self._build_orchestrator()
