@@ -75,9 +75,11 @@ class LocalMacroDataServiceBase:
         self,
         *,
         store: Any,
+        market_store: Any | None = None,
         ingestion: Any | None = None,
     ) -> None:
         self._store = store
+        self._market_store = market_store
         self._ingestion = ingestion
         self._ontology_seeded = False
         self._subject_vocabulary_seeded = False

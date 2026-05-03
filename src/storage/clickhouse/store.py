@@ -136,6 +136,13 @@ class ClickHouseMarketStore:
         Window inclusive on both ends; ``start`` / ``end`` are
         ``YYYY-MM-DD`` strings (the column is ``DateTime``, so we cast
         via ``toDate(time) >= …``).
+
+        ``date`` and ``time`` are returned as ``YYYY-MM-DD`` and
+        ISO-8601 UTC strings respectively, not native ``date`` /
+        ``datetime`` objects, so callers can ``json.dumps`` the
+        response without a custom encoder. The CLI + HTTP server both
+        run rows through ``json.dumps``, so the convention is "stringify
+        at the storage boundary".
         """
         if adjusted:
             cols = (
@@ -162,7 +169,9 @@ class ClickHouseMarketStore:
         )
         result = self._client.query(sql, parameters=params)
         return [
-            dict(zip(result.column_names, row, strict=True))
+            self._stringify_temporal(
+                dict(zip(result.column_names, row, strict=True))
+            )
             for row in result.result_rows
         ]
 
@@ -174,6 +183,10 @@ class ClickHouseMarketStore:
         instrument_id`` after ``ORDER BY time DESC`` keeps the latest
         bar per instrument — CH-native pattern, single pass over the
         primary index.
+
+        ``time`` is returned as an ISO-8601 UTC string for
+        json-serializability — same boundary contract as
+        :meth:`get_market_history`.
         """
         sql = (
             f"SELECT instrument_id, ticker, exchange, time, "
@@ -184,7 +197,9 @@ class ClickHouseMarketStore:
         )
         result = self._client.query(sql)
         return [
-            dict(zip(result.column_names, row, strict=True))
+            self._stringify_temporal(
+                dict(zip(result.column_names, row, strict=True))
+            )
             for row in result.result_rows
         ]
 
@@ -216,7 +231,9 @@ class ClickHouseMarketStore:
         result = self._client.query(sql, parameters=params)
         if not result.result_rows:
             return None
-        return dict(zip(result.column_names, result.result_rows[0], strict=True))
+        return self._stringify_temporal(
+            dict(zip(result.column_names, result.result_rows[0], strict=True))
+        )
 
     # ─────────────────────────────────────────────────────────────────
     # Writes
@@ -291,6 +308,26 @@ class ClickHouseMarketStore:
     # ─────────────────────────────────────────────────────────────────
     # Row marshalling
     # ─────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _stringify_temporal(row: dict[str, Any]) -> dict[str, Any]:
+        """Convert ``date`` / ``datetime`` values to ISO strings in-place.
+
+        ``clickhouse_connect`` returns native temporal objects; the
+        service layer feeds rows directly into ``json.dumps`` (CLI +
+        HTTP), which can't encode them. Stringify at the storage
+        boundary so downstream stays free of custom encoders.
+        ``datetime`` -> ``YYYY-MM-DDTHH:MM:SSZ`` (UTC); ``date`` ->
+        ``YYYY-MM-DD``. Naive datetimes from CH always carry UTC
+        wall-clock, so the trailing ``Z`` reflects truth.
+        """
+        from datetime import date as _Date, datetime as _DateTime
+        for key, value in row.items():
+            if isinstance(value, _DateTime):
+                row[key] = value.strftime("%Y-%m-%dT%H:%M:%SZ")
+            elif isinstance(value, _Date):
+                row[key] = value.strftime("%Y-%m-%d")
+        return row
 
     @staticmethod
     def _bar_row(b: CHBar) -> tuple[Any, ...]:
