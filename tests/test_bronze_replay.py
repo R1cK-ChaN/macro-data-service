@@ -94,6 +94,128 @@ def test_fred_vintages_bronze_replay_matches_silver():
     assert isinstance(replayed[0], FredVintageObservation)
 
 
+# ── IMF vintages ──────────────────────────────────────────────────────────
+
+
+def _sdmx_payload(values: list[tuple[str, float]]) -> dict:
+    return {
+        "data": {
+            "dataSets": [
+                {
+                    "series": {
+                        "0:0": {
+                            "observations": {
+                                str(idx): [value]
+                                for idx, (_period, value) in enumerate(values)
+                            }
+                        }
+                    }
+                }
+            ],
+            "structures": [
+                {
+                    "dimensions": {
+                        "observation": [
+                            {
+                                "id": "TIME_PERIOD",
+                                "values": [
+                                    {"id": period}
+                                    for period, _value in values
+                                ],
+                            }
+                        ]
+                    }
+                }
+            ],
+        }
+    }
+
+
+def test_imf_vintages_bronze_replay_matches_silver():
+    from ingestion.fetchers._vintages import IMFVintageFetcher
+    from ingestion.timeseries.sdmx.providers.imf import (
+        IMFVintageObservation, _parse_imf_vintage_payload,
+    )
+
+    payload = {
+        "dataflow_id": "QNEA",
+        "key": "CHN.B1GQ.V.NSA.XDC.Q",
+        "series_id": "IMF_CN_GDP",
+        "version": "7.0.0",
+        "responses": [
+            {
+                "asOf": "2026-02-01",
+                "payload": _sdmx_payload([("2024-Q1", 100.0), ("2024-Q2", 101.0)]),
+            },
+            {
+                "asOf": "2026-03-01",
+                "payload": _sdmx_payload([("2024-Q1", 102.0), ("2024-Q2", 103.0)]),
+            },
+        ],
+    }
+    expected = [
+        obs
+        for response in payload["responses"]
+        for obs in _parse_imf_vintage_payload(
+            response["payload"],
+            series_id="IMF_CN_GDP",
+            dataflow="QNEA",
+            vintage_date=response["asOf"],
+            limit=30,
+        )
+    ]
+
+    fake_client = MagicMock()
+    fake_client.get_vintages_with_raw.return_value = (
+        expected,
+        payload,
+        {"series_id": "IMF_CN_GDP", "asOfDates": ["2026-02-01", "2026-03-01"]},
+    )
+    fetcher = IMFVintageFetcher(
+        client=fake_client,
+        vintage_series=("cn_gdp",),
+        series_config={
+            "cn_gdp": {
+                "dataflow": "QNEA",
+                "version": "7.0.0",
+                "key": "CHN.B1GQ.V.NSA.XDC.Q",
+                "series_id": "IMF_CN_GDP",
+                "category": "growth",
+            }
+        },
+        snapshot_count=2,
+    )
+    [rs] = fetcher.fetch()
+    silver = [(o.date, o.vintage_date, o.value) for o in rs.vintages]
+
+    replay_payload = _round_trip(rs.raw_payload)
+    replayed = [
+        obs
+        for response in replay_payload["responses"]
+        for obs in _parse_imf_vintage_payload(
+            response["payload"],
+            series_id=replay_payload["series_id"],
+            dataflow=replay_payload["dataflow_id"],
+            vintage_date=response["asOf"],
+            limit=30,
+        )
+    ]
+    replay = [(o.date, o.vintage_date, o.value) for o in replayed]
+
+    assert silver == replay
+    assert silver == [
+        ("2024-04-01", "2026-02-01", 101.0),
+        ("2024-01-01", "2026-02-01", 100.0),
+        ("2024-04-01", "2026-03-01", 103.0),
+        ("2024-01-01", "2026-03-01", 102.0),
+    ]
+    assert rs.source == "imf_vintages"
+    assert rs.storage_source == "imf"
+    assert rs.vintage_quality == "synthetic_snapshot"
+    assert rs.content_hash is not None
+    assert isinstance(replayed[0], IMFVintageObservation)
+
+
 # ── EIA ───────────────────────────────────────────────────────────────────
 
 

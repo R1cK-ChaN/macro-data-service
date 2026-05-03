@@ -8,7 +8,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from ingestion.sources import IngestionOrchestrator
-from ingestion.timeseries._config import MACRO_SERIES, VINTAGE_SERIES
+from ingestion.timeseries._config import (
+    IMF_SERIES,
+    IMF_VINTAGE_SERIES,
+    MACRO_SERIES,
+    VINTAGE_SERIES,
+)
+from ingestion.timeseries.sdmx.providers.imf import IMFVintageObservation
 from ingestion.timeseries.scrapers.fred import FredObservation, FredVintageObservation
 
 
@@ -154,3 +160,93 @@ def test_issue_131_fred_vintages_preserves_partial_failures(monkeypatch) -> None
 
     assert calls == list(VINTAGE_SERIES)
     assert {row.series_id for row in rows} == set(VINTAGE_SERIES) - {failed_series}
+
+
+def test_issue_131_imf_vintages_uses_fetcher_pipeline() -> None:
+    calls: list[tuple[str, str, str, tuple[str, ...], int]] = []
+
+    class FakeIMFClient:
+        def get_vintages_with_raw(
+            self,
+            dataflow_id: str,
+            key: str,
+            *,
+            series_id: str,
+            version: str,
+            as_of_dates,
+            limit: int,
+        ):
+            calls.append((dataflow_id, key, series_id, tuple(as_of_dates), limit))
+            payload = {
+                "dataflow_id": dataflow_id,
+                "key": key,
+                "series_id": series_id,
+                "version": version,
+                "responses": [],
+            }
+            params = {"series_id": series_id, "asOfDates": list(as_of_dates)}
+            return [
+                IMFVintageObservation(series_id, "2026-01-01", as_of_dates[0], 1.0, dataflow_id)
+            ], payload, params
+
+    orchestrator = _bare_orchestrator()
+    orchestrator.imf = SimpleNamespace(client=FakeIMFClient())
+
+    definition = orchestrator._build_imf_vintages_source()
+    rows = definition.fetch()
+
+    expected_series_ids = {
+        IMF_SERIES[series_key]["series_id"]
+        for series_key in IMF_VINTAGE_SERIES
+    }
+    assert definition.execute is None
+    assert {row.source for row in rows} == {"imf_vintages"}
+    assert {row.storage_source for row in rows} == {"imf"}
+    assert {row.vintage_quality for row in rows} == {"synthetic_snapshot"}
+    assert {row.series_id for row in rows} == expected_series_ids
+    assert {limit for *_prefix, limit in calls} == {30}
+    assert {len(as_of_dates) for *_prefix, as_of_dates, _limit in calls} == {12}
+
+
+def test_issue_131_imf_vintages_preserves_partial_failures() -> None:
+    failed_key = IMF_VINTAGE_SERIES[1]
+    calls: list[str] = []
+
+    class FakeIMFClient:
+        def get_vintages_with_raw(
+            self,
+            dataflow_id: str,
+            key: str,
+            *,
+            series_id: str,
+            version: str,
+            as_of_dates,
+            limit: int,
+        ):
+            calls.append(series_id)
+            if series_id == IMF_SERIES[failed_key]["series_id"]:
+                raise RuntimeError("imf outage")
+            payload = {
+                "dataflow_id": dataflow_id,
+                "key": key,
+                "series_id": series_id,
+                "version": version,
+                "responses": [],
+            }
+            params = {"series_id": series_id, "asOfDates": list(as_of_dates)}
+            return [
+                IMFVintageObservation(series_id, "2026-01-01", as_of_dates[0], 1.0, dataflow_id)
+            ], payload, params
+
+    orchestrator = _bare_orchestrator()
+    orchestrator.imf = SimpleNamespace(client=FakeIMFClient())
+
+    definition = orchestrator._build_imf_vintages_source()
+    rows = definition.fetch()
+
+    expected_series_ids = [
+        IMF_SERIES[series_key]["series_id"]
+        for series_key in IMF_VINTAGE_SERIES
+    ]
+    assert calls == expected_series_ids
+    assert {row.series_id for row in rows} == set(expected_series_ids) - {IMF_SERIES[failed_key]["series_id"]}

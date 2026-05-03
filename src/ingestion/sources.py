@@ -965,15 +965,11 @@ class IngestionOrchestrator:
         )
 
     def _build_imf_vintages_source(self) -> IngestionSourceDefinition:
-        # Vintages use a specialised refresh path — keep the legacy client
-        return IngestionSourceDefinition(
-            name="imf_vintages",
-            interval_seconds=86_400,
-            prepare=self._ensure_obs_seed,
-            execute=lambda: self.imf.refresh_vintages(
-                self.store,
-                family_lookup=self._family_lookup or None,
-            ).count,
+        from ingestion.fetchers._vintages import IMFVintageFetcher
+
+        return self._build_vintage_fetcher_source(
+            "imf_vintages",
+            IMFVintageFetcher(client=self.imf.client),
         )
 
     def _build_eurostat_source(self) -> IngestionSourceDefinition:

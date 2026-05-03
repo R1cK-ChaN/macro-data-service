@@ -90,6 +90,38 @@ def fred_vintages_content_hash(payload: dict[str, Any]) -> str:
     return _hash_canonical(canonicalize_fred_vintages_payload(payload))
 
 
+def canonicalize_imf_vintages_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize the aggregate IMF SDMX ``asOf`` vintage payload."""
+    responses = payload.get("responses") or []
+    cleaned_responses = []
+    for item in responses:
+        if not isinstance(item, dict):
+            continue
+        response_payload = item.get("payload")
+        if not isinstance(response_payload, dict):
+            response_payload = {}
+        cleaned_responses.append({
+            "asOf": item.get("asOf"),
+            "payload": json.loads(canonicalize_sdmx_payload(response_payload)),
+        })
+    cleaned_responses.sort(key=lambda row: row.get("asOf") or "")
+    return json.dumps(
+        {
+            "dataflow_id": payload.get("dataflow_id"),
+            "key": payload.get("key"),
+            "series_id": payload.get("series_id"),
+            "version": payload.get("version"),
+            "responses": cleaned_responses,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def imf_vintages_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_imf_vintages_payload(payload))
+
+
 # ── BLS ───────────────────────────────────────────────────────────────────
 
 # BLS wraps everything in ``status`` / ``responseTime`` / ``message`` plus
@@ -562,6 +594,7 @@ _HASH_BY_SOURCE = {
     "redbook": redbook_content_hash,
     "sentix": sentix_content_hash,
     "fred_vintages": fred_vintages_content_hash,
+    "imf_vintages": imf_vintages_content_hash,
 }
 
 

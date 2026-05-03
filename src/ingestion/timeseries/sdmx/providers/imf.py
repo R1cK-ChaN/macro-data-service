@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Sequence
 
 from .._base_client import SDMXClient
 from .._config import IMF_CONFIG
 from .._errors import IMFAPIError, IMFRateLimitError
+from .._json_parser import parse_sdmx_json_observations
 from .._parsing import normalize_date
 from .._types import SDMXObservation
 
@@ -24,6 +25,40 @@ class IMFVintageObservation:
     dataflow: str = ""
 
 
+def _normalize_imf_date(raw: str) -> str:
+    m = re.match(r"^(\d{4})-M(\d{2})$", raw)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-01"
+    return normalize_date(raw)
+
+
+def _parse_imf_vintage_payload(
+    payload: dict[str, Any],
+    *,
+    series_id: str,
+    dataflow: str,
+    vintage_date: str,
+    limit: int,
+) -> list[IMFVintageObservation]:
+    observations = parse_sdmx_json_observations(
+        payload,
+        series_id=series_id,
+        dataflow=dataflow,
+        limit=limit,
+        normalize_date_fn=_normalize_imf_date,
+    )
+    return [
+        IMFVintageObservation(
+            series_id=obs.series_id,
+            date=obs.date,
+            vintage_date=vintage_date,
+            value=obs.value,
+            dataflow=obs.dataflow,
+        )
+        for obs in observations
+    ]
+
+
 class IMFClient(SDMXClient):
     """Client for the IMF SDMX 3.0 API (requires API key)."""
 
@@ -35,11 +70,7 @@ class IMFClient(SDMXClient):
         )
 
     def _normalize_date(self, raw: str) -> str:
-        # IMF adds 2025-M09 monthly format
-        m = re.match(r"^(\d{4})-M(\d{2})$", raw)
-        if m:
-            return f"{m.group(1)}-{m.group(2)}-01"
-        return super()._normalize_date(raw)
+        return _normalize_imf_date(raw)
 
     def _build_dataflow_list_url(self):
         return f"{self.config.base_url}/structure/dataflow/{self.config.default_agency}"
@@ -119,12 +150,34 @@ class IMFClient(SDMXClient):
         limit: int = 1,
     ) -> list[IMFVintageObservation]:
         """Fetch point-in-time vintage data using the SDMX 3.0 ``asOf`` parameter."""
+        vintages, _payload, _params = self.get_vintages_with_raw(
+            dataflow_id,
+            key,
+            series_id=series_id,
+            version=version,
+            as_of_dates=as_of_dates,
+            limit=limit,
+        )
+        return vintages
+
+    def get_vintages_with_raw(
+        self,
+        dataflow_id: str,
+        key: str,
+        *,
+        series_id: str,
+        version: str = "",
+        as_of_dates: Sequence[str] = (),
+        limit: int = 1,
+    ) -> tuple[list[IMFVintageObservation], dict[str, Any], dict[str, Any]]:
+        """Fetch IMF point-in-time vintages plus raw SDMX responses."""
         if not version:
             flows = self.list_dataflows()
             match = next((f for f in flows if f.id == dataflow_id), None)
             version = match.version if match else "1.0"
 
         vintages: list[IMFVintageObservation] = []
+        responses: list[dict[str, Any]] = []
         for as_of in as_of_dates:
             url = (
                 f"{self.config.base_url}/data/dataflow/"
@@ -141,18 +194,37 @@ class IMFClient(SDMXClient):
 
             try:
                 response = self._get(url, params)
-                obs = self._parse_data_response(
-                    response, series_id=series_id, dataflow=dataflow_id, limit=limit,
+                payload = self._response_json(
+                    response, context=f"{dataflow_id}/{series_id}",
                 )
-                for o in obs:
-                    vintages.append(IMFVintageObservation(
-                        series_id=o.series_id,
-                        date=o.date,
-                        vintage_date=as_of,
-                        value=o.value,
-                        dataflow=o.dataflow,
-                    ))
+                vintages.extend(_parse_imf_vintage_payload(
+                    payload,
+                    series_id=series_id,
+                    dataflow=dataflow_id,
+                    vintage_date=as_of,
+                    limit=limit,
+                ))
+                responses.append({
+                    "asOf": as_of,
+                    "params": dict(params),
+                    "payload": payload,
+                })
             except (IMFAPIError, IMFRateLimitError):
                 continue
 
-        return vintages
+        raw_payload = {
+            "dataflow_id": dataflow_id,
+            "key": key,
+            "series_id": series_id,
+            "version": version,
+            "responses": responses,
+        }
+        record_params: dict[str, Any] = {
+            "dataflow_id": dataflow_id,
+            "key": key,
+            "series_id": series_id,
+            "version": version,
+            "asOfDates": list(as_of_dates),
+            "limit": limit,
+        }
+        return vintages, raw_payload, record_params
