@@ -543,7 +543,6 @@ class SourceCapabilityManager:
         from ingestion.news_feeds import get_feeds
         from ingestion.scrapers.eia import EIAClient
         from ingestion.scrapers.treasury_fiscal import TreasuryFiscalClient
-        from ingestion.trends.clients._trends import _REDDIT_TREND_SOURCES
 
         adapters: dict[str, SourceCapabilityAdapter] = {}
 
@@ -663,20 +662,6 @@ class SourceCapabilityManager:
                 ]
                 return _limit_items(entities, query, limit)
             return _inner
-
-        def _reddit_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
-            entities = [
-                _entity(
-                    "reddit_trends",
-                    cfg.subreddit,
-                    "subreddit",
-                    cfg.subreddit,
-                    description=cfg.category,
-                    metadata={"category": cfg.category, "region": cfg.region},
-                )
-                for cfg in _REDDIT_TREND_SOURCES
-            ]
-            return _limit_items(entities, query, limit)
 
         def _gov_report_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
             entities: list[dict[str, Any]] = []
@@ -1033,10 +1018,6 @@ class SourceCapabilityManager:
             ]
             return _limit_items(entities, query, limit)
 
-        def _weibo_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
-            items = [("weibo_hot_topics", "Weibo Hot Topics", {})]
-            return _simple_entities("weibo_trends", "provider", items)(query, limit)
-
         def _rate_probability_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
             items = [("fed_funds_probabilities", "Fed Funds Probabilities", {})]
             return _simple_entities("rate_probability", "curve", items)(query, limit)
@@ -1190,26 +1171,6 @@ class SourceCapabilityManager:
             is_default_scheduled=True,
             discover=_news_entities,
             sync_latest=_news_sync_latest,
-        )
-        adapters["reddit_trends"] = SourceCapabilityAdapter(
-            source_id="reddit_trends",
-            display_name="Reddit Trends",
-            source_type="fixed-scope-complete",
-            entity_type="subreddit",
-            description="Configured Reddit trend source scopes",
-            is_default_scheduled=True,
-            discover=_reddit_entities,
-            sync_latest=lambda entity_ids, limit: _run_job("reddit_trends"),
-        )
-        adapters["weibo_trends"] = SourceCapabilityAdapter(
-            source_id="weibo_trends",
-            display_name="Weibo Trends",
-            source_type="fixed-scope-complete",
-            entity_type="provider",
-            description="Weibo trend provider scope",
-            is_default_scheduled=True,
-            discover=_weibo_entities,
-            sync_latest=lambda entity_ids, limit: _run_job("weibo_trends"),
         )
         adapters["rate_probability"] = SourceCapabilityAdapter(
             source_id="rate_probability",

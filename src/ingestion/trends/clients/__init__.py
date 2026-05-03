@@ -1,1 +1,0 @@
-"""Trend ingestion clients."""

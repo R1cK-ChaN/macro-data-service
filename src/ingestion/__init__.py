@@ -5,8 +5,6 @@ from .sources import (
     IngestionSourceDefinition,
     IngestionOrchestrator,
     NewsIngestionClient,
-    RedditTrendIngestionClient,
-    WeiboTrendIngestionClient,
 )
 
 __all__ = [
@@ -16,6 +14,4 @@ __all__ = [
     "IngestionSourceDefinition",
     "IngestionOrchestrator",
     "NewsIngestionClient",
-    "RedditTrendIngestionClient",
-    "WeiboTrendIngestionClient",
 ]

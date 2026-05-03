@@ -610,12 +610,10 @@ def test_list_items_family_filter_without_subject_is_enforced_in_sql(
         assert item["family"] == "note"
 
 
-def test_list_items_trend_family_does_not_leak_documents(
+def test_list_items_unknown_family_does_not_leak_documents(
     tmp_path: Path,
 ) -> None:
-    """``trend`` rows live in ``trend_topics`` — list_items does not
-    project them yet, so a trend-family request must not return
-    documents tagged under a different family."""
+    """Unknown families keep the document branch isolated."""
     from datetime import datetime, timezone
     store = SQLiteEngineStore(db_path=tmp_path / "engine.db")
     sync_from_yaml(store)
@@ -636,7 +634,7 @@ def test_list_items_trend_family_does_not_leak_documents(
         )
     )
     svc = LocalMacroDataService(store=store)
-    resp = svc.invoke("list_items", {"family": "trend"})
+    resp = svc.invoke("list_items", {"family": "retired_social"})
     assert resp["items"] == []
 
 

@@ -1692,8 +1692,6 @@ class _IndicatorQueriesMixin:
             ),
             "news": ("news_articles", "source_feed NOT LIKE 'gov_%'", tuple(), "scraped_at"),
             "gov_reports": ("document", "1 = 1", tuple(), "updated_at"),
-            "reddit_trends": ("trend_topics", "provider = ?", ("reddit",), "scraped_at"),
-            "weibo_trends": ("trend_topics", "provider = ?", ("weibo",), "scraped_at"),
         }
         table, where_clause, params, ts_col = mapping.get(
             source_id,

@@ -60,7 +60,6 @@ from storage.models import (
     ReleaseStatusRecord,
     ResolvedObservation,
     StoredEventRecord,
-    TrendTopicRecord,
     XPostRecord,
 )
 from storage.queries.calendar import (

@@ -478,47 +478,15 @@ def apply_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_fp_title ON article_fingerprint(title_hash)"
     )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS trend_topics (
-            trend_id TEXT PRIMARY KEY,
-            provider TEXT NOT NULL,
-            provider_topic_id TEXT NOT NULL,
-            title_raw TEXT NOT NULL,
-            topic TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            keywords_json TEXT NOT NULL DEFAULT '[]',
-            category TEXT NOT NULL,
-            region TEXT NOT NULL,
-            popularity_score REAL NOT NULL,
-            provider_rank INTEGER NOT NULL DEFAULT 0,
-            engagement_score REAL NOT NULL DEFAULT 0,
-            comment_count INTEGER NOT NULL DEFAULT 0,
-            observed_at INTEGER NOT NULL,
-            expires_at INTEGER NOT NULL,
-            raw_json TEXT NOT NULL DEFAULT '{}',
-            normalized_topic_hash TEXT NOT NULL,
-            scraped_at TEXT NOT NULL,
-            UNIQUE(provider, provider_topic_id)
-        )
-        """
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_trend_topics_active "
-        "ON trend_topics(expires_at, observed_at)"
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_trend_topics_scope "
-        "ON trend_topics(category, region)"
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_trend_topics_popularity "
-        "ON trend_topics(popularity_score DESC, observed_at DESC)"
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_trend_topics_normalized "
-        "ON trend_topics(normalized_topic_hash)"
-    )
+    # -- issue #124: retire reddit/weibo trend storage ---------------
+    for legacy_index in (
+        "idx_trend_topics_active",
+        "idx_trend_topics_scope",
+        "idx_trend_topics_popularity",
+        "idx_trend_topics_normalized",
+    ):
+        connection.execute(f"DROP INDEX IF EXISTS {legacy_index}")
+    connection.execute("DROP TABLE IF EXISTS trend_topics")
     # -- issue #113 P0+P4: drop legacy downstream-shaped tables ------
     # Trading / analytical / messaging / portfolio / subagent_runs were
     # scaffolded for downstream services that never landed. Tables verified
@@ -1026,6 +994,17 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_catalog_sync_run_source "
         "ON catalog_sync_run(source_id, job_type, started_at DESC)"
     )
+    for retired_source in ("reddit_trends", "weibo_trends"):
+        for table_name in (
+            "catalog_sync_run",
+            "catalog_sync_checkpoint",
+            "catalog_entity",
+            "source_capability",
+        ):
+            connection.execute(
+                f"DELETE FROM {table_name} WHERE source_id = ?",
+                (retired_source,),
+            )
 
     # ── Calendar indicator normalization tables ───────────────
     connection.execute(

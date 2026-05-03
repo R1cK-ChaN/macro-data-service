@@ -645,7 +645,7 @@ storage/models/
                     FundamentalsFinancialsRecord,
                     FundamentalsHighlightsRecord,
                     FundamentalsEstimatesRecord (issue #68 slice 1).
-  news.py         — NewsArticleRecord, TrendTopicRecord.
+  news.py         — NewsArticleRecord.
   sentiment.py    — XPostRecord (issue #76).
 ```
 
@@ -713,8 +713,8 @@ storage/queries/
                     `SQLiteEngineStore`. Market reads/writes now route
                     through `storage/clickhouse/store.py`'s
                     `ClickHouseMarketStore`.
-  news.py         — news_articles + trend_topics + article_fingerprint +
-                    news_context scoring (with the impact-decay constants).
+  news.py         — news_articles + article_fingerprint + news_context
+                    scoring (with the impact-decay constants).
   sentiment.py    — x_tracked_accounts, x_keyword_pool, x_posts,
                     x_post_keywords, x_post_event_links (issue #76).
 ```

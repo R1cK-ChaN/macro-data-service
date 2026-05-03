@@ -44,7 +44,6 @@ from .sqlite import (
     ObsSourceRecord,
     SQLiteEngineStore,
     StoredEventRecord,
-    TrendTopicRecord,
     XPostRecord,
     default_engine_db_path,
 )
@@ -83,7 +82,6 @@ __all__ = [
     "ResolvedObservation",
     "SQLiteEngineStore",
     "StoredEventRecord",
-    "TrendTopicRecord",
     "XPostRecord",
     "default_engine_db_path",
 ]

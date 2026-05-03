@@ -9,7 +9,6 @@
 > | Time-series | `timeseries/scrapers/` | fred, bls, eia, treasury, nyfed, rateprobability, worldbank, bea, census |
 > | News | `news/scrapers/` | reuters, ft, wsj, bloomberg |
 > | Documents | `documents/scrapers/` | gov_report |
-> | Trends | `trends/scrapers/` | reddit, weibo |
 > | Calendar | `calendar/*_api/`, `calendar/te_api/`, `calendar/eodhd_api/` | official APIs, TE API projector, EODHD corporate calendar |
 >
 > Shared utilities live in `_shared/` (http_transport, url_canon, common types,

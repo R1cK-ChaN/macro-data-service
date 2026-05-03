@@ -23,7 +23,7 @@ service/
   _timeseries.py — 23 ops for indicators, catalog, concepts,
                    release-schedule, release-status
   _documents.py  — 4 ops: list_items, get_document, subjects, backfill
-  _news.py       — 7 ops: recent, search, trends, live, article fetch
+  _news.py       — 5 ops: recent, search, live, article fetch
   _market.py     — 2 ops: snapshot, live_markets
   _ops_health.py — 8 ops: refresh_all, run_schedule, source listing,
                    health, alerts
@@ -43,7 +43,7 @@ the one matching method regardless.
    - Touches `obs_*` / `concept_*` / `release_schedule*` /
      `indicator_*` → `_timeseries.py`.
    - Touches `document` / `doc_*` / subjects / backfill → `_documents.py`.
-   - Touches `news_*` / trends / article fetch → `_news.py`.
+   - Touches `news_*` / article fetch → `_news.py`.
    - Touches `market_prices` / live market quotes → `_market.py`.
    - Cross-cutting refresh / scheduler / health / alerts →
      `_ops_health.py`.
