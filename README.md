@@ -202,6 +202,7 @@ Three alert types:
 macro-data-service validate                           # full validation suite
 macro-data-service validate-concept CPI_US            # single concept
 macro-data-service validate-concept --all             # all concepts
+macro-data-service launch-gate --json                 # production data-quality gate
 ```
 
 ### Catalog exploration (OECD / World Bank)
