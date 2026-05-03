@@ -46,6 +46,39 @@ def _normalize_date(raw: str) -> str:
     return raw
 
 
+def _parse_worldbank_indicator_payload(
+    payload: dict,
+    *,
+    series_id: str,
+    indicator: str,
+    limit: int | None = None,
+) -> list["WorldBankObservation"]:
+    """Module-level helper around ``WorldBankClient._parse_observation_records``.
+
+    Lets the issue #116 P3 replay path call the parser without
+    instantiating the client (mirrors the ``_parse_fred_observations``
+    pattern). Reads the wrapped envelope landed by
+    ``get_indicator_with_raw`` (``payload['response'] = [meta, [records]]``);
+    parses every record and applies an optional ``limit`` only if the
+    caller specifies one.
+
+    Uses the record-list parser rather than ``_parse_json`` so paginated
+    payloads (``fetch_all_pages=True`` landed >50 rows) replay
+    completely — ``_parse_json``'s built-in ``limit=50`` default would
+    truncate.
+    """
+    response = payload.get("response", [])
+    if not isinstance(response, list) or len(response) < 2:
+        return []
+    records = response[1] if isinstance(response[1], list) else []
+    observations = WorldBankClient._parse_observation_records(
+        records, series_id=series_id, indicator=indicator,
+    )
+    if limit is None:
+        return observations
+    return observations[:limit]
+
+
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------

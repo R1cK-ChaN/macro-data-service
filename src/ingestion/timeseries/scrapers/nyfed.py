@@ -150,27 +150,65 @@ class NYFedRatesClient:
         return observations, data, params
 
     def _parse_rates(self, data: dict, rate_type: str) -> list[NYFedRate]:
-        rates: list[NYFedRate] = []
-        for obs in data.get("refRates", []):
-            try:
-                volume_raw = obs.get("volumeInBillions")
-                volume = float(volume_raw) if volume_raw is not None else None
+        return _parse_nyfed_rates_payload(data, rate_type=rate_type)
 
-                rates.append(NYFedRate(
-                    date=obs.get("effectiveDate", ""),
-                    type=rate_type,
-                    rate=float(obs.get("percentRate", 0)),
-                    percentile_1=_float_or_none(obs.get("percentPercentile1")),
-                    percentile_25=_float_or_none(obs.get("percentPercentile25")),
-                    percentile_75=_float_or_none(obs.get("percentPercentile75")),
-                    percentile_99=_float_or_none(obs.get("percentPercentile99")),
-                    volume_billions=volume,
-                    target_rate_from=_float_or_none(obs.get("targetRateFrom")),
-                    target_rate_to=_float_or_none(obs.get("targetRateTo")),
-                ))
-            except (ValueError, TypeError):
-                continue
-        return rates
+
+def _parse_nyfed_rates_payload(payload: dict, *, rate_type: str) -> list[NYFedRate]:
+    """Parse a NY Fed reference-rate JSON envelope into typed observations.
+
+    Module-level so the issue #116 P3 replay path can re-project a stored
+    ``obs_raw`` row through the same parser the live HTTP path uses —
+    no behavior drift between live ingest and audit replay. The
+    ``refRates`` shape is identical across SOFR / EFFR / OBFR endpoints;
+    the caller passes ``rate_type`` so the parsed ``NYFedRate.type``
+    field reflects the originating endpoint.
+    """
+    rates: list[NYFedRate] = []
+    for obs in payload.get("refRates", []):
+        try:
+            volume_raw = obs.get("volumeInBillions")
+            volume = float(volume_raw) if volume_raw is not None else None
+
+            rates.append(NYFedRate(
+                date=obs.get("effectiveDate", ""),
+                type=rate_type,
+                rate=float(obs.get("percentRate", 0)),
+                percentile_1=_float_or_none(obs.get("percentPercentile1")),
+                percentile_25=_float_or_none(obs.get("percentPercentile25")),
+                percentile_75=_float_or_none(obs.get("percentPercentile75")),
+                percentile_99=_float_or_none(obs.get("percentPercentile99")),
+                volume_billions=volume,
+                target_rate_from=_float_or_none(obs.get("targetRateFrom")),
+                target_rate_to=_float_or_none(obs.get("targetRateTo")),
+            ))
+        except (ValueError, TypeError):
+            continue
+    return rates
+
+
+def _parse_nyfed_gscpi_payload(payload: dict) -> list[NYFedGSCPI]:
+    """Parse a NY Fed GSCPI tagged payload back into typed observations.
+
+    The upstream is a binary workbook (XLSX/BIFF8) that ``parse_gscpi_workbook``
+    already projects into ``NYFedGSCPI`` rows; the fetcher then re-encodes
+    those rows under ``payload['observations']`` for ``obs_raw`` storage
+    (the binary bytes can't be JSON-encoded). The replay path reads back
+    that observation list — round-trip is from typed-rows → JSON → typed-rows.
+    """
+    observations = payload.get("observations", [])
+    rows: list[NYFedGSCPI] = []
+    for row in observations:
+        if not isinstance(row, dict):
+            continue
+        try:
+            date = row.get("date", "")
+            value = float(row.get("value"))
+        except (TypeError, ValueError):
+            continue
+        if not date:
+            continue
+        rows.append(NYFedGSCPI(date=date, value=value))
+    return sorted(rows, key=lambda item: item.date)
 
 
 def parse_gscpi_workbook(payload: bytes) -> list[NYFedGSCPI]:

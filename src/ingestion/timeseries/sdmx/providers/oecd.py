@@ -60,6 +60,29 @@ def _normalize_date(raw: str) -> str:
     return raw
 
 
+def _parse_oecd_observations(
+    payload: dict,
+    *,
+    series_id: str | None,
+    dataflow: str,
+    dataset: str | None = None,
+    agency_id: str = "",
+    limit: int | None = 100,
+) -> list["OECDObservation"]:
+    """Module-level wrapper around ``OECDClient._parse_json``.
+
+    Lets the issue #116 P3 replay path call the parser without
+    instantiating the client (mirrors the ``_parse_fred_observations``
+    pattern). The classmethod stays the source of truth — this is just
+    a friendlier import surface.
+    """
+    return OECDClient._parse_json(
+        payload,
+        series_id=series_id, dataflow=dataflow, dataset=dataset,
+        agency_id=agency_id, limit=limit,
+    )
+
+
 def _build_decade_chunks(start_year: int, end_year: int) -> list[tuple[str, str]]:
     """Split a year range into decade-sized chunks for OECD time-range queries."""
     chunks: list[tuple[str, str]] = []
