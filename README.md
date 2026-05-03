@@ -2,6 +2,8 @@
 
 Institutional-grade macro-data ingestion, resolution, and observability platform. Ingests 86 economic concepts from 11 core sources, supports a 25-source capability registry, and includes release-calendar-aware scheduling, availability verification, cross-source fallback, and a ClickHouse-backed EODHD market-data layer for US active plus delisted instruments.
 
+**Last updated:** 2026-05-03 (issue #122 README sweep: post-#113 cleanup, #114 vintage view, #116 bronze replay, #118 ClickHouse market store.)
+
 ## Architecture
 
 ```text
@@ -32,7 +34,19 @@ EODHD         (US symbols, EOD, corp actions)    EODHDClient             ClickHo
                      │  discovery / latest-sync / status       │
                      └─────────────────────────────────────────┘
                      ┌─────────────────────────────────────────┐
-                     │ Market-Data Layer (issue #119)          │
+                     │ Vintage + PIT Layer                     │
+                     │  indicator_vintages canonical store     │
+                     │  indicators SQL view over latest rows    │
+                     │  as_of reads in resolve/history          │
+                     └─────────────────────────────────────────┘
+                     ┌─────────────────────────────────────────┐
+                     │ Bronze Replay Layer                     │
+                     │  obs_raw + cal_*_raw + fundamentals_raw  │
+                     │  raw payload → canonical silver rows     │
+                     │  per-source replay round trips           │
+                     └─────────────────────────────────────────┘
+                     ┌─────────────────────────────────────────┐
+                     │ Market-Data Layer (#118/#119)           │
                      │  EODHD US active + delisted universe    │
                      │  ClickHouse bars_1d/dividends/splits    │
                      │  Daily bulk refresh + DELETE/refetch    │
@@ -59,9 +73,11 @@ src/
       scrapers/       gov_report.py
       clients/        GovReportIngestionClient, FedIngestionClient
       _config.py      FED_FEEDS, FED_SPEAKERS
-    trends/           Reddit, Weibo social trend tracking
-      scrapers/       reddit.py, weibo.py
-      clients/        RedditTrendIngestionClient, WeiboTrendIngestionClient
+    trends/           Reddit + Weibo social trend tracking
+      scrapers/       reddit.py, weibo.py upstream readers
+      clients/        _trends.py ingestion clients
+    sentiment/        X (Twitter) sentiment lane
+      x_api/          X API client, scrapers, discovery
     market/           EODHD US universe, EOD bars, corporate actions
       scrapers/       Provider HTTP clients
         _eodhd.py        EODHDClient — symbol lists, EOD, bulk, realtime
@@ -74,8 +90,19 @@ src/
       _quality.py          Provider-neutral bar checks
       _macro_map.py        13-entry rates/FX/commodity mapping
       _config.py           MACRO_WATCHLIST (real-time watchlist)
-    calendar/         Economic event calendars
-      scrapers/       ForexFactory, Investing, TradingEconomics
+    calendar/         Economic + corporate calendars
+      *_api/          Source-owned packages (abs_api, banxico_api, bcb_api,
+                      bls_api, boc_api, boe_api, boj_api, ecb_api, ...)
+      te_api/         TradingEconomics historical bootstrap + updates
+      eodhd_api/      EODHD earnings, IPOs, splits, dividends
+      scrapers/       Auxiliary legacy HTML scrapers:
+                      forexfactory.py, investing.py, tradingeconomics.py
+      scheduler.py    Recurring schedule/value refresh driver
+      agency_registry.py  Agency attribution map for parity filings
+      parity.py       TE-vs-official parity harness
+      parity_daily.py Daily parity comparator
+      parity_filer.py Parity issue filer
+      evidence_archive.py  Wayback evidence archive helper
     _shared/          Cross-cutting: http_transport, url_canon, selector versioning
     validation/       Data quality checks, cross-source consistency
     sources.py        IngestionOrchestrator — scheduling, retry, health
@@ -85,9 +112,9 @@ src/
     clients/          Facade — backward-compatible re-exports
     fetchers/         Facade — backward-compatible re-exports
     sdmx/             Facade — backward-compatible re-exports
-  storage/            SQLite schema, CRUD, concept map, release tracking
+  storage/            SQLite macro schema/query mixins + ClickHouse market backend
+    clickhouse/       market.bars_1d/dividends/splits/instruments store
   macro_data/         CLI, HTTP server, service layer, factory
-  rag/                Local RAG index and retrieval
   contracts.py        Date normalization, epoch utilities
 ```
 
@@ -129,6 +156,7 @@ PYTHONPATH=src python3 scripts/market_daily_refresh.py --date 2026-05-01
 macro-data-service resolve CPI_US                     # latest resolved value
 macro-data-service resolve CPI_US --date 2024-01-01   # specific date
 macro-data-service resolve CPI_US --history --limit 12  # resolved time series
+macro-data-service resolve CPI_US --as-of 2024-03-01  # point-in-time vintage view
 macro-data-service resolve CPI_US --json              # JSON with provenance
 ```
 
@@ -217,6 +245,14 @@ Operational notes:
 - `eia` prefers live EIA data, then recent local cache, then selected FRED fallback series. Timeout is configurable via `EIA_TIMEOUT` env var (default 60s). Failed series degrade gracefully instead of crashing the batch.
 - `fred_nondaily` source refreshes weekly/monthly/quarterly FRED series (ICSA, CCSA, WALCL, PCEPILFE, INDPRO, RSAFS, M2SL, GDP, GDPC1) every 6h, complementing `fred_daily` which handles daily series only.
 
+## Revision and replay layers
+
+`indicator_vintages` is the canonical macro time-series write target. `indicators` is a SQL view over the latest vintage per `(source, series_id, observation_date)`, and `resolve_indicator` / `resolve_indicator_history` accept `as_of=YYYY-MM-DD` to reconstruct point-in-time projections from vintages.
+
+Routine time-series fetchers follow a bronze-to-silver dual-write contract: raw HTTP payloads land in `obs_raw` before normalization writes parsed observations to `indicator_vintages`. Canonicalizers in `ingestion/timeseries/canonicalize.py` hash stable observation content, while per-source `_parse_*` replay helpers re-project stored payloads through the same parsers used by live fetches.
+
+Calendar and fundamentals use the same replay shape. `cal_econ_raw`, `cal_corp_raw`, and `fundamentals_raw` preserve provider payloads; `cal_econ_event`, `cal_corp_event`, and `fundamentals_*` tables expose parsed projections.
+
 ## HTTP API
 
 - `GET /health`      customer-facing source health matrix
@@ -227,8 +263,8 @@ Key operations:
 
 | Operation | Description |
 |---|---|
-| `resolve_indicator` | Highest-priority observation for a concept |
-| `resolve_indicator_history` | Resolved time series with best source per date |
+| `resolve_indicator` | Highest-priority observation for a concept; accepts `as_of` for PIT vintage reads |
+| `resolve_indicator_history` | Resolved time series with best source per date; accepts `as_of` |
 | `get_release_schedule` | Release calendar for all/single concept |
 | `get_release_status` | Availability tracking status |
 | `get_health` | Per-source health dashboard |
@@ -263,9 +299,9 @@ one API. The schema additions live in `src/storage/sqlite.py`:
   IDs (`econ.cpi`, `rate.us.sofr`, …) and the aliases that map
   source-native identifiers (FRED series, calendar indicators, title
   regex) back to them. Seeded from `src/storage/subjects.yaml`.
-- `document` extended with 11 LLM-extraction columns (`institution`,
+- `document` carries the 17-field information surface (`institution`,
   `authors`, `asset_class`, `impact_level`, `contains_commentary`,
-  `confidence`, …) plus a `documents_fts` FTS5 virtual table.
+  `confidence`, …), with full-text search in `documents_fts`.
 - `obs_enrichment` sidecar — derived labels keyed by `(obs_family_id,
   date, key)`. Currently used for VIX regime classification.
 
@@ -273,7 +309,8 @@ Ingestion paths:
 
 - `news` — `NewsIngestionClient` mirrors each article into `document`
   (document_type='report', source_id='news') + documents_fts +
-  item_subjects, alongside the legacy `news_articles` row.
+  item_subjects, alongside the legacy `news_articles` row. News rows
+  carry scraper-supplied metadata.
 - `gov_reports` — `GovReportIngestionClient` merges scraper metadata
   with optional LLM extraction into the 17-field document surface.
 - `notes` — `python -m ingestion.notes.ingest --input <dir>` parses
@@ -284,11 +321,11 @@ Ingestion paths:
 - `VIX_US` — FRED `VIXCLS` close; `refresh_vix_regime` writes a
   low/elevated/stressed label into `obs_enrichment` per date.
 
-Optional LLM enrichment of `institution`, `asset_class`, `impact_level`
-and the rest of the 17-field surface is controlled by
+Optional gov-report LLM enrichment of `institution`, `asset_class`,
+`impact_level`, and the rest of the 17-field surface is controlled by
 `DOCUMENT_EXTRACT_API_KEY` (or `OPENAI_API_KEY`) plus
 `DOCUMENT_EXTRACT_MODEL` / `DOCUMENT_EXTRACT_BASE_URL`. Unset → ingestion
-falls back to scraper-supplied metadata without LLM calls.
+uses scraper-supplied metadata.
 
 ### Source families (issue #5)
 
@@ -317,11 +354,13 @@ discriminator; an optional `family` filter narrows the result.
 
 ## Market-data layer
 
-The market lane uses ClickHouse tables under the `market` database:
-`bars_1d`, `dividends`, `splits`, and `instruments`. EODHD is the
-provider. Universe seeding discovers US active symbols and active plus
-delisted symbols from `/api/exchange-symbol-list/US`; `is_active` is
-derived from set membership.
+The market lane uses `src/storage/clickhouse/` and ClickHouse tables
+under the `market` database: `bars_1d`, `dividends`, `splits`, and
+`instruments`. EODHD is the provider. Universe seeding discovers US
+active symbols and active plus delisted symbols from
+`/api/exchange-symbol-list/US`; `is_active` is derived from set
+membership. SQLite stays the macro store for calendar, indicators,
+documents, news, and fundamentals.
 
 Historical backfill uses per-ticker `/api/eod/{T}.US`,
 `/api/div/{T}.US`, and `/api/splits/{T}.US` with the resumable cursor
@@ -343,6 +382,10 @@ Operational entrypoints:
 
 The market maintenance scripts check stale active tickers, delisting
 set membership, and sampled realtime close drift.
+
+Local ClickHouse storage is booted by `docker-compose.yml` and persists
+under `.macro-data/clickhouse/{data,tmp,user_files,logs}`.
+The `get_market_history` service op reads daily bars from this ClickHouse lane.
 
 ## Data model
 
@@ -418,8 +461,7 @@ SQLite path: `.macro-data/engine.db`
 | `IMF_API_KEY` | IMF SDMX | yes for IMF |
 | `EODHD_API_KEY` | EODHD market universe, EOD bars, corp actions, fundamentals | yes for market/fundamentals |
 | `OPENFIGI_API_KEY` | historical identity-repair prototype | optional (anonymous tier works) |
-| `LLM_API_KEY` / `OPENROUTER_API_KEY` | News LLM extraction (`ingestion.news._extract`, loaded via `get_env_value` → process env **or** `.env`) | optional; unset → keyword-based metadata |
-| `DOCUMENT_EXTRACT_API_KEY` / `OPENAI_API_KEY` | Gov-report + notes 17-field LLM extraction (`make_extractor_from_env`, **reads `os.environ` only — not `.env`**) | optional; unset → scraper metadata only |
+| `DOCUMENT_EXTRACT_API_KEY` / `OPENAI_API_KEY` | Gov-report 17-field LLM extraction (`make_extractor_from_env`, **reads `os.environ` only — not `.env`**) | optional; unset → scraper metadata |
 | `DOCUMENT_EXTRACT_MODEL`, `DOCUMENT_EXTRACT_BASE_URL`, `DOCUMENT_EXTRACT_CONTEXT_CHARS` | Model / endpoint / chunk-size overrides for the gov-report extractor (same process-env-only loading) | optional |
 
 ## Agent wiring
