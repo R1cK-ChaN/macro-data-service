@@ -144,7 +144,8 @@ class TimeseriesOpsMixin(LocalMacroDataServiceBase):
         concept_id = (arguments.get("concept_id") or "").strip()
         if not concept_id:
             return {"error": "concept_id is required"}
-        self._store.seed_concept_map()
+        if not self._store_is_read_only():
+            self._store.seed_concept_map()
         date = (arguments.get("date") or "").strip() or None
         as_of = (arguments.get("as_of") or "").strip() or None
         obs = self._store.resolve_indicator(concept_id, date=date, as_of=as_of)
@@ -157,7 +158,8 @@ class TimeseriesOpsMixin(LocalMacroDataServiceBase):
         concept_id = (arguments.get("concept_id") or "").strip()
         if not concept_id:
             return {"error": "concept_id is required"}
-        self._store.seed_concept_map()
+        if not self._store_is_read_only():
+            self._store.seed_concept_map()
         limit = int(arguments.get("limit", 12))
         as_of = (arguments.get("as_of") or "").strip() or None
         results = self._store.resolve_indicator_history(
@@ -175,7 +177,8 @@ class TimeseriesOpsMixin(LocalMacroDataServiceBase):
         due_only = bool(arguments.get("due_only", False))
         limit = int(arguments.get("limit", 100))
 
-        self._store.seed_release_schedules()
+        if not self._store_is_read_only():
+            self._store.seed_release_schedules()
 
         if concept_id:
             rec = self._store.get_release_schedule(concept_id)

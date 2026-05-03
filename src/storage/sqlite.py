@@ -32,6 +32,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import quote
 
 from storage.models import (
     CalendarEventVintageRecord,
@@ -87,15 +88,32 @@ class SQLiteEngineStore(
     _NewsQueriesMixin,
     _SentimentQueriesMixin,
 ):
-    def __init__(self, db_path: Path | None = None) -> None:
+    def __init__(self, db_path: Path | None = None, *, read_only: bool = False) -> None:
         self.db_path = db_path or default_engine_db_path()
+        self.read_only = read_only
+        if self.read_only:
+            return
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.init_schema()
 
     def get_connection(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(str(self.db_path))
+        if self.read_only:
+            resolved_path = self.db_path.resolve()
+            uri_path = quote(resolved_path.as_posix(), safe="/")
+            if resolved_path.with_name(f"{resolved_path.name}-wal").exists():
+                # WAL-aware reads preserve committed frames from a live writer.
+                uri = f"file:{uri_path}?mode=ro"
+            else:
+                # Checkpointed snapshots avoid SQLite WAL sidecar creation.
+                uri = f"file:{uri_path}?mode=ro&immutable=1"
+            connection = sqlite3.connect(uri, uri=True)
+        else:
+            connection = sqlite3.connect(str(self.db_path))
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
+        if self.read_only:
+            connection.execute("PRAGMA query_only=ON")
+        else:
+            connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA foreign_keys=ON")
         return connection
 
@@ -114,5 +132,7 @@ class SQLiteEngineStore(
             connection.close()
 
     def init_schema(self) -> None:
+        if self.read_only:
+            return
         with self._connection(commit=True) as connection:
             apply_schema(connection)

@@ -54,10 +54,11 @@ class OpsHealthMixin(LocalMacroDataServiceBase):
         return {"total": len(items), "sources": items}
 
     def _op_get_source_health_dashboard(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        if self._ingestion is None:
+        health = self._health or self._ingestion
+        if health is None:
             return {"error": "source health unavailable", "sources": []}
         include_internal = bool(arguments.get("include_internal", False))
-        return self._ingestion.get_source_health_dashboard(include_internal=include_internal)
+        return health.get_source_health_dashboard(include_internal=include_internal)
 
     def _op_get_health(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if self._ingestion is None:

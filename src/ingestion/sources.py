@@ -315,6 +315,7 @@ class IngestionOrchestrator:
         self._default_refresh_order: list[str] = []
         self._last_run_reports: dict[str, IngestionRunReport] = {}
         self._register_default_sources()
+        self._ensure_capability_manager()
 
     def _ensure_obs_seed(self) -> None:
         """Seed observation sources/families once, then build lookup cache."""

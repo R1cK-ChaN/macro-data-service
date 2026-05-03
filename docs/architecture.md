@@ -426,6 +426,13 @@ defeats the whole aggregation-layer premise.
 
 - **HTTP API** (`macro-data-api`) — the contract. Routes are a thin mapping
   over `LocalMacroDataService` ops; schema is the `contracts.py` DTOs.
+  Runtime construction uses `build_read_only_macro_data_service`: SQLite
+  opens live WAL paths with `mode=ro` when WAL sidecars exist and
+  checkpointed snapshots with `mode=ro&immutable=1`, schema/seed bootstrap
+  writes are disabled, and `/health` reads existing capability/checkpoint
+  rows through a reader health backend. Startup validates `concept_map`,
+  `release_schedule`, `source_capability`, `subjects`, and
+  `subject_aliases` contain rows.
   `POST /v1/ops/<op>` is locked to a read-only allowlist
   (`PUBLIC_READ_OPS` in `macro_data/server.py`, issue #104):
   `resolve_indicator`, `resolve_indicator_history`, `list_items`,

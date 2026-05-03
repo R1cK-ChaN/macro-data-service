@@ -296,9 +296,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
-    from macro_data.factory import build_local_macro_data_service
+    from macro_data.factory import build_read_only_macro_data_service
 
-    service = build_local_macro_data_service(db_path=Path(args.db_path) if args.db_path else None)
+    service = build_read_only_macro_data_service(db_path=Path(args.db_path) if args.db_path else None)
     serve(
         host=args.host,
         port=args.port,
