@@ -384,20 +384,22 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         )
         """
     )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS indicators (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            series_id TEXT NOT NULL,
-            source TEXT NOT NULL,
-            date TEXT NOT NULL,
-            value REAL NOT NULL,
-            metadata_json TEXT NOT NULL,
-            scraped_at TEXT NOT NULL,
-            UNIQUE(series_id, source, date)
-        )
-        """
-    )
+    # ``indicator_vintages`` is the canonical write target for every macro
+    # fetcher (issue #114 P0). ``indicators`` is a derived view over the
+    # latest vintage per ``(source, series_id, observation_date)``,
+    # created at the bottom of this function — see "Indicator view" block.
+    # PK ``(source, series_id, observation_date, vintage_date)`` matches
+    # the FRED/ALFRED real-time period model.
+    #
+    # ``vintage_quality`` tags the provenance of each vintage row:
+    #   * ``native_pit``           — source exposes a real ``vintage_date``
+    #                                (FRED ALFRED ``realtime_start``).
+    #   * ``synthetic_snapshot``   — we tag ``vintage_date = scrape_time``,
+    #                                value-changed triggered (every other
+    #                                fetcher).
+    #   * ``single_observation``   — only seen once, no revision context
+    #                                (legacy ``indicators`` rows migrated
+    #                                in #114 P1; pre-#114 IMF vintages).
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS indicator_vintages (
@@ -409,10 +411,22 @@ def apply_schema(connection: sqlite3.Connection) -> None:
             value REAL NOT NULL,
             metadata_json TEXT NOT NULL,
             scraped_at TEXT NOT NULL,
+            vintage_quality TEXT NOT NULL DEFAULT 'single_observation'
+                CHECK (vintage_quality IN (
+                    'native_pit', 'synthetic_snapshot', 'single_observation'
+                )),
             UNIQUE(series_id, source, observation_date, vintage_date)
         )
         """
     )
+    # ALTER for existing DBs created before #114 P0.
+    try:
+        connection.execute(
+            "ALTER TABLE indicator_vintages ADD COLUMN vintage_quality TEXT "
+            "NOT NULL DEFAULT 'single_observation'"
+        )
+    except sqlite3.OperationalError:
+        pass  # column already exists
     # ── Macro time-series audit lane (issue #69 slice 1) ─────────────────
     # Mirrors cal_econ_raw — same content-hash + raw-payload + snapshot
     # pattern, ticker-shaped at the source/series_id grain. One row per
@@ -948,13 +962,15 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         )
         """
     )
-    # ALTER TABLE migrations for obs_family_id
+    # ALTER TABLE migrations for obs_family_id. The ``indicators`` ALTER
+    # is a no-op once #114 P1 has converted ``indicators`` to a view (the
+    # underlying ``indicator_vintages`` carries the column directly).
     try:
         connection.execute(
             "ALTER TABLE indicators ADD COLUMN obs_family_id TEXT DEFAULT NULL"
         )
     except sqlite3.OperationalError:
-        pass  # column already exists
+        pass  # column already exists, or `indicators` is now a view
     try:
         connection.execute(
             "ALTER TABLE indicator_vintages ADD COLUMN obs_family_id TEXT DEFAULT NULL"
@@ -974,10 +990,16 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_obs_family_provider_series "
         "ON obs_family(source_id, provider_series_id)"
     )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_indicators_family_date "
-        "ON indicators(obs_family_id, date)"
-    )
+    # idx_indicators_family_date was the per-table optimisation; once
+    # ``indicators`` is a view, the equivalent index lives on
+    # ``indicator_vintages`` (idx_vintages_family_date below).
+    try:
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_indicators_family_date "
+            "ON indicators(obs_family_id, date)"
+        )
+    except sqlite3.OperationalError:
+        pass  # `indicators` is a view; the vintages-side index is sufficient
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_vintages_family_date "
         "ON indicator_vintages(obs_family_id, observation_date)"
@@ -1857,6 +1879,70 @@ def apply_schema(connection: sqlite3.Connection) -> None:
             for (handle, category, priority) in X_TRACKED_ACCOUNT_SEEDS
         ],
     )
+
+    # ── Indicator view (issue #114 P1) ───────────────────────────────────
+    # ``indicators`` was an independently-written latest-value table; the
+    # canonical store is now ``indicator_vintages``. One-shot migration:
+    # copy any unmigrated rows into vintages tagged ``single_observation``
+    # (we cannot tell whether they reflect true PIT), drop the table, and
+    # create a view returning the latest vintage per
+    # ``(source, series_id, observation_date)``.
+    master = connection.execute(
+        "SELECT type FROM sqlite_master WHERE name='indicators'"
+    ).fetchone()
+    if master is not None and master[0] == "table":
+        cols = {
+            r[1] for r in connection.execute(
+                "PRAGMA table_info(indicators)"
+            ).fetchall()
+        }
+        # Older schemas predated the obs_family_id ALTER; coalesce the
+        # column reference so the migration works on any historical
+        # snapshot.
+        fam_select = "obs_family_id" if "obs_family_id" in cols else "NULL AS obs_family_id"
+        connection.execute(
+            f"""
+            INSERT OR IGNORE INTO indicator_vintages (
+                series_id, source, observation_date, vintage_date, value,
+                metadata_json, scraped_at, obs_family_id, vintage_quality
+            )
+            SELECT
+                series_id, source, date, scraped_at, value,
+                metadata_json, scraped_at, {fam_select},
+                'single_observation'
+            FROM indicators
+            """
+        )
+        connection.execute("DROP TABLE indicators")
+        master = None
+
+    if master is None:
+        # Fresh DB or just-migrated DB: create the view.
+        connection.execute(
+            """
+            CREATE VIEW IF NOT EXISTS indicators AS
+            SELECT
+                v.id              AS id,
+                v.series_id       AS series_id,
+                v.source          AS source,
+                v.observation_date AS date,
+                v.value           AS value,
+                v.metadata_json   AS metadata_json,
+                v.scraped_at      AS scraped_at,
+                v.obs_family_id   AS obs_family_id
+            FROM indicator_vintages v
+            JOIN (
+                SELECT source, series_id, observation_date,
+                       MAX(vintage_date) AS vd
+                FROM indicator_vintages
+                GROUP BY source, series_id, observation_date
+            ) latest
+              ON latest.source           = v.source
+             AND latest.series_id        = v.series_id
+             AND latest.observation_date = v.observation_date
+             AND latest.vd               = v.vintage_date
+            """
+        )
 
 
 # ── X (Twitter) sentiment lane: seed lists ─────────────────────

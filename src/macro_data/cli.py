@@ -178,6 +178,8 @@ def build_parser() -> argparse.ArgumentParser:
     resolve = subparsers.add_parser("resolve")
     resolve.add_argument("concept_id", help="Concept ID (e.g. CPI_US)")
     resolve.add_argument("--date", default=None, help="Specific date (YYYY-MM-DD)")
+    resolve.add_argument("--as-of", dest="as_of", default=None,
+                         help="Vintage cutoff (YYYY-MM-DD) — return projection as of this date")
     resolve.add_argument("--history", action="store_true", help="Show resolved time series")
     resolve.add_argument("--limit", type=int, default=12, help="History limit (default 12)")
     resolve.add_argument("--json", action="store_true", dest="json_output", help="JSON output")
@@ -555,8 +557,12 @@ def _run_resolve(args: argparse.Namespace) -> int:
     store = SQLiteEngineStore(db_path=Path(args.db_path) if args.db_path else None)
     store.seed_concept_map()
 
+    as_of = getattr(args, "as_of", None)
+
     if args.history:
-        results = store.resolve_indicator_history(args.concept_id, limit=args.limit)
+        results = store.resolve_indicator_history(
+            args.concept_id, limit=args.limit, as_of=as_of,
+        )
         if not results:
             print(f"No data found for {args.concept_id}")
             return 1
@@ -565,11 +571,12 @@ def _run_resolve(args: argparse.Namespace) -> int:
         else:
             for r in results:
                 alt = f"+{r.alternates}" if r.alternates else ""
+                tag = f" [{r.provenance}]" if r.provenance != "native" else ""
                 print(f"  {r.date}  {r.value:>12.4f}  {r.source_id:<18}  "
-                      f"p={r.priority}  {r.role}{alt and '  alt=' + alt}")
+                      f"p={r.priority}  {r.role}{alt and '  alt=' + alt}{tag}")
         return 0
 
-    obs = store.resolve_indicator(args.concept_id, date=args.date)
+    obs = store.resolve_indicator(args.concept_id, date=args.date, as_of=as_of)
     if obs is None:
         print(f"No data found for {args.concept_id}" + (f" on {args.date}" if args.date else ""))
         return 1

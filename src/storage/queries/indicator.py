@@ -35,7 +35,40 @@ from storage.models.indicator import (
     ObsSourceRecord,
     ResolvedObservation,
 )
-from storage.queries.calendar import _add_calendar_keyword_filter
+from storage.queries.calendar import _add_calendar_keyword_filter, _calendar_numeric_value
+
+
+# Calendar-fallback threshold (issue #114 P3): when a concept's latest
+# projection has fewer than this many rows, augment from
+# ``cal_econ_event.actual``. 24 ≈ two years of monthly releases.
+_CALENDAR_FALLBACK_THRESHOLD = 24
+
+# Concept → (calendar event keywords, country_code) bridge.
+# The seeded ``concept_map`` doesn't carry calendar-keyword info; this
+# dict captures the mapping for the most common release-shaped concepts.
+# ``cal_econ_event.country_code`` stores the Eurozone aggregate as ``EU``
+# (verified empirically: 12k EU rows; ``EA`` is unused).
+_CALENDAR_FALLBACK_KEYWORDS: dict[str, tuple[list[str], str]] = {
+    "CPI_US":               (["Inflation Rate", "CPI", "Consumer Price Index"], "US"),
+    "CORE_CPI_US":          (["Core Inflation", "Core CPI"], "US"),
+    "CORE_PCE_US":          (["Core PCE", "PCE Price Index"], "US"),
+    "PPI_US":               (["PPI", "Producer Prices"], "US"),
+    "PPI_CORE_US":          (["Core PPI"], "US"),
+    "UNEMP_US":             (["Unemployment Rate"], "US"),
+    "NFP_US":               (["Non Farm Payrolls", "Nonfarm Payrolls"], "US"),
+    "NFP_PRIVATE_US":       (["ADP", "Private Payrolls"], "US"),
+    "AVG_HOURLY_EARN_US":   (["Average Hourly Earnings"], "US"),
+    "INITIAL_CLAIMS_US":    (["Initial Jobless Claims", "Initial Claims"], "US"),
+    "CONTINUING_CLAIMS_US": (["Continuing Jobless Claims", "Continuing Claims"], "US"),
+    "GDP_REAL_US":          (["GDP Growth Rate", "GDP"], "US"),
+    "GDP_NOMINAL_US":       (["GDP", "Gross Domestic Product"], "US"),
+    "RETAIL_SALES_US":      (["Retail Sales"], "US"),
+    "INDPRO_US":            (["Industrial Production"], "US"),
+    "POLICY_RATE_US":       (["Fed Funds Rate", "Federal Funds Rate", "Interest Rate Decision"], "US"),
+    "CPI_EU":               (["CPI", "Inflation Rate", "Harmonised Consumer Prices"], "EU"),
+    "GDP_EU":               (["GDP Growth Rate", "GDP"], "EU"),
+    "UNEMP_EU":             (["Unemployment Rate"], "EU"),
+}
 
 
 _FRED_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
@@ -532,29 +565,27 @@ class _IndicatorQueriesMixin:
             )
 
     def upsert_indicator_observation(self, observation: IndicatorObservationRecord) -> None:
-        with self._connection(commit=True) as connection:
-            connection.execute(
-                """
-                INSERT OR REPLACE INTO indicators (
-                    series_id,
-                    source,
-                    date,
-                    value,
-                    metadata_json,
-                    obs_family_id,
-                    scraped_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    observation.series_id,
-                    observation.source,
-                    observation.date,
-                    observation.value,
-                    json.dumps(observation.metadata, ensure_ascii=True, sort_keys=True),
-                    observation.obs_family_id,
-                    utc_now().isoformat(),
-                ),
+        """Write through the canonical vintage path (issue #114 P1).
+
+        ``indicators`` is now a view over ``indicator_vintages``. Every
+        observation lands as a ``synthetic_snapshot`` vintage with
+        ``vintage_date = utc_now()``; the value-changed filter lives in
+        ``upsert_indicator_vintage`` so an unrevised daily refresh
+        doesn't accumulate one row per day.
+        """
+        scraped_at = utc_now().isoformat()
+        self.upsert_indicator_vintage(
+            IndicatorVintageRecord(
+                series_id=observation.series_id,
+                source=observation.source,
+                observation_date=observation.date,
+                vintage_date=scraped_at,
+                value=observation.value,
+                metadata=observation.metadata,
+                obs_family_id=observation.obs_family_id,
+                vintage_quality="synthetic_snapshot",
             )
+        )
 
     def insert_obs_raw(self, records: list[ObsRawRecord]) -> int:
         """Insert raw macro time-series snapshots; return number of new rows.
@@ -719,7 +750,49 @@ class _IndicatorQueriesMixin:
         )
 
     def upsert_indicator_vintage(self, vintage: IndicatorVintageRecord) -> None:
+        # Defensive enum check — the CREATE TABLE block in #114 P0 added a
+        # CHECK constraint, but ALTER ADD COLUMN on legacy DBs cannot carry
+        # the CHECK, so legacy DBs would silently accept an unknown tag.
+        # Validate at the boundary so both code paths reject bad input.
+        if vintage.vintage_quality not in (
+            "native_pit", "synthetic_snapshot", "single_observation",
+        ):
+            raise ValueError(
+                f"vintage_quality must be one of native_pit / synthetic_snapshot / "
+                f"single_observation; got {vintage.vintage_quality!r}"
+            )
         with self._connection(commit=True) as connection:
+            # Value-change filter for synthetic_snapshot rows: skip the
+            # write when the strictly-prior vintage (latest one with
+            # ``vintage_date < this``) already carries the same value —
+            # the prior row already covers PIT queries for the new range.
+            # Compare against the strict-prior, not the max stored row,
+            # so out-of-order backfills (e.g. IMF ``refresh_vintages``
+            # iterating ``as_of_dates`` from newest to oldest) don't drop
+            # legitimate vintages: e.g. for stream Mar=100, Feb=100,
+            # Jan=90, Feb must land or PIT(Feb-15) collapses to Jan=90.
+            # ``native_pit`` and ``single_observation`` rows skip this
+            # filter — ALFRED already returns deduped rows, and
+            # single_observation rows are migration-only.
+            if vintage.vintage_quality == "synthetic_snapshot":
+                prior = connection.execute(
+                    """
+                    SELECT value FROM indicator_vintages
+                    WHERE source = ? AND series_id = ?
+                      AND observation_date = ?
+                      AND vintage_date < ?
+                    ORDER BY vintage_date DESC
+                    LIMIT 1
+                    """,
+                    (
+                        vintage.source,
+                        vintage.series_id,
+                        vintage.observation_date,
+                        vintage.vintage_date,
+                    ),
+                ).fetchone()
+                if prior is not None and float(prior[0]) == float(vintage.value):
+                    return
             connection.execute(
                 """
                 INSERT OR REPLACE INTO indicator_vintages (
@@ -730,8 +803,9 @@ class _IndicatorQueriesMixin:
                     value,
                     metadata_json,
                     obs_family_id,
-                    scraped_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    scraped_at,
+                    vintage_quality
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     vintage.series_id,
@@ -742,6 +816,7 @@ class _IndicatorQueriesMixin:
                     json.dumps(vintage.metadata, ensure_ascii=True, sort_keys=True),
                     vintage.obs_family_id,
                     utc_now().isoformat(),
+                    vintage.vintage_quality,
                 ),
             )
 
@@ -777,6 +852,12 @@ class _IndicatorQueriesMixin:
         return [self._row_to_vintage(row) for row in rows]
 
     def _row_to_vintage(self, row: sqlite3.Row) -> IndicatorVintageRecord:
+        # ``vintage_quality`` is added in #114 P0; older DBs ALTERed in
+        # produce the column with a 'single_observation' default, but
+        # ``sqlite3.Row`` raises when the column is missing on a stale
+        # connection cache, so we fall back via dict-style ``.get``.
+        keys = row.keys() if hasattr(row, "keys") else ()
+        quality = row["vintage_quality"] if "vintage_quality" in keys else "single_observation"
         return IndicatorVintageRecord(
             series_id=row["series_id"],
             source=row["source"],
@@ -784,6 +865,7 @@ class _IndicatorQueriesMixin:
             vintage_date=row["vintage_date"],
             value=float(row["value"]),
             metadata=json.loads(row["metadata_json"]),
+            vintage_quality=quality,
         )
 
     def upsert_obs_source(self, record: ObsSourceRecord) -> None:
@@ -1098,19 +1180,15 @@ class _IndicatorQueriesMixin:
         self.seed_calendar_indicators()
 
     def backfill_obs_family_ids(self) -> int:
-        """Set obs_family_id on existing indicators/vintages rows from obs_family table.
-        Returns total number of rows updated."""
+        """Set obs_family_id on indicator_vintages rows from obs_family table.
+
+        Returns total number of rows updated. Pre-#114 P1 this also
+        UPDATEd ``indicators`` directly; that table is now a SQL view
+        over ``indicator_vintages``, so backfilling the underlying
+        vintages alone keeps the projection consistent.
+        """
         with self._connection(commit=True) as connection:
-            cur1 = connection.execute(
-                """
-                UPDATE indicators SET obs_family_id = (
-                    SELECT family_id FROM obs_family
-                    WHERE obs_family.provider_series_id = indicators.series_id
-                      AND obs_family.source_id = indicators.source
-                ) WHERE obs_family_id IS NULL
-                """
-            )
-            cur2 = connection.execute(
+            cur = connection.execute(
                 """
                 UPDATE indicator_vintages SET obs_family_id = (
                     SELECT family_id FROM obs_family
@@ -1119,7 +1197,7 @@ class _IndicatorQueriesMixin:
                 ) WHERE obs_family_id IS NULL
                 """
             )
-        return (cur1.rowcount or 0) + (cur2.rowcount or 0)
+        return cur.rowcount or 0
 
     def build_obs_family_lookup(self) -> dict[tuple[str, str], str]:
         """Build a lookup dict mapping (source_id, provider_series_id) -> family_id."""
@@ -1654,33 +1732,30 @@ class _IndicatorQueriesMixin:
         concept_id: str,
         *,
         date: str | None = None,
+        as_of: str | None = None,
     ) -> ResolvedObservation | None:
         """Return the highest-priority observation for a concept on a given date.
 
-        If *date* is None, returns the most recent observation across all sources.
+        ``date`` selects the observation date; ``as_of`` selects the
+        vintage cutoff (issue #114 P3). When ``as_of`` is set, the
+        result is the value as reported at ``vintage_date <= as_of`` —
+        a true point-in-time read. When ``as_of`` is ``None``, the
+        latest projection (the ``indicators`` view) is consulted.
         """
         mappings = self.get_concept_series(concept_id)
         if not mappings:
             return None
         with self._connection(commit=False) as connection:
-            # Count how many sources have data for the target date (for alternates)
             best: ResolvedObservation | None = None
             alternates = 0
             for m in mappings:
-                if date is not None:
-                    row = connection.execute(
-                        "SELECT date, value FROM indicators "
-                        "WHERE source = ? AND series_id = ? AND date = ? "
-                        "LIMIT 1",
-                        (m.source_id, m.provider_series_id, date),
-                    ).fetchone()
-                else:
-                    row = connection.execute(
-                        "SELECT date, value FROM indicators "
-                        "WHERE source = ? AND series_id = ? "
-                        "ORDER BY date DESC LIMIT 1",
-                        (m.source_id, m.provider_series_id),
-                    ).fetchone()
+                row = self._latest_for_source(
+                    connection,
+                    source=m.source_id,
+                    series_id=m.provider_series_id,
+                    date=date,
+                    as_of=as_of,
+                )
                 if row is None:
                     continue
                 alternates += 1
@@ -1732,29 +1807,72 @@ class _IndicatorQueriesMixin:
         concept_id: str,
         *,
         limit: int = 12,
+        as_of: str | None = None,
     ) -> list[ResolvedObservation]:
-        """Return a resolved time series, picking the highest-priority source per date."""
+        """Return a resolved time series, picking the highest-priority source per date.
+
+        Issue #114 P3: when ``as_of`` is set, the projection is
+        reconstructed at vintage_date <= as_of (point-in-time read);
+        when ``None``, the ``indicators`` view (latest of all time) is
+        consulted. If the latest-projection has fewer than
+        :data:`_CALENDAR_FALLBACK_THRESHOLD` rows, results are augmented
+        with ``cal_econ_event.actual`` rows tagged ``provenance='calendar'``
+        so concepts whose source rejects long history (paywalled / window
+        limits) still surface release-shaped values.
+        """
         mappings = self.get_concept_series(concept_id)
         if not mappings:
             return []
 
-        # Collect all distinct dates across all sources
+        # Collect all distinct dates across all sources at the requested
+        # vintage cutoff (or latest if as_of is None). ``date(...)``
+        # normalisation makes the cutoff tolerant to ISO timestamps —
+        # ``synthetic_snapshot`` rows store ``vintage_date`` as
+        # ``utc_now().isoformat()`` (e.g. ``2026-05-02T12:00:00+00:00``)
+        # while the CLI flag is ``YYYY-MM-DD``; raw text comparison
+        # ``'2026-05-02T12:00:00+00:00' <= '2026-05-02'`` is false, so
+        # same-day rows would silently disappear without ``date(...)``.
         all_dates: set[str] = set()
-        # source_data[i] = {date: value} for mapping i
         source_data: list[dict[str, float]] = []
         with self._connection(commit=False) as connection:
             for m in mappings:
-                rows = connection.execute(
-                    "SELECT date, value FROM indicators "
-                    "WHERE source = ? AND series_id = ? "
-                    "ORDER BY date DESC",
-                    (m.source_id, m.provider_series_id),
-                ).fetchall()
+                if as_of is None:
+                    rows = connection.execute(
+                        "SELECT date, value FROM indicators "
+                        "WHERE source = ? AND series_id = ? "
+                        "ORDER BY date DESC",
+                        (m.source_id, m.provider_series_id),
+                    ).fetchall()
+                else:
+                    rows = connection.execute(
+                        """
+                        SELECT v.observation_date AS date, v.value AS value
+                        FROM indicator_vintages v
+                        JOIN (
+                            SELECT source, series_id, observation_date,
+                                   MAX(vintage_date) AS vd
+                            FROM indicator_vintages
+                            WHERE source = ? AND series_id = ?
+                              AND date(vintage_date) <= date(?)
+                            GROUP BY observation_date
+                        ) latest
+                          ON latest.source = v.source
+                         AND latest.series_id = v.series_id
+                         AND latest.observation_date = v.observation_date
+                         AND latest.vd = v.vintage_date
+                        ORDER BY v.observation_date DESC
+                        """,
+                        (m.source_id, m.provider_series_id, as_of),
+                    ).fetchall()
                 data = {r["date"]: r["value"] for r in rows}
                 source_data.append(data)
                 all_dates.update(data.keys())
 
-        # Sort dates descending and limit
+        # ``len(all_dates)`` is the *full* projection depth — must be
+        # consulted BEFORE ``[:limit]`` slicing, otherwise the default
+        # ``limit=12`` would always trip the ``< 24`` fallback even for
+        # series with years of native rows. Codex P3 round 1 finding.
+        full_projection_depth = len(all_dates)
         sorted_dates = sorted(all_dates, reverse=True)[:limit]
         results: list[ResolvedObservation] = []
         for d in sorted_dates:
@@ -1786,7 +1904,161 @@ class _IndicatorQueriesMixin:
                         alternates=alternates - 1,
                     )
                 )
+        # Calendar fallback: when the *full* projection is shallow,
+        # augment with cal_econ_event.actual rows. Issue #114 P3.
+        if full_projection_depth < _CALENDAR_FALLBACK_THRESHOLD:
+            results = self._augment_with_calendar(
+                concept_id, results, limit=limit, as_of=as_of,
+            )
         return results
+
+    def _latest_for_source(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        source: str,
+        series_id: str,
+        date: str | None,
+        as_of: str | None,
+    ) -> sqlite3.Row | None:
+        """Pick the latest visible value for a (source, series_id) pair.
+
+        ``as_of`` constrains the vintage cutoff: when set, query
+        ``indicator_vintages`` directly and pick the row with the
+        greatest ``date(vintage_date) <= date(as_of)``. ``date(...)`` is
+        SQLite's calendar-prefix extractor — it normalises both ISO
+        timestamps (``synthetic_snapshot`` rows) and date-only stamps
+        (``native_pit`` rows) so a same-day cutoff like
+        ``as_of='2026-05-02'`` matches a row stored as
+        ``2026-05-02T12:00:00+00:00``. When ``None``, the
+        ``indicators`` view (latest of all time) is consulted.
+        """
+        if as_of is None:
+            if date is not None:
+                return connection.execute(
+                    "SELECT date, value FROM indicators "
+                    "WHERE source = ? AND series_id = ? AND date = ? LIMIT 1",
+                    (source, series_id, date),
+                ).fetchone()
+            return connection.execute(
+                "SELECT date, value FROM indicators "
+                "WHERE source = ? AND series_id = ? "
+                "ORDER BY date DESC LIMIT 1",
+                (source, series_id),
+            ).fetchone()
+        if date is not None:
+            return connection.execute(
+                """
+                SELECT observation_date AS date, value
+                FROM indicator_vintages
+                WHERE source = ? AND series_id = ?
+                  AND observation_date = ?
+                  AND date(vintage_date) <= date(?)
+                ORDER BY vintage_date DESC LIMIT 1
+                """,
+                (source, series_id, date, as_of),
+            ).fetchone()
+        # No date — pick latest observation_date that has at least one
+        # vintage with vintage_date <= as_of, then latest such vintage.
+        return connection.execute(
+            """
+            SELECT v.observation_date AS date, v.value AS value
+            FROM indicator_vintages v
+            JOIN (
+                SELECT source, series_id, observation_date,
+                       MAX(vintage_date) AS vd
+                FROM indicator_vintages
+                WHERE source = ? AND series_id = ?
+                  AND date(vintage_date) <= date(?)
+                GROUP BY observation_date
+            ) latest
+              ON latest.source = v.source
+             AND latest.series_id = v.series_id
+             AND latest.observation_date = v.observation_date
+             AND latest.vd = v.vintage_date
+            ORDER BY v.observation_date DESC LIMIT 1
+            """,
+            (source, series_id, as_of),
+        ).fetchone()
+
+    def _augment_with_calendar(
+        self,
+        concept_id: str,
+        existing: list[ResolvedObservation],
+        *,
+        limit: int,
+        as_of: str | None,
+    ) -> list[ResolvedObservation]:
+        """Add ``cal_econ_event.actual`` rows for the concept's release
+        family, tagged ``provenance='calendar'``.
+
+        Bridges the calendar lane (where the de-facto historical store
+        for release-shaped concepts already lives) into
+        ``resolve_indicator`` so concepts whose source rejects long
+        history still surface meaningful values. Calendar rows are
+        identified by keyword match on event title/category/indicator_id
+        + a country filter, both pulled from
+        :data:`_CALENDAR_FALLBACK_KEYWORDS`. When ``as_of`` is set, only
+        events that occurred at or before the cutoff land — note that
+        ``cal_econ_event`` is the latest projection (revisions live in
+        ``calendar_event_vintages``), so a calendar value revised after
+        the cutoff would still surface. Tightening the calendar PIT to
+        the vintage table is a separate workstream.
+        """
+        bridge = _CALENDAR_FALLBACK_KEYWORDS.get(concept_id)
+        if bridge is None:
+            return existing
+        keywords, country_code = bridge
+        existing_dates = {r.date for r in existing}
+        with self._connection(commit=False) as connection:
+            conditions: list[str] = ["actual IS NOT NULL"]
+            params: list[Any] = []
+            if country_code:
+                conditions.append("country_code = ?")
+                params.append(country_code)
+            if as_of is not None:
+                conditions.append("date(event_time_utc) <= date(?)")
+                params.append(as_of)
+            keyword_clauses: list[str] = []
+            for kw in keywords:
+                like = f"%{kw}%"
+                keyword_clauses.append(
+                    "(title LIKE ? OR COALESCE(indicator_id, '') LIKE ? "
+                    "OR category LIKE ?)"
+                )
+                params.extend((like, like, like))
+            conditions.append(f"({' OR '.join(keyword_clauses)})")
+            sql = (
+                "SELECT event_time_utc, reference_date, actual "
+                "FROM cal_econ_event "
+                f"WHERE {' AND '.join(conditions)} "
+                "ORDER BY datetime(event_time_utc) DESC, provider_event_id DESC"
+            )
+            rows = connection.execute(sql, params).fetchall()
+        added: list[ResolvedObservation] = []
+        for row in rows:
+            value = _calendar_numeric_value(row["actual"])
+            if value is None:
+                continue
+            obs_date = (row["reference_date"] or row["event_time_utc"] or "")[:10]
+            if not obs_date or obs_date in existing_dates:
+                continue
+            existing_dates.add(obs_date)
+            added.append(ResolvedObservation(
+                concept_id=concept_id,
+                date=obs_date,
+                value=value,
+                source_id="cal_econ_event",
+                provider_series_id="",
+                priority=99,
+                role="calendar_fallback",
+                provenance="calendar",
+            ))
+            if len(existing) + len(added) >= limit:
+                break
+        merged = existing + added
+        merged.sort(key=lambda r: r.date, reverse=True)
+        return merged[:limit]
 
     def upsert_source_capability(self, payload: dict[str, Any]) -> None:
         now = utc_now().isoformat()

@@ -95,6 +95,7 @@ class FREDIngestionClient:
                             value=v.value,
                             metadata={"name": MACRO_SERIES.get(series_id, {}).get("name", series_id)},
                             obs_family_id=fam_id,
+                            vintage_quality="native_pit",
                         )
                     )
                     count += 1

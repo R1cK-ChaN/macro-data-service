@@ -71,8 +71,19 @@ RAG services consume `get_document` / `list_items` over HTTP.
 ### 1. Macro time-series (the backbone)
 
 - **Sources wired** (19): BLS, FRED, EIA, NYFed, Treasury, IMF, Eurostat, Destatis, ZEW, BIS, ECB, Bundesbank, Japan MOF JGB rates, AISI weekly steel, ISM official PMI reports, Redbook Research weekly retail sales, sentix Economic Index, OECD, World Bank. SDMX providers unified under `ingestion/sdmx/` (7 of the 19 go through it).
-- **Schema:** `obs_source`, `obs_family`, `indicators`, `indicator_vintages`. `concept_map` bridges source-native IDs to 168 canonical concepts; `subject_aliases` lets text queries resolve back to concepts.
-- **Resolution:** `resolve_indicator(concept_id)` ranks sources by `concept_map.priority`, returns primary + alternates. Vintages preserved for PIT reconstruction.
+- **Schema:** `obs_source`, `obs_family`, `indicator_vintages` (canonical store), `indicators` (SQL view over latest vintage per `(source, series_id, observation_date)`). `concept_map` bridges source-native IDs to 168 canonical concepts; `subject_aliases` lets text queries resolve back to concepts.
+- **Canonical write contract** (issue #114 P0+P1): every fetcher writes
+  to `indicator_vintages`; `indicators` is a derived view, never
+  independently written. Each vintage row carries a `vintage_quality`
+  tag — `native_pit` (FRED ALFRED `realtime_start`),
+  `synthetic_snapshot` (vintage_date = scrape_time, value-change
+  triggered — `upsert_indicator_vintage` skips the write when the
+  latest stored value for the key matches), or `single_observation`
+  (only seen once, no revision context — pre-#114 rows + migration
+  default). Industry precedent: ALFRED, Macrobond Real-Time DB, Haver
+  Vintage, Bloomberg ECO+HDB, Philly Fed Real-Time Data Set all treat
+  vintages as the source of truth and "latest" as a projection.
+- **Resolution:** `resolve_indicator(concept_id, date=None, as_of=None)` ranks sources by `concept_map.priority`, returns primary + alternates. The `as_of=YYYY-MM-DD` parameter (issue #114 P3) selects the latest vintage with `vintage_date <= as_of` — true point-in-time reads. `resolve_indicator_history(as_of=...)` reconstructs the projection at the requested cutoff. Calendar fallback (#114 P3): when the latest projection has fewer than 24 rows, results are augmented with `cal_econ_event.actual` rows for that concept's release_family, tagged `provenance='calendar'` (downstream filterable). Bridge lives in `_CALENDAR_FALLBACK_KEYWORDS` in `storage/queries/indicator.py` — concept_id → (event title keywords, country_code).
 - **Status:** architecture complete; first-pass ingestion bootstrap underway. DB starts empty; Phase 1 (top US macro, 10 indicators) is the immediate next milestone, not more code.
 - **Audit lane** (issue #69 slice 1): `obs_raw` mirrors `cal_econ_raw` — one row per HTTP response per `(source, series_id)`, idempotent on `(source, series_id, content_hash)`. The FRED / BLS / SDMX / MOF JGB / AISI / ISM / Redbook / sentix scrapers expose raw companions to parsed fetches so the orchestrator side-writes the audit row before normalize. Per-source canonicalization (`ingestion/timeseries/canonicalize.py`) hashes only the sorted observations, dropping query-time envelope echoes (`observation_start` / `realtime_*` / `responseTime` / SDMX `header.prepared`) so a daily refresh with a sliding `start_date` dedupes through INSERT OR IGNORE. Covered sources: FRED, BLS, Japan MOF JGB CSV, AISI weekly raw steel HTML, ISM official PMI report HTML, Redbook Research weekly retail-sales historical feed, sentix Economic Index API, and SDMX-JSON providers IMF / ECB / Eurostat / OECD / UNSD / ILO / Bundesbank. BIS uses CSV, so JSON-shape canonicalization is deferred. Re-projection helpers `_parse_fred_observations` / parsing in BLS+SDMX+MOF+AISI+ISM+Redbook+sentix mirror the calendar `cal_econ_raw` replay path — fix a parser, replay raw, zero quota cost.
 

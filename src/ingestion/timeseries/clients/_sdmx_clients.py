@@ -94,6 +94,12 @@ class IMFIngestionClient:
                     limit=30,
                 )
                 fam_id = family_lookup.get(("imf", cfg["series_id"])) if family_lookup else None
+                # IMF SDMX 3.0 ``asOf`` returns "data as it stood at
+                # as_of date" — the stored ``vintage_date`` reflects when
+                # we polled, not when IMF first published the value, so
+                # this is ``synthetic_snapshot`` rather than ``native_pit``
+                # (FRED ALFRED ``realtime_start`` is the only true PIT
+                # source we currently consume).
                 for v in vintages:
                     store.upsert_indicator_vintage(
                         IndicatorVintageRecord(
@@ -104,6 +110,7 @@ class IMFIngestionClient:
                             value=v.value,
                             metadata={"category": cfg["category"], "dataflow": v.dataflow},
                             obs_family_id=fam_id,
+                            vintage_quality="synthetic_snapshot",
                         )
                     )
                     count += 1
