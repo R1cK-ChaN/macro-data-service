@@ -1,13 +1,12 @@
 """Tests for the EODHD P1 global market-data layer (issue #1).
 
-Covers:
-
-* ``EODHDClient.get_daily_bars`` parses the real EODHD JSON list shape
-* Handles EODHD's 200-OK ``"Ticker Not Found."`` string body
-* ``EODHDMarketDataProvider`` seeds universe, auto-seeds on first refresh,
-  preserves ``history_status``, flags missing corporate actions, and
-  never downgrades a prior break alert on a partial-window refresh
-* ``get_market_history`` returns the agent-native response shape
+Skip-marked at module level after issue #118 P4 retired the SQLite
+market lane (``market_price_bars`` / ``market_corp_actions_raw`` /
+etc.). ``EODHDMarketDataProvider``'s writers call ``SQLiteEngineStore``
+methods that no longer exist (``upsert_market_price_bar``,
+``insert_market_price_bars_raw``, …); the provider is dormant pending
+the follow-up backfill issue rewires it against
+``ClickHouseMarketStore``. That rewire owns the replacement test suite.
 """
 
 from __future__ import annotations
@@ -17,6 +16,13 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+
+pytestmark = pytest.mark.skip(
+    reason=(
+        "EODHD market provider pending CH rewire — "
+        "issue #118 P4 retired SQLite market lane"
+    )
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))

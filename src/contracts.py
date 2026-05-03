@@ -166,16 +166,6 @@ class CalendarItem(Serializable):
 
 
 @dataclass(frozen=True)
-class MarketSnapshot(Serializable):
-    as_of: datetime
-    focus: str
-    headline_summary: list[str]
-    key_events: list[Event]
-    market_prices: dict[str, float]
-    citations: list[SourceReference] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
 class RegimeScore(Serializable):
     axis: str
     score: float

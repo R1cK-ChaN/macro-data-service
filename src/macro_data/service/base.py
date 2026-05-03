@@ -41,12 +41,14 @@ def _document_family(doc: Any) -> str:
 
 
 # Families whose rows live in the document table (as opposed to
-# indicators / market_price_bars). When the caller's family filter is one
-# of these, the indicator + market-bar branches are skipped; otherwise
-# only those branches run and documents are skipped. ``trend`` is stored
-# in ``trend_topics`` — list_items does not yet project it, so it is
+# indicators). When the caller's family filter is one of these, the
+# indicator branch is skipped; otherwise only the indicator branch
+# runs and documents are skipped. ``trend`` is stored in
+# ``trend_topics`` — list_items does not yet project it, so it is
 # omitted here on purpose (returning documents under a `trend` filter
-# would mislabel the rows).
+# would mislabel the rows). The market-price branch retired in issue
+# #118 P4 — market data now lives in ClickHouse and ``list_items``
+# deliberately stays macro-line-only.
 _DOCUMENT_FAMILIES: frozenset[str] = frozenset(
     {"news", "note", "calendar", "release_report"}
 )

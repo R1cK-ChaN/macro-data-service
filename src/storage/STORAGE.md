@@ -1,11 +1,16 @@
 # Storage Layer
 
-SQLite-based persistence with WAL mode and foreign keys enabled.
-All tables live in a single `engine.db` file (`~/.analyst/engine.db` by default).
+SQLite-based persistence (the **macro line** — calendar / indicators /
+documents / news / fundamentals) with WAL mode and foreign keys enabled.
+All macro tables live in a single `engine.db` file
+(`.macro-data/engine.db` by default).
+
+The **market line** moved to ClickHouse in issue #118 — see
+`storage/clickhouse/`. Cross-domain reads stay a service-level fan-out;
+the two stores never JOIN inside the database.
 
 The structural ontology lives in the normalized `doc_*`, `obs_*`, and
-`calendar_indicator*` tables. `market_prices` remains a separate market-data
-store and is not linked through deterministic ontology edges.
+`calendar_indicator*` tables.
 
 ---
 
@@ -133,7 +138,6 @@ This populates 16 sources and 41 release families.
 | `upsert_document_extra()` / `get_document_extra()` | JSON overflow metadata |
 | `list_items_for_subject()` / `list_items_combined()` | Subject-filtered document feed; accepts a `family` kwarg that pushes a family predicate (`news`, `note`, `calendar`, `release_report`) into SQL so the LIMIT bounds matching rows |
 | `list_subject_indicators()` | Indicator observations reached from a `subject_id` — unions the `subject_aliases → concept_map → indicators` bridge (pivoted through `concept_id`, constrained by alias source) with a direct `subject_aliases → indicators` path; applies per-series fair-share before the cap |
-| `list_subject_market_bars()` | Market-price bars reached from a `subject_id` via `primary_ticker` / `instrument_id` / `provider_symbols_json` matches against subject aliases |
 
 ---
 
@@ -458,8 +462,6 @@ capability/catalog state describes what a source *can* expose, while
 | Table | Purpose |
 |-------|---------|
 | `calendar_events` | Legacy economic calendar compatibility table; HTML refresh retired |
-| `market_prices` | Asset price snapshots (yfinance) |
-| `market_corp_actions_raw` | Per-ticker dividend/split audit lane (issue #67 slice 2) |
 | `fundamentals_raw` | EODHD `/api/fundamentals/` snapshot audit lane (issue #68 slice 1) |
 | `fundamentals_company` | Company profile from `General` block — sector / industry / FY end |
 | `fundamentals_financials` | IS / BS / CF × quarterly + annual — typed columns + payload_json |
@@ -634,7 +636,14 @@ storage/models/
                     ReleaseStatusRecord, CentralBankCommunicationRecord.
   market.py       — MarketPriceRecord, MarketInstrumentRecord,
                     MarketSymbolHistoryRecord, MarketPriceBarRecord,
-                    MarketCorpActionsRawRecord.
+                    MarketCorpActionsRawRecord. Records survive after
+                    issue #118 retired the SQLite tables — the dormant
+                    Tiingo / EODHD / macro_market ingestion clients
+                    still build them pending the follow-up backfill
+                    rewire against ClickHouse. The new
+                    ClickHouse-shaped records (CHBar / CHDividend /
+                    CHSplit / CHInstrument) live under
+                    `storage/clickhouse/records.py`.
   fundamentals.py — FundamentalsRawRecord, FundamentalsCompanyRecord,
                     FundamentalsFinancialsRecord,
                     FundamentalsHighlightsRecord,
@@ -693,8 +702,7 @@ storage/queries/
   documents.py    — doc_source + doc_release_family + document +
                     document_blob + document_extra + documents_fts +
                     item_subjects + cross-cutting subject queries
-                    (list_items_combined, list_subject_indicators,
-                    list_subject_market_bars).
+                    (list_items_combined, list_subject_indicators).
   indicator.py    — indicators + indicator_vintages + central_bank_comms +
                     obs_source / obs_family / obs_family_document +
                     concept_map + obs_enrichment + subjects (taxonomy table
@@ -702,8 +710,12 @@ storage/queries/
                     catalog_sync_*. Owns the per-source family-map seed
                     dicts (_FRED_FAMILY_MAP, _EIA_FAMILY_MAP, _OBS_SOURCE_DEFS,
                     _OBS_DOC_LINKS, _VINTAGE_FAMILY_IDS).
-  market.py       — market_prices, market_instruments, market_symbol_history,
-                    market_price_bars.
+  market.py       — RETIRED (issue #118 P4). The SQLite market lane
+                    was retired and the file deleted; the
+                    `_MarketQueriesMixin` is no longer composed onto
+                    `SQLiteEngineStore`. Market reads/writes now route
+                    through `storage/clickhouse/store.py`'s
+                    `ClickHouseMarketStore`.
   news.py         — news_articles + trend_topics + article_fingerprint +
                     news_context scoring (with the impact-decay constants).
   sentiment.py    — x_tracked_accounts, x_keyword_pool, x_posts,

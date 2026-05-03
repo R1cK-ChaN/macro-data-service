@@ -1,13 +1,10 @@
 """Tests for the P1 macro → market projection (issue #1).
 
-Covers:
-
-* ``MacroMarketProvider.seed_universe`` upserts rates/FX/commodity rows
-* ``refresh_market_history`` projects ``indicators`` rows into
-  ``market_price_bars`` with open=high=low=close=value and no corp-act flag
-* ``get_market_history`` returns the agent-native shape with unit/asset_class
-* Orchestrator registers ``macro_market`` in the default refresh order
-  after ``eia`` so the projection runs on fresh FRED/EIA data
+Skip-marked at module level after issue #118 P4 retired the SQLite
+market lane. ``MacroMarketProvider`` projects ``indicators`` (still on
+SQLite) into the legacy ``market_price_bars`` table that no longer
+exists. The follow-up backfill issue revisits whether this projection
+moves to ClickHouse or is dropped entirely.
 """
 
 from __future__ import annotations
@@ -16,6 +13,13 @@ import sys
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.skip(
+    reason=(
+        "macro_market projection pending CH rewire — "
+        "issue #118 P4 retired SQLite market lane"
+    )
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))

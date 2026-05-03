@@ -1681,7 +1681,6 @@ class _IndicatorQueriesMixin:
             "unsd": ("indicators", "source = ?", ("unsd",), "scraped_at"),
             "fred_vintages": ("indicator_vintages", "source = ?", ("fred",), "scraped_at"),
             "imf_vintages": ("indicator_vintages", "source = ?", ("imf",), "scraped_at"),
-            "market": ("market_prices", "1 = 1", tuple(), "scraped_at"),
             "fed": ("central_bank_comms", "source = ?", ("fed",), "scraped_at"),
             "calendar": (
                 "v_calendar_item", "1 = 1", (),

@@ -1,4 +1,4 @@
-"""SQLite-backed engine store for the local macro-data service.
+"""SQLite-backed engine store for the macro line.
 
 After issue #71 Tier 2.1B the file is reduced to:
 
@@ -7,13 +7,19 @@ After issue #71 Tier 2.1B the file is reduced to:
   ``_connection`` / ``init_schema``);
 * per-domain query mixins composed into ``SQLiteEngineStore`` via
   multiple inheritance, each owning the SQL for its tables — see
-  ``storage.queries.{calendar,documents,fundamentals,indicator,market,
+  ``storage.queries.{calendar,documents,fundamentals,indicator,
   news,sentiment}``;
 * backwards-compatibility re-exports of the record dataclasses from
   ``storage.models`` and the calendar-vintage helper from
   ``storage.queries.calendar``, so external ``from storage.sqlite import
   XRecord`` / ``…import append_calendar_event_vintage_if_changed_with_conn``
   consumers keep working.
+
+After issue #118 the market lane (``bars``, ``dividends``, ``splits``,
+``instruments``) lives in ClickHouse — see ``storage.clickhouse``. The
+SQLite store no longer carries the ``MarketX`` mixin / record re-exports;
+the macro line (calendar / indicators / documents / news / fundamentals)
+stays here.
 
 DDL lives in ``storage.schema``; the seed-data dictionaries that power
 ``seed_obs_sources_and_families`` / ``seed_calendar_indicators`` /
@@ -45,12 +51,6 @@ from storage.models import (
     FundamentalsRawRecord,
     IndicatorObservationRecord,
     IndicatorVintageRecord,
-    MarketCorpActionsRawRecord,
-    MarketInstrumentRecord,
-    MarketPriceBarRecord,
-    MarketPriceBarsRawRecord,
-    MarketPriceRecord,
-    MarketSymbolHistoryRecord,
     NewsArticleRecord,
     ObsFamilyDocumentRecord,
     ObsFamilyRecord,
@@ -70,7 +70,6 @@ from storage.queries.calendar import (
 from storage.queries.documents import _DocumentsQueriesMixin
 from storage.queries.fundamentals import _FundamentalsQueriesMixin
 from storage.queries.indicator import _IndicatorQueriesMixin
-from storage.queries.market import _MarketQueriesMixin
 from storage.queries.news import _NewsQueriesMixin
 from storage.queries.sentiment import _SentimentQueriesMixin
 from storage.schema import apply_schema
@@ -86,7 +85,6 @@ class SQLiteEngineStore(
     _DocumentsQueriesMixin,
     _FundamentalsQueriesMixin,
     _IndicatorQueriesMixin,
-    _MarketQueriesMixin,
     _NewsQueriesMixin,
     _SentimentQueriesMixin,
 ):

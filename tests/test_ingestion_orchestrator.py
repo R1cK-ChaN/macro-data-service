@@ -21,7 +21,7 @@ class IngestionOrchestratorTest(unittest.TestCase):
             forexfactory=Mock(),
             tradingeconomics=Mock(),
             fed=Mock(),
-            market=Mock(),
+
             news=Mock(),
             reddit_trends=Mock(),
             weibo_trends=Mock(),
@@ -107,7 +107,7 @@ class IngestionOrchestratorTest(unittest.TestCase):
             forexfactory=Mock(),
             tradingeconomics=Mock(),
             fed=Mock(),
-            market=Mock(),
+
             news=Mock(),
             reddit_trends=fake_reddit_trends,
             weibo_trends=Mock(),
@@ -153,7 +153,7 @@ class IngestionOrchestratorTest(unittest.TestCase):
             forexfactory=Mock(),
             tradingeconomics=Mock(),
             fed=Mock(),
-            market=Mock(),
+
             news=Mock(),
             reddit_trends=Mock(),
             weibo_trends=fake_weibo_trends,
@@ -193,7 +193,7 @@ class SourceFamilyTaggingTest(unittest.TestCase):
         return IngestionOrchestrator(
             store=Mock(),
             fred=Mock(), investing=Mock(), forexfactory=Mock(),
-            tradingeconomics=Mock(), fed=Mock(), market=Mock(),
+            tradingeconomics=Mock(), fed=Mock(),
             news=Mock(), reddit_trends=Mock(), weibo_trends=Mock(),
             rate_probability=Mock(), nyfed=Mock(), gov_report=Mock(),
             eia=Mock(), treasury_fiscal=Mock(), imf=Mock(),
@@ -211,9 +211,13 @@ class SourceFamilyTaggingTest(unittest.TestCase):
         rows = orch.list_sources()
         self.assertTrue(all(set(r.keys()) == {"name", "family"} for r in rows))
         by_name = {r["name"]: r["family"] for r in rows}
-        # Spot-check one entry per family bucket.
+        # Spot-check one entry per family bucket. Issue #118 P4
+        # retired the SQLite market lane and unregistered the
+        # ``tiingo_market`` / ``eodhd_market`` / ``macro_market`` /
+        # ``identity_repair`` sources from the orchestrator default
+        # roster — the follow-up backfill issue re-registers them
+        # against ``ClickHouseMarketStore``.
         self.assertEqual(by_name["fred_daily"], "economic_data")
-        self.assertEqual(by_name["tiingo_market"], "market_price")
         self.assertEqual(by_name["gov_reports"], "release_report")
         self.assertEqual(by_name["fed"], "release_report")
         self.assertEqual(by_name["news"], "news")
