@@ -72,10 +72,12 @@ class LocalMacroDataServiceBase:
         store: Any,
         market_store: Any | None = None,
         ingestion: Any | None = None,
+        health: Any | None = None,
     ) -> None:
         self._store = store
         self._market_store = market_store
         self._ingestion = ingestion
+        self._health = health
         self._ontology_seeded = False
         self._subject_vocabulary_seeded = False
 
@@ -85,8 +87,14 @@ class LocalMacroDataServiceBase:
             raise KeyError(f"unknown macro-data operation: {operation}")
         return handler(arguments or {})
 
+    def _store_is_read_only(self) -> bool:
+        return bool(getattr(self._store, "read_only", False))
+
     def _ensure_structural_ontology(self) -> None:
         if self._ontology_seeded:
+            return
+        if self._store_is_read_only():
+            self._ontology_seeded = True
             return
         seed = getattr(self._store, "seed_structural_ontology", None)
         if callable(seed):
@@ -102,6 +110,9 @@ class LocalMacroDataServiceBase:
         so we load the yaml vocabulary + default concept map on demand
         — both helpers are idempotent so repeat calls are cheap."""
         if self._subject_vocabulary_seeded:
+            return
+        if self._store_is_read_only():
+            self._subject_vocabulary_seeded = True
             return
         try:
             from storage.subjects import sync_from_yaml

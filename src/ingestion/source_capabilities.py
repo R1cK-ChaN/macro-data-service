@@ -90,11 +90,18 @@ class SourceCapabilityManager:
         *,
         orchestrator: Any | None = None,
         adapters: dict[str, SourceCapabilityAdapter] | None = None,
+        seed_registry: bool = True,
     ) -> None:
         self._store = store
         self._orchestrator = orchestrator
-        self._adapters = adapters or self._build_default_adapters(orchestrator)
-        self.seed_registry()
+        self._adapters = (
+            adapters
+            if adapters is not None
+            else self._build_default_adapters(orchestrator)
+        )
+        self._seed_registry = seed_registry
+        if self._seed_registry:
+            self.seed_registry()
 
     def seed_registry(self) -> None:
         for adapter in self._adapters.values():
@@ -105,7 +112,8 @@ class SourceCapabilityManager:
 
     # ── Public capability + entity API ─────────────────────────────────
     def list_capabilities(self, *, include_internal: bool = True) -> list[dict[str, Any]]:
-        self.seed_registry()
+        if self._seed_registry:
+            self.seed_registry()
         items = self._store.list_source_capabilities()
         if include_internal:
             return items

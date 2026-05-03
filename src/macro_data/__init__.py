@@ -6,7 +6,7 @@ from .client import (
     build_local_macro_data_client,
     coerce_macro_data_client,
 )
-from .factory import build_local_macro_data_service
+from .factory import build_local_macro_data_service, build_read_only_macro_data_service
 from .service import LocalMacroDataService
 
 __all__ = [
@@ -17,5 +17,6 @@ __all__ = [
     "MacroDataHttpConfig",
     "build_local_macro_data_client",
     "build_local_macro_data_service",
+    "build_read_only_macro_data_service",
     "coerce_macro_data_client",
 ]

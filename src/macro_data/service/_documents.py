@@ -133,11 +133,12 @@ class DocumentsOpsMixin(LocalMacroDataServiceBase):
         """List the subject vocabulary. Seeds the yaml on first call so
         the response is always complete on a fresh DB."""
         del arguments
-        try:
-            from storage.subjects import sync_from_yaml
-            sync_from_yaml(self._store)
-        except (AttributeError, TypeError, FileNotFoundError):
-            pass  # best-effort; yaml may be unavailable in test environments
+        if not self._store_is_read_only():
+            try:
+                from storage.subjects import sync_from_yaml
+                sync_from_yaml(self._store)
+            except (AttributeError, TypeError, FileNotFoundError):
+                pass  # best-effort; yaml may be unavailable in test environments
         return {"subjects": self._store.list_subjects()}
 
     def _op_backfill_document_indexes(self, arguments: dict[str, Any]) -> dict[str, Any]:
