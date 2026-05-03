@@ -19,6 +19,77 @@ logger = logging.getLogger(__name__)
 _EUROSTAT_QUARTER_MAP = {"1": "01", "2": "04", "3": "07", "4": "10"}
 
 
+def _normalize_eurostat_period(raw: str) -> str:
+    """Normalize Eurostat-format periods to YYYY-MM-DD.
+
+    Handles ``2024M01`` and ``2024-M01`` (monthly), ``2024Q1`` and
+    ``2024-Q1`` (quarterly), plus the standard ``YYYY-MM`` /
+    ``YYYY-MM-DD`` / ``YYYY`` shapes the SDMX base normalizer covers.
+    Both the dashed and non-dashed forms appear across Eurostat
+    datasets (``namq_10_gdp`` publishes ``2024-Q1``, ``ei_bsin_m_r2``
+    publishes ``2024M01``); covering both keeps the replay path
+    aligned with the live HTTP path's projected observation_date.
+    Standalone so the issue #116 P3 replay path can call it without
+    instantiating the client.
+    """
+    m = re.match(r"^(\d{4})-?M(\d{2})$", raw)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-01"
+    m = re.match(r"^(\d{4})-?Q(\d)$", raw)
+    if m:
+        return f"{m.group(1)}-{_EUROSTAT_QUARTER_MAP.get(m.group(2), '01')}-01"
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", raw):
+        return raw
+    if re.match(r"^\d{4}-\d{2}$", raw):
+        return f"{raw}-01"
+    if re.match(r"^\d{4}$", raw):
+        return f"{raw}-01-01"
+    return raw
+
+
+def _parse_eurostat_jsonstat(
+    payload: dict,
+    *,
+    dataset_code: str,
+    series_id: str,
+    limit: int = 100,
+) -> list[SDMXObservation]:
+    """Parse a Eurostat JSON-stat payload into typed observations.
+
+    Module-level so the issue #116 P3 replay path can re-project a
+    stored ``obs_raw`` row through the same parser the live HTTP path
+    uses — no behavior drift between live ingest and audit replay.
+    Uses ``_normalize_eurostat_period`` for the M/Q/year shapes the
+    JSON-stat envelope publishes.
+    """
+    time_dim = payload.get("dimension", {}).get("time", {}).get("category", {}).get("index", {})
+    if not time_dim:
+        return []
+    pos_to_period: dict[int, str] = {v: k for k, v in time_dim.items()}
+    values = payload.get("value", {})
+
+    observations: list[SDMXObservation] = []
+    for pos_str, val in values.items():
+        try:
+            pos = int(pos_str)
+            if val is None:
+                continue
+            period = pos_to_period.get(pos)
+            if period is None:
+                continue
+            observations.append(SDMXObservation(
+                series_id=series_id,
+                date=_normalize_eurostat_period(period),
+                value=float(val),
+                dataset=dataset_code,
+            ))
+        except (ValueError, TypeError, KeyError):
+            continue
+
+    observations.sort(key=lambda o: o.date, reverse=True)
+    return observations[:limit]
+
+
 def _filter_nuts_codes(codes: tuple[str, ...], level: int = 0) -> tuple[str, ...]:
     """Filter NUTS codes by level (0=country 2-char, 1=NUTS1 3-char, etc.)."""
     target_len = level + 2
@@ -83,6 +154,27 @@ class EurostatClient(SDMXClient):
         limit: int = 100,
     ) -> list[SDMXObservation]:
         """Fetch observations from the Eurostat JSON-stat endpoint."""
+        observations, _payload, _params = self.get_dataset_with_raw(
+            dataset_code, params=params, series_id=series_id, limit=limit,
+        )
+        return observations
+
+    def get_dataset_with_raw(
+        self,
+        dataset_code: str,
+        *,
+        params: dict[str, str] | None = None,
+        series_id: str,
+        limit: int = 100,
+    ) -> tuple[list[SDMXObservation], dict, dict[str, str]]:
+        """Fetch JSON-stat observations and return the raw envelope.
+
+        Used by the issue #116 ``obs_raw`` write path so the projector
+        boundary can land both the typed observations and the upstream
+        payload. Eurostat's JSON-stat shape differs from SDMX-JSON
+        (``dimension.time.category.index`` + ``value`` map) so it gets
+        its own canonicalize function (``canonicalize_eurostat_jsonstat_payload``).
+        """
         url = f"{self.JSON_STAT_BASE}/{dataset_code}"
         query: dict[str, str] = {"format": "JSON", "lang": "en"}
         if params:
@@ -90,34 +182,25 @@ class EurostatClient(SDMXClient):
 
         response = self.session.get(url, params=query, timeout=self.timeout)
         response.raise_for_status()
-        data = response.json()
+        payload = response.json()
+        observations = self._parse_jsonstat_payload(
+            payload, dataset_code=dataset_code, series_id=series_id, limit=limit,
+        )
+        audit_params = {"dataset": dataset_code, **{k: str(v) for k, v in query.items()}}
+        return observations, payload, audit_params
 
-        time_dim = data.get("dimension", {}).get("time", {}).get("category", {}).get("index", {})
-        if not time_dim:
-            return []
-        pos_to_period: dict[int, str] = {v: k for k, v in time_dim.items()}
-        values = data.get("value", {})
-
-        observations: list[SDMXObservation] = []
-        for pos_str, val in values.items():
-            try:
-                pos = int(pos_str)
-                if val is None:
-                    continue
-                period = pos_to_period.get(pos)
-                if period is None:
-                    continue
-                observations.append(SDMXObservation(
-                    series_id=series_id,
-                    date=self._normalize_date(period),
-                    value=float(val),
-                    dataset=dataset_code,
-                ))
-            except (ValueError, TypeError, KeyError):
-                continue
-
-        observations.sort(key=lambda o: o.date, reverse=True)
-        return observations[:limit]
+    def _parse_jsonstat_payload(
+        self,
+        payload: dict,
+        *,
+        dataset_code: str,
+        series_id: str,
+        limit: int,
+    ) -> list[SDMXObservation]:
+        """Instance shim around the module-level ``_parse_eurostat_jsonstat``."""
+        return _parse_eurostat_jsonstat(
+            payload, dataset_code=dataset_code, series_id=series_id, limit=limit,
+        )
 
     # ── Geo-aware chunked fetch ───────────────────────────────────────
 

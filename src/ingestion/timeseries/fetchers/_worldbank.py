@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import UTC, datetime
 
 from ingestion.scrapers.worldbank import WorldBankClient
 from ingestion.series_config import WORLDBANK_SERIES, WorldBankSeriesConfig
+from ingestion.timeseries.canonicalize import content_hash_for_source
 from ingestion.types import RawObservation, RawSeries
 
 logger = logging.getLogger(__name__)
@@ -46,7 +48,7 @@ class WorldBankFetcher:
 
     def _fetch_one(self, cfg: WorldBankSeriesConfig) -> RawSeries | None:
         try:
-            obs_list = self.client.get_indicator(
+            obs_list, payload, params = self.client.get_indicator_with_raw(
                 cfg.indicator,
                 cfg.country,
                 series_id=cfg.series_id,
@@ -72,10 +74,14 @@ class WorldBankFetcher:
             )
             for obs in obs_list
         )
+        content_hash = content_hash_for_source("worldbank", payload) if payload else None
         return RawSeries(
             source="worldbank",
             series_id=cfg.series_id,
             observations=raw_obs,
             fetched_at=datetime.now(UTC).isoformat(),
             series_metadata={"category": cfg.category, "indicator": cfg.indicator},
+            raw_payload=payload or None,
+            content_hash=content_hash,
+            request_params_json=json.dumps(params, sort_keys=True) if params else None,
         )

@@ -59,6 +59,39 @@ class EIAFacet:
 _MIN_REQUEST_INTERVAL = 0.5  # seconds between requests
 
 
+def _parse_eia_observations(
+    payload: dict, *, series_id: str, value_col: str,
+) -> list[EIAObservation]:
+    """Parse ``payload['response']['data']`` into typed ``EIAObservation`` rows.
+
+    Standalone helper so the issue #116 re-projection path can replay a
+    stored ``obs_raw`` row through the same parser the live HTTP path
+    uses — no behavior drift between live ingest and audit replay.
+    The ``value_col`` is the EIA v2 ``data[]`` parameter (e.g. ``"sales"``,
+    ``"generation"``) which names the value column in each row.
+    """
+    rows = payload.get("response", {}).get("data", [])
+    observations: list[EIAObservation] = []
+    for row in rows:
+        try:
+            val = row.get(value_col) if value_col != "value" else row.get("value")
+            if val is None and value_col != "value":
+                val = row.get("value")
+            if val is None or val == "":
+                continue
+            unit_key = f"{value_col}-units" if value_col != "value" else "units"
+            unit = str(row.get(unit_key, row.get("units", row.get("unit", ""))))
+            observations.append(EIAObservation(
+                series_id=series_id,
+                date=str(row.get("period", "")),
+                value=float(val),
+                unit=unit,
+            ))
+        except (ValueError, TypeError):
+            continue
+    return observations
+
+
 class EIAClient:
     """Client for the EIA Open Data API v2."""
 
@@ -149,8 +182,49 @@ class EIAClient:
             start: Optional start date filter (YYYY-MM-DD).
             limit: Maximum rows to return.
         """
+        observations, _payload, _params = self.get_series_with_raw(
+            route, params=params, series_id=series_id, start=start, limit=limit,
+        )
+        return observations
+
+    def get_series_with_raw(
+        self,
+        route: str,
+        *,
+        params: dict,
+        series_id: str,
+        start: str | None = None,
+        limit: int = 100,
+    ) -> tuple[list[EIAObservation], dict, dict[str, str]]:
+        """Fetch observations and also return the raw HTTP body + request params.
+
+        Used by the issue #116 ``obs_raw`` write path so the projector
+        boundary can land both the typed observations and the upstream
+        bytes. Returns ``([], {}, params)`` when the API key is unset
+        (matches ``get_series`` no-op semantics). The returned params
+        omit ``api_key`` so the audit row never logs the secret.
+        """
+        # EIA v2 names the value column after the ``data[]`` parameter
+        # (e.g. ``"sales"``, ``"generation"``); fall back to ``"value"``.
+        value_col = params.get("data[]", "value")
+        audit_params: dict[str, str] = {
+            "route": route,
+            "length": str(limit),
+            "sort[0][column]": "period",
+            "sort[0][direction]": "desc",
+        }
+        for k, v in params.items():
+            if k == "api_key":
+                # Caller-supplied secret — drop unconditionally; the
+                # docstring promises the audit row never logs it.
+                continue
+            audit_params[k] = str(v) if not isinstance(v, list) else ",".join(map(str, v))
+        if start:
+            audit_params["start"] = start
+
         if not self.api_key:
-            return []
+            return [], {}, audit_params
+
         url = f"{self.BASE_URL}/{route}"
         query: dict = {
             "api_key": self.api_key,
@@ -162,33 +236,11 @@ class EIAClient:
         if start:
             query["start"] = start
 
-        # Determine which column holds the value — EIA v2 names the column
-        # after the data[] parameter (e.g. "sales", "generation"), falling
-        # back to "value" for datasets that use a generic column.
-        value_col = params.get("data[]", "value")
-
-        data = self._get(url, _raw_params=query, _skip_api_key=True)
-        rows = data.get("response", {}).get("data", [])
-        observations: list[EIAObservation] = []
-        for row in rows:
-            try:
-                val = row.get(value_col) if value_col != "value" else row.get("value")
-                if val is None and value_col != "value":
-                    val = row.get("value")
-                if val is None or val == "":
-                    continue
-                # Derive unit from "<col>-units" or generic "units"/"unit"
-                unit_key = f"{value_col}-units" if value_col != "value" else "units"
-                unit = str(row.get(unit_key, row.get("units", row.get("unit", ""))))
-                observations.append(EIAObservation(
-                    series_id=series_id,
-                    date=str(row.get("period", "")),
-                    value=float(val),
-                    unit=unit,
-                ))
-            except (ValueError, TypeError):
-                continue
-        return observations
+        payload = self._get(url, _raw_params=query, _skip_api_key=True)
+        observations = _parse_eia_observations(
+            payload, series_id=series_id, value_col=value_col,
+        )
+        return observations, payload, audit_params
 
     def get_metadata(self, route: str) -> dict:
         """Fetch metadata/facets for an EIA dataset route."""

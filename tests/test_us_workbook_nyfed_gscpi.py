@@ -56,17 +56,42 @@ class _FakeSession:
 
 
 class _FakeNYFedClient:
-    def fetch_sofr(self, last_n: int) -> list[_FakeRate]:
-        return [_FakeRate(rate=4.31)]
+    def fetch_sofr_with_raw(
+        self, *, last_n: int,
+    ) -> tuple[list[_FakeRate], dict, dict]:
+        return (
+            [_FakeRate(rate=4.31)],
+            {"refRates": [{"effectiveDate": "2026-03-31", "percentRate": 4.31}]},
+            {"url": "sofr", "rate_type": "SOFR", "last_n": str(last_n)},
+        )
 
-    def fetch_effr(self, last_n: int) -> list[_FakeRate]:
-        return [_FakeRate(rate=4.32)]
+    def fetch_effr_with_raw(
+        self, *, last_n: int,
+    ) -> tuple[list[_FakeRate], dict, dict]:
+        return (
+            [_FakeRate(rate=4.32)],
+            {"refRates": [{"effectiveDate": "2026-03-31", "percentRate": 4.32}]},
+            {"url": "effr", "rate_type": "EFFR", "last_n": str(last_n)},
+        )
 
-    def fetch_obfr(self, last_n: int) -> list[_FakeRate]:
-        return [_FakeRate(rate=4.30)]
+    def fetch_obfr_with_raw(
+        self, *, last_n: int,
+    ) -> tuple[list[_FakeRate], dict, dict]:
+        return (
+            [_FakeRate(rate=4.30)],
+            {"refRates": [{"effectiveDate": "2026-03-31", "percentRate": 4.30}]},
+            {"url": "obfr", "rate_type": "OBFR", "last_n": str(last_n)},
+        )
 
-    def fetch_gscpi(self, last_n: int) -> list[NYFedGSCPI]:
-        return [NYFedGSCPI(date="2026-03-31", value=0.6769936395789531)]
+    def fetch_gscpi_with_raw(
+        self, *, last_n: int,
+    ) -> tuple[list[NYFedGSCPI], dict, dict]:
+        rows = [NYFedGSCPI(date="2026-03-31", value=0.6769936395789531)]
+        return (
+            rows,
+            {"observations": [{"date": r.date, "value": r.value} for r in rows]},
+            {"url": GSCPI_DATA_URL, "last_n": str(last_n)},
+        )
 
 
 def _record(record_type: int, payload: bytes = b"") -> bytes:

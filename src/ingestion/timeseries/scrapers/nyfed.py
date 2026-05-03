@@ -61,18 +61,36 @@ class NYFedRatesClient:
 
     def fetch_sofr(self, last_n: int = 5) -> list[NYFedRate]:
         """Fetch the last N SOFR observations."""
+        observations, _payload, _params = self.fetch_sofr_with_raw(last_n=last_n)
+        return observations
+
+    def fetch_sofr_with_raw(
+        self, *, last_n: int = 5,
+    ) -> tuple[list[NYFedRate], dict, dict[str, str]]:
         url = f"{self.BASE_URL}/secured/sofr/last/{last_n}.json"
-        return self._fetch_rates(url, "SOFR")
+        return self._fetch_rates_with_raw(url, "SOFR", last_n=last_n)
 
     def fetch_effr(self, last_n: int = 5) -> list[NYFedRate]:
         """Fetch the last N EFFR observations."""
+        observations, _payload, _params = self.fetch_effr_with_raw(last_n=last_n)
+        return observations
+
+    def fetch_effr_with_raw(
+        self, *, last_n: int = 5,
+    ) -> tuple[list[NYFedRate], dict, dict[str, str]]:
         url = f"{self.BASE_URL}/unsecured/effr/last/{last_n}.json"
-        return self._fetch_rates(url, "EFFR")
+        return self._fetch_rates_with_raw(url, "EFFR", last_n=last_n)
 
     def fetch_obfr(self, last_n: int = 5) -> list[NYFedRate]:
         """Fetch the last N OBFR observations."""
+        observations, _payload, _params = self.fetch_obfr_with_raw(last_n=last_n)
+        return observations
+
+    def fetch_obfr_with_raw(
+        self, *, last_n: int = 5,
+    ) -> tuple[list[NYFedRate], dict, dict[str, str]]:
         url = f"{self.BASE_URL}/unsecured/obfr/last/{last_n}.json"
-        return self._fetch_rates(url, "OBFR")
+        return self._fetch_rates_with_raw(url, "OBFR", last_n=last_n)
 
     def fetch_all_rates(self, last_n: int = 5) -> list[NYFedRate]:
         """Fetch SOFR, EFFR, and OBFR with a short delay between requests."""
@@ -86,43 +104,111 @@ class NYFedRatesClient:
 
     def fetch_gscpi(self, last_n: int | None = 30) -> list[NYFedGSCPI]:
         """Fetch Global Supply Chain Pressure Index observations."""
+        observations, _payload, _params = self.fetch_gscpi_with_raw(last_n=last_n)
+        return observations
+
+    def fetch_gscpi_with_raw(
+        self, *, last_n: int | None = 30,
+    ) -> tuple[list[NYFedGSCPI], dict, dict[str, str]]:
+        """Fetch GSCPI and return ``(rows, payload, params)``.
+
+        The workbook body is binary (XLSX/BIFF8). For ``obs_raw`` storage
+        we wrap the parsed observations as the canonical payload — the
+        original bytes can't be JSON-encoded and the parser is the
+        source of truth for the dataset's observable shape (issue #116).
+        """
         response = self.session.get(GSCPI_DATA_URL, timeout=30)
         response.raise_for_status()
         rows = parse_gscpi_workbook(response.content)
         if last_n is None:
-            return rows
-        if last_n <= 0:
-            return []
-        return rows[-last_n:]
+            sliced = rows
+        elif last_n <= 0:
+            sliced = []
+        else:
+            sliced = rows[-last_n:]
+        payload = {
+            "series_id": "NYFED_GSCPI",
+            "observations": [{"date": r.date, "value": r.value} for r in rows],
+        }
+        params = {"url": GSCPI_DATA_URL, "last_n": str(last_n) if last_n is not None else ""}
+        return sliced, payload, params
 
     def _fetch_rates(self, url: str, rate_type: str) -> list[NYFedRate]:
+        observations, _payload, _params = self._fetch_rates_with_raw(url, rate_type)
+        return observations
+
+    def _fetch_rates_with_raw(
+        self, url: str, rate_type: str, *, last_n: int | None = None,
+    ) -> tuple[list[NYFedRate], dict, dict[str, str]]:
         response = self.session.get(url, timeout=30)
         response.raise_for_status()
         data = response.json()
-        return self._parse_rates(data, rate_type)
+        observations = self._parse_rates(data, rate_type)
+        params = {"url": url, "rate_type": rate_type}
+        if last_n is not None:
+            params["last_n"] = str(last_n)
+        return observations, data, params
 
     def _parse_rates(self, data: dict, rate_type: str) -> list[NYFedRate]:
-        rates: list[NYFedRate] = []
-        for obs in data.get("refRates", []):
-            try:
-                volume_raw = obs.get("volumeInBillions")
-                volume = float(volume_raw) if volume_raw is not None else None
+        return _parse_nyfed_rates_payload(data, rate_type=rate_type)
 
-                rates.append(NYFedRate(
-                    date=obs.get("effectiveDate", ""),
-                    type=rate_type,
-                    rate=float(obs.get("percentRate", 0)),
-                    percentile_1=_float_or_none(obs.get("percentPercentile1")),
-                    percentile_25=_float_or_none(obs.get("percentPercentile25")),
-                    percentile_75=_float_or_none(obs.get("percentPercentile75")),
-                    percentile_99=_float_or_none(obs.get("percentPercentile99")),
-                    volume_billions=volume,
-                    target_rate_from=_float_or_none(obs.get("targetRateFrom")),
-                    target_rate_to=_float_or_none(obs.get("targetRateTo")),
-                ))
-            except (ValueError, TypeError):
-                continue
-        return rates
+
+def _parse_nyfed_rates_payload(payload: dict, *, rate_type: str) -> list[NYFedRate]:
+    """Parse a NY Fed reference-rate JSON envelope into typed observations.
+
+    Module-level so the issue #116 P3 replay path can re-project a stored
+    ``obs_raw`` row through the same parser the live HTTP path uses —
+    no behavior drift between live ingest and audit replay. The
+    ``refRates`` shape is identical across SOFR / EFFR / OBFR endpoints;
+    the caller passes ``rate_type`` so the parsed ``NYFedRate.type``
+    field reflects the originating endpoint.
+    """
+    rates: list[NYFedRate] = []
+    for obs in payload.get("refRates", []):
+        try:
+            volume_raw = obs.get("volumeInBillions")
+            volume = float(volume_raw) if volume_raw is not None else None
+
+            rates.append(NYFedRate(
+                date=obs.get("effectiveDate", ""),
+                type=rate_type,
+                rate=float(obs.get("percentRate", 0)),
+                percentile_1=_float_or_none(obs.get("percentPercentile1")),
+                percentile_25=_float_or_none(obs.get("percentPercentile25")),
+                percentile_75=_float_or_none(obs.get("percentPercentile75")),
+                percentile_99=_float_or_none(obs.get("percentPercentile99")),
+                volume_billions=volume,
+                target_rate_from=_float_or_none(obs.get("targetRateFrom")),
+                target_rate_to=_float_or_none(obs.get("targetRateTo")),
+            ))
+        except (ValueError, TypeError):
+            continue
+    return rates
+
+
+def _parse_nyfed_gscpi_payload(payload: dict) -> list[NYFedGSCPI]:
+    """Parse a NY Fed GSCPI tagged payload back into typed observations.
+
+    The upstream is a binary workbook (XLSX/BIFF8) that ``parse_gscpi_workbook``
+    already projects into ``NYFedGSCPI`` rows; the fetcher then re-encodes
+    those rows under ``payload['observations']`` for ``obs_raw`` storage
+    (the binary bytes can't be JSON-encoded). The replay path reads back
+    that observation list — round-trip is from typed-rows → JSON → typed-rows.
+    """
+    observations = payload.get("observations", [])
+    rows: list[NYFedGSCPI] = []
+    for row in observations:
+        if not isinstance(row, dict):
+            continue
+        try:
+            date = row.get("date", "")
+            value = float(row.get("value"))
+        except (TypeError, ValueError):
+            continue
+        if not date:
+            continue
+        rows.append(NYFedGSCPI(date=date, value=value))
+    return sorted(rows, key=lambda item: item.date)
 
 
 def parse_gscpi_workbook(payload: bytes) -> list[NYFedGSCPI]:

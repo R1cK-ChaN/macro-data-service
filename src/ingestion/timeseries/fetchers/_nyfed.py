@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 from ingestion.scrapers.nyfed import NYFedRatesClient
+from ingestion.timeseries.canonicalize import content_hash_for_source
 from ingestion.types import RawObservation, RawSeries
 
 _SERIES_METHODS = {
-    "NYFED_SOFR": ("fetch_sofr", "rates", "sofr"),
-    "NYFED_EFFR": ("fetch_effr", "rates", "effr"),
-    "NYFED_OBFR": ("fetch_obfr", "rates", "obfr"),
-    "NYFED_GSCPI": ("fetch_gscpi", "supply_chain", "gscpi"),
+    "NYFED_SOFR": ("fetch_sofr_with_raw", "rates", "sofr"),
+    "NYFED_EFFR": ("fetch_effr_with_raw", "rates", "effr"),
+    "NYFED_OBFR": ("fetch_obfr_with_raw", "rates", "obfr"),
+    "NYFED_GSCPI": ("fetch_gscpi_with_raw", "supply_chain", "gscpi"),
 }
 
 
@@ -46,7 +48,7 @@ class NYFedFetcher:
         series_type: str,
     ) -> RawSeries | None:
         try:
-            observations = getattr(self.client, method_name)(last_n=30)
+            observations, payload, params = getattr(self.client, method_name)(last_n=30)
         except Exception:
             return None
         raw_obs = tuple(
@@ -57,12 +59,23 @@ class NYFedFetcher:
             )
             for obs in observations
         )
+        # Tag the canonical payload with the series_id so the per-rate
+        # dispatch (SOFR / EFFR / OBFR all share the same envelope shape)
+        # produces a distinct hash per series.
+        tagged_payload = {**payload, "series_id": series_id} if payload else None
+        content_hash = (
+            content_hash_for_source("nyfed", tagged_payload)
+            if tagged_payload is not None else None
+        )
         return RawSeries(
             source="nyfed",
             series_id=series_id,
             observations=raw_obs,
             fetched_at=datetime.now(UTC).isoformat(),
             series_metadata={"category": category, "type": series_type},
+            raw_payload=tagged_payload,
+            content_hash=content_hash,
+            request_params_json=json.dumps(params, sort_keys=True) if params else None,
         )
 
 
