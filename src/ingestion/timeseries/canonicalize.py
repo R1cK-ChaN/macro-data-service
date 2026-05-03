@@ -588,6 +588,7 @@ _HASH_BY_SOURCE = {
     "treasury_fiscal": treasury_fiscal_content_hash,
     "nyfed": nyfed_content_hash,
     "worldbank": worldbank_content_hash,
+    "worldbank_catalog": worldbank_content_hash,
     "mof_jp": mof_jp_content_hash,
     "aisi": aisi_content_hash,
     "ism": ism_content_hash,

@@ -16,12 +16,17 @@ from ingestion.timeseries._config import (
 )
 from ingestion.timeseries.sdmx.providers.imf import IMFVintageObservation
 from ingestion.timeseries.scrapers.fred import FredObservation, FredVintageObservation
+from ingestion.timeseries.scrapers.worldbank import (
+    WorldBankIndicatorInfo,
+    WorldBankObservation,
+)
 
 
 def _bare_orchestrator() -> IngestionOrchestrator:
     orchestrator = IngestionOrchestrator.__new__(IngestionOrchestrator)
     orchestrator._validation = None
     orchestrator._last_run_reports = {}
+    orchestrator._family_lookup = {}
     orchestrator._ensure_obs_seed = lambda: None
     orchestrator._fetch_with_obs_raw = (
         lambda fetcher, *, lookback_days: fetcher.fetch(lookback_days=lookback_days)
@@ -250,3 +255,61 @@ def test_issue_131_imf_vintages_preserves_partial_failures() -> None:
     ]
     assert calls == expected_series_ids
     assert {row.series_id for row in rows} == set(expected_series_ids) - {IMF_SERIES[failed_key]["series_id"]}
+
+
+def test_issue_131_worldbank_catalog_uses_fetcher_pipeline() -> None:
+    calls: list[tuple[str, str, int, int, bool]] = []
+
+    class FakeWorldBankClient:
+        def list_indicators(self, *, source_id=None, topic_id=None):
+            return [
+                WorldBankIndicatorInfo(
+                    id="SP.POP.TOTL",
+                    name="Population, total",
+                    source_name="World Development Indicators",
+                )
+            ]
+
+        def get_indicator_with_raw(
+            self,
+            indicator_code: str,
+            country: str,
+            *,
+            series_id: str,
+            limit: int,
+            per_page: int,
+            fetch_all_pages: bool,
+        ):
+            calls.append((indicator_code, country, limit, per_page, fetch_all_pages))
+            payload = {
+                "response": [
+                    {"total": 2, "page": 1, "pages": 1, "per_page": per_page},
+                    [
+                        {"countryiso3code": "USA", "date": "2025", "value": 1.0},
+                        {"countryiso3code": "JPN", "date": "2025", "value": 2.0},
+                    ],
+                ]
+            }
+            params = {"indicator": indicator_code, "country": country}
+            return [
+                WorldBankObservation(series_id, "2025-01-01", 1.0, indicator_code, "US", "United States"),
+                WorldBankObservation(series_id, "2025-01-01", 2.0, indicator_code, "JP", "Japan"),
+            ], payload, params
+
+    orchestrator = _bare_orchestrator()
+    orchestrator.worldbank = SimpleNamespace(client=FakeWorldBankClient())
+
+    definition = orchestrator._build_worldbank_catalog_source()
+    rows = definition.fetch()
+    records = definition.normalize(rows)
+
+    assert definition.execute is None
+    assert {row.source for row in rows} == {"worldbank_catalog"}
+    assert {row.series_id for row in rows} == {"WB_SP.POP.TOTL"}
+    assert {record.source for record in records} == {"worldbank"}
+    assert {record.series_id for record in records} == {
+        "WB_SP.POP.TOTL_US",
+        "WB_SP.POP.TOTL_JP",
+    }
+    assert {record.metadata["category"] for record in records} == {"catalog"}
+    assert calls == [("SP.POP.TOTL", "all", 1500, 1000, True)]

@@ -216,6 +216,88 @@ def test_imf_vintages_bronze_replay_matches_silver():
     assert isinstance(replayed[0], IMFVintageObservation)
 
 
+# ── WorldBank catalog ─────────────────────────────────────────────────────
+
+
+def test_worldbank_catalog_bronze_replay_matches_silver():
+    from ingestion.fetchers._worldbank import WorldBankCatalogFetcher
+    from ingestion.timeseries.scrapers.worldbank import (
+        WorldBankIndicatorInfo,
+        _parse_worldbank_indicator_payload,
+    )
+
+    payload = {
+        "response": [
+            {"total": 2, "page": 1, "pages": 1, "per_page": 1000},
+            [
+                {
+                    "country": {"id": "US", "value": "United States"},
+                    "date": "2025",
+                    "value": 1.0,
+                },
+                {
+                    "country": {"id": "JP", "value": "Japan"},
+                    "date": "2025",
+                    "value": 2.0,
+                },
+            ],
+        ]
+    }
+    expected = _parse_worldbank_indicator_payload(
+        payload,
+        series_id="WB_SP.POP.TOTL",
+        indicator="SP.POP.TOTL",
+        limit=None,
+    )
+
+    fake_client = MagicMock()
+    fake_client.list_indicators.return_value = [
+        WorldBankIndicatorInfo(
+            id="SP.POP.TOTL",
+            name="Population, total",
+            source_name="World Development Indicators",
+        )
+    ]
+    fake_client.get_indicator_with_raw.return_value = (
+        expected,
+        payload,
+        {"indicator": "SP.POP.TOTL", "country": "all"},
+    )
+    fetcher = WorldBankCatalogFetcher(client=fake_client, max_workers=1)
+    [rs] = fetcher.fetch()
+    silver = [
+        (
+            obs.provider_metadata["storage_series_id"],
+            obs.date,
+            obs.value,
+        )
+        for obs in rs.observations
+    ]
+
+    replayed = _parse_worldbank_indicator_payload(
+        _round_trip(rs.raw_payload),
+        series_id=rs.series_id,
+        indicator=rs.series_metadata["indicator"],
+        limit=None,
+    )
+    replay = [
+        (
+            f"{rs.series_id}_{obs.country_code}" if obs.country_code else rs.series_id,
+            obs.date,
+            obs.value,
+        )
+        for obs in replayed
+    ]
+
+    assert silver == replay
+    assert silver == [
+        ("WB_SP.POP.TOTL_US", "2025-01-01", 1.0),
+        ("WB_SP.POP.TOTL_JP", "2025-01-01", 2.0),
+    ]
+    assert rs.source == "worldbank_catalog"
+    assert rs.content_hash is not None
+
+
 # ── EIA ───────────────────────────────────────────────────────────────────
 
 

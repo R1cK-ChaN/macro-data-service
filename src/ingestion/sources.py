@@ -676,6 +676,27 @@ class IngestionOrchestrator:
                 ))
         return records
 
+    def _raw_worldbank_catalog_series_to_records(
+        self, raw_series_list: list[Any],
+    ) -> list[IndicatorObservationRecord]:
+        records: list[IndicatorObservationRecord] = []
+        lookup = self._family_lookup or {}
+        for rs in raw_series_list:
+            series_metadata = getattr(rs, "series_metadata", {}) or {}
+            for obs in getattr(rs, "observations", ()):
+                provider_metadata = dict(getattr(obs, "provider_metadata", {}) or {})
+                storage_series_id = provider_metadata.pop("storage_series_id", rs.series_id)
+                fam_id = lookup.get(("worldbank", storage_series_id))
+                records.append(IndicatorObservationRecord(
+                    series_id=storage_series_id,
+                    source="worldbank",
+                    date=obs.date,
+                    value=obs.value,
+                    metadata={**series_metadata, **provider_metadata},
+                    obs_family_id=fam_id,
+                ))
+        return records
+
     # ── Per-domain source builders ────────────────────────────────────
     def _build_calendar_source(self) -> IngestionSourceDefinition:
         return IngestionSourceDefinition(
@@ -1044,17 +1065,19 @@ class IngestionOrchestrator:
         )
 
     def _build_worldbank_catalog_source(self) -> IngestionSourceDefinition:
-        def _execute() -> int:
-            lookup = self._family_lookup or None
-            return self.worldbank.refresh_catalog_parallel(
-                self.store, family_lookup=lookup,
-            ).count
+        from ingestion.fetchers._worldbank import WorldBankCatalogFetcher
 
         return IngestionSourceDefinition(
             name="worldbank_catalog",
             interval_seconds=86_400 * 7,
             prepare=self._ensure_obs_seed,
-            execute=_execute,
+            fetch=lambda: self._fetch_with_obs_raw(
+                WorldBankCatalogFetcher(client=self.worldbank.client),
+                lookback_days=365,
+            ),
+            normalize=self._raw_worldbank_catalog_series_to_records,
+            deduplicate=self._deduplicate_observations,
+            store=self._store_indicator_observations,
         )
 
     def _build_bls_source(self) -> IngestionSourceDefinition:
