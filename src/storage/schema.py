@@ -65,179 +65,29 @@ def apply_schema(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE calendar_events ADD COLUMN currency TEXT NOT NULL DEFAULT ''")
     except sqlite3.OperationalError:
         pass  # column already exists
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS market_prices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            symbol TEXT NOT NULL,
-            asset_class TEXT NOT NULL,
-            name TEXT NOT NULL,
-            price REAL NOT NULL,
-            change_pct REAL,
-            timestamp INTEGER NOT NULL,
-            scraped_at TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS market_instruments (
-            instrument_id TEXT PRIMARY KEY,
-            primary_ticker TEXT NOT NULL,
-            name TEXT NOT NULL,
-            asset_class TEXT NOT NULL,
-            market TEXT NOT NULL,
-            exchange_code TEXT NOT NULL DEFAULT '',
-            currency TEXT NOT NULL DEFAULT 'USD',
-            isin TEXT NOT NULL DEFAULT '',
-            openfigi TEXT NOT NULL DEFAULT '',
-            composite_figi TEXT NOT NULL DEFAULT '',
-            share_class_figi TEXT NOT NULL DEFAULT '',
-            cusip TEXT NOT NULL DEFAULT '',
-            lei TEXT NOT NULL DEFAULT '',
-            primary_provider TEXT NOT NULL DEFAULT 'tiingo',
-            provider_symbols_json TEXT NOT NULL DEFAULT '{}',
-            history_status TEXT NOT NULL DEFAULT 'provider_continuous',
-            description_for_agent TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_market_instruments_ticker ON market_instruments(primary_ticker)"
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS market_symbol_history (
-            segment_id TEXT PRIMARY KEY,
-            instrument_id TEXT NOT NULL,
-            ticker TEXT NOT NULL,
-            provider_name TEXT NOT NULL,
-            exchange_code TEXT NOT NULL DEFAULT '',
-            isin TEXT NOT NULL DEFAULT '',
-            figi TEXT NOT NULL DEFAULT '',
-            valid_from TEXT NOT NULL,
-            valid_to TEXT NOT NULL DEFAULT '',
-            event_type TEXT NOT NULL DEFAULT 'listing_start',
-            mapping_confidence TEXT NOT NULL DEFAULT 'provider_native',
-            source_name TEXT NOT NULL DEFAULT '',
-            raw_json TEXT NOT NULL DEFAULT '{}',
-            collected_at TEXT NOT NULL,
-            FOREIGN KEY(instrument_id) REFERENCES market_instruments(instrument_id)
-        )
-        """
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_symbol_history_instrument ON market_symbol_history(instrument_id)"
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_symbol_history_ticker ON market_symbol_history(ticker)"
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS market_price_bars (
-            instrument_id TEXT NOT NULL,
-            source_segment_id TEXT NOT NULL DEFAULT '',
-            date TEXT NOT NULL,
-            bar_interval TEXT NOT NULL DEFAULT '1d',
-            open REAL NOT NULL,
-            high REAL NOT NULL,
-            low REAL NOT NULL,
-            close REAL NOT NULL,
-            volume REAL NOT NULL,
-            adjusted_open REAL,
-            adjusted_high REAL,
-            adjusted_low REAL,
-            adjusted_close REAL,
-            adjusted_volume REAL,
-            dividend_cash REAL NOT NULL DEFAULT 0,
-            split_factor REAL NOT NULL DEFAULT 1,
-            source_name TEXT NOT NULL,
-            source_symbol TEXT NOT NULL,
-            has_break_detected INTEGER NOT NULL DEFAULT 0,
-            has_pre2018_delisted INTEGER NOT NULL DEFAULT 0,
-            has_missing_corp_acts INTEGER NOT NULL DEFAULT 0,
-            has_mapping_review_needed INTEGER NOT NULL DEFAULT 0,
-            quality_flags_json TEXT NOT NULL DEFAULT '{}',
-            collected_at TEXT NOT NULL,
-            PRIMARY KEY (instrument_id, date, bar_interval, source_name, source_symbol)
-        )
-        """
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_price_bars_instrument_date ON market_price_bars(instrument_id, date)"
-    )
-    # ── Market corporate-actions audit lane (issue #67 slice 2) ──────────
-    # Structurally mirrors cal_corp_raw — same content-hash + raw-payload
-    # + snapshot pattern — but kept as an independent table because the
-    # two domains evolve independently: cal_corp_raw is event-shaped (one
-    # row per discovered calendar event); market_corp_actions_raw is
-    # ticker-shaped (one row per ticker × action × event_date). Same
-    # shape, different consumers, deliberately separate code per
-    # CLAUDE.md rule 3 (only two callers — wait for a third before
-    # collapsing).
+    # ── Market lane retired from SQLite (issue #118) ────────────────────
+    # The market data lives in ClickHouse from #118 onwards (bilingual
+    # storage: SQLite owns calendar / indicators / documents / news;
+    # ClickHouse owns market). Drop the prior SQLite tables on every
+    # ``apply_schema`` so existing engine.db's are migrated in place. The
+    # 1995 ``market_prices`` rows on the production snapshot were
+    # regenerable yfinance daily snapshots; the other five tables held
+    # zero rows, so ``DROP TABLE IF EXISTS`` is data-safe.
     #
-    # Why this lane exists at all (audit-layer rationale):
-    #   * Every value of market_price_bars.dividend_cash / .split_factor
-    #     is reproducible from market_corp_actions_raw — so projection
-    #     can be re-run after a bug fix without re-fetching from EODHD
-    #     (zero quota cost).
-    #   * Restatement detection — a revised dividend amount inserts a
-    #     new row (different content_hash) instead of overwriting; the
-    #     full revision chain stays queryable.
-    #   * Schema-drift insurance — payload_json keeps the raw EODHD row
-    #     verbatim so even renamed/added fields stay parseable.
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS market_corp_actions_raw (
-            provider           TEXT NOT NULL,
-            ticker             TEXT NOT NULL,
-            action_type        TEXT NOT NULL
-                CHECK (action_type IN ('dividend','split')),
-            event_date         TEXT NOT NULL,
-            snapshot_epoch_ms  INTEGER NOT NULL,
-            content_hash       TEXT NOT NULL,
-            payload_json       TEXT NOT NULL,
-            fetched_at         TEXT NOT NULL,
-            PRIMARY KEY (provider, ticker, action_type, event_date, content_hash)
-        )
-        """
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_market_corp_actions_raw_latest "
-        "ON market_corp_actions_raw(provider, ticker, action_type, event_date, snapshot_epoch_ms DESC)"
-    )
-    # ── Market price-bars audit lane (issue #69 slice 2) ─────────────────
-    # Mirrors cal_corp_raw / market_corp_actions_raw — same content-hash +
-    # raw-payload + snapshot pattern. One row per HTTP response (per
-    # provider × ticker × bar window): the ``payload_json`` holds the full
-    # EODHD ``/api/eod`` or Tiingo ``/tiingo/daily/{t}/prices`` body.
-    # ``content_hash`` is sha256 over the canonicalized bar array (sorted
-    # by date, volatile envelope fields dropped) so re-fetching unchanged
-    # data dedupes.
-    #
-    # Audit floor — historical bars already in market_price_bars cannot be
-    # replayed into raw because providers only return their current-best
-    # version. This table captures from "first write after #69 ships".
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS market_price_bars_raw (
-            provider            TEXT NOT NULL,
-            ticker              TEXT NOT NULL,
-            snapshot_epoch_ms   INTEGER NOT NULL,
-            content_hash        TEXT NOT NULL,
-            payload_json        TEXT NOT NULL,
-            fetched_at          TEXT NOT NULL,
-            request_params_json TEXT NOT NULL DEFAULT '{}',
-            PRIMARY KEY (provider, ticker, content_hash)
-        )
-        """
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_market_price_bars_raw_latest "
-        "ON market_price_bars_raw(provider, ticker, snapshot_epoch_ms DESC)"
-    )
+    # Drop child tables before parents — ``market_symbol_history`` has
+    # ``FOREIGN KEY(instrument_id) REFERENCES market_instruments(...)``
+    # and ``SQLiteEngineStore`` runs with ``PRAGMA foreign_keys=ON``, so
+    # dropping the parent first on a populated pre-#118 DB raises
+    # ``FOREIGN KEY constraint failed`` and aborts ``init_schema``.
+    for _retired in (
+        "market_prices",
+        "market_symbol_history",
+        "market_instruments",
+        "market_price_bars",
+        "market_price_bars_raw",
+        "market_corp_actions_raw",
+    ):
+        connection.execute(f"DROP TABLE IF EXISTS {_retired}")
     # ── EODHD fundamentals (issue #68 slice 1) ───────────────────────────
     # One raw audit lane + four typed projections. Same content-hash +
     # observed-at PIT discipline as cal_corp_*: raw is append-only on

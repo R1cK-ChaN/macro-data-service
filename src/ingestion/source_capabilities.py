@@ -531,7 +531,6 @@ class SourceCapabilityManager:
             IMF_VINTAGE_SERIES,
             ISM_REPORT_SERIES,
             MACRO_SERIES,
-            MACRO_WATCHLIST,
             MOF_JGB_SERIES,
             REDBOOK_SERIES,
             SENTIX_SERIES,
@@ -621,20 +620,6 @@ class SourceCapabilityManager:
                 observations_synced=stored,
                 metadata={"fallback_used": fallback_used},
             )
-
-        def _market_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
-            entities: list[dict[str, Any]] = []
-            for asset_class, symbols in MACRO_WATCHLIST.items():
-                for symbol, name in symbols.items():
-                    entities.append(_entity(
-                        "market",
-                        symbol,
-                        "symbol",
-                        name,
-                        description=asset_class,
-                        metadata={"asset_class": asset_class},
-                    ))
-            return _limit_items(entities, query, limit)
 
         def _fed_entities(query: str | None, limit: int | None) -> list[dict[str, Any]]:
             entities = [
@@ -1195,16 +1180,6 @@ class SourceCapabilityManager:
             is_default_scheduled=True,
             discover=_fed_entities,
             sync_latest=lambda entity_ids, limit: _run_job("fed"),
-        )
-        adapters["market"] = SourceCapabilityAdapter(
-            source_id="market",
-            display_name="Market Watchlist",
-            source_type="fixed-scope-complete",
-            entity_type="symbol",
-            description="Configured macro market watchlist symbols",
-            is_default_scheduled=True,
-            discover=_market_entities,
-            sync_latest=lambda entity_ids, limit: _run_job("market"),
         )
         adapters["news"] = SourceCapabilityAdapter(
             source_id="news",

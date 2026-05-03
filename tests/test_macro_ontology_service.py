@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from macro_data.service import LocalMacroDataService
-from storage import MarketPriceRecord, SQLiteEngineStore
+from storage import SQLiteEngineStore
 
 
 class MacroOntologyServiceTest(unittest.TestCase):
@@ -64,21 +64,16 @@ class MacroOntologyServiceTest(unittest.TestCase):
         self.assertTrue(indicators["us.inflation.cpi_yoy"]["has_time_series"])
         self.assertIn("us.bls.cpi", indicators["us.inflation.cpi_yoy"]["release_family_ids"])
 
-    def test_market_snapshot_remains_separate_from_release_families(self) -> None:
-        self.store.insert_market_price(
-            MarketPriceRecord(
-                symbol="SPX",
-                asset_class="index",
-                price=5100.25,
-                change_pct=0.8,
-                timestamp=1_741_736_800,
-                name="S&P 500",
-            )
-        )
+    def test_release_families_payload_has_no_market_keys(self) -> None:
+        """The indicator ontology op never echoes market-lane shapes.
 
-        market_payload = self.service.invoke("get_market_snapshot")
-        self.assertEqual(market_payload["prices"][0]["symbol"], "SPX")
-
+        Pre-#118 this test seeded a yfinance ``market_prices`` row and
+        asserted ``get_market_snapshot`` round-tripped it. Snapshots
+        moved to ClickHouse in #118, so this test now narrows to the
+        independence claim it was actually guarding: the macro-line
+        ontology surface stays free of market keys regardless of what
+        the (separate-store) market lane is doing.
+        """
         ontology_payload = self.service.invoke(
             "list_release_families_for_indicator",
             {"indicator_id": "us.inflation.cpi_yoy"},

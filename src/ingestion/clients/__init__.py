@@ -14,7 +14,6 @@ from ingestion.timeseries.clients._oecd_client import OECDIngestionClient
 from ingestion.timeseries.clients._ilo_unsd import ILOIngestionClient, UNSDIngestionClient
 from ingestion.timeseries.clients._worldbank_client import WorldBankIngestionClient
 from ingestion.documents.clients._fed import FedIngestionClient
-from ingestion.market.clients._market import MarketPriceClient
 from ingestion.trends.clients._trends import (
     RedditTrendIngestionClient,
     WeiboTrendIngestionClient,
@@ -33,7 +32,6 @@ __all__ = [
     "GovReportIngestionClient",
     "ILOIngestionClient",
     "IMFIngestionClient",
-    "MarketPriceClient",
     "NewsIngestionClient",
     "OECDIngestionClient",
     "RedditTrendIngestionClient",

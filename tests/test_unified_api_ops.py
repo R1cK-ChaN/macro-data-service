@@ -18,8 +18,6 @@ from storage.sqlite import (
     DocSourceRecord,
     DocumentRecord,
     IndicatorObservationRecord,
-    MarketInstrumentRecord,
-    MarketPriceBarRecord,
     SQLiteEngineStore,
 )
 from storage.subjects import sync_from_yaml
@@ -340,18 +338,19 @@ def test_list_sources_without_ingestion_returns_error(tmp_path: Path) -> None:
 
 @pytest.fixture()
 def cross_type_service(tmp_path: Path) -> LocalMacroDataService:
-    """Seed subjects.yaml + concept_map + an indicator row + a macro
-    market instrument whose provider_symbols_json points at the same
-    fred series that subject econ.cpi already aliases, so the
-    subject_aliases → concept_map → indicators chain and the
-    subject_aliases → market_instruments (via provider_symbols_json)
-    chain both have live rows to find."""
+    """Seed subjects.yaml + concept_map + an indicator row so the
+    ``subject_aliases → concept_map → indicators`` chain has live rows
+    to find. Pre-#118 this fixture also seeded a macro market
+    instrument so the ``subject_aliases → market_instruments`` JOIN
+    branch had something to return; that branch retired with
+    ``list_subject_market_bars`` when the market lane moved to
+    ClickHouse — `list_items` is intentionally macro-line-only."""
     store = SQLiteEngineStore(db_path=tmp_path / "engine.db")
     sync_from_yaml(store)
     store.seed_concept_map()
 
     # Also ingest one CPI-tagged note so the documents branch has
-    # something to return alongside the indicator + bar rows.
+    # something to return alongside the indicator rows.
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir()
     (notes_dir / "cpi.md").write_text(_NOTE_CPI, encoding="utf-8")
@@ -361,23 +360,6 @@ def cross_type_service(tmp_path: Path) -> LocalMacroDataService:
         IndicatorObservationRecord(
             series_id="CPIAUCSL", source="fred",
             date="2026-03-31", value=310.12,
-        )
-    )
-    store.upsert_market_instrument(
-        MarketInstrumentRecord(
-            instrument_id="MACRO_US_CPI",
-            primary_ticker="USCPI",
-            name="US CPI (synthetic macro instrument)",
-            asset_class="rate", market="macro",
-            provider_symbols_json={"fred": "CPIAUCSL"},
-        )
-    )
-    store.upsert_market_price_bar(
-        MarketPriceBarRecord(
-            instrument_id="MACRO_US_CPI",
-            date="2026-03-31", bar_interval="1d",
-            open=310.0, high=310.5, low=309.8, close=310.12, volume=0.0,
-            source_name="macro_market", source_symbol="USCPI",
         )
     )
     return LocalMacroDataService(store=store)
@@ -400,19 +382,6 @@ def test_list_items_returns_indicator_rows_tagged_economic_data(
     assert row["value"] == 310.12
 
 
-def test_list_items_returns_market_bars_tagged_market_price(
-    cross_type_service: LocalMacroDataService,
-) -> None:
-    resp = cross_type_service.invoke("list_items", {"subject": "econ.cpi"})
-    bars = [i for i in resp["items"] if i.get("kind") == "market_bar"]
-    assert bars, "expected a market bar row reached via provider_symbols_json"
-    bar = bars[0]
-    assert bar["family"] == "market_price"
-    assert bar["instrument_id"] == "MACRO_US_CPI"
-    assert bar["ticker"] == "USCPI"
-    assert bar["close"] == 310.12
-
-
 def test_list_items_family_filter_narrows_to_economic_data(
     cross_type_service: LocalMacroDataService,
 ) -> None:
@@ -425,18 +394,6 @@ def test_list_items_family_filter_narrows_to_economic_data(
         assert item["kind"] == "indicator"
 
 
-def test_list_items_family_filter_narrows_to_market_price(
-    cross_type_service: LocalMacroDataService,
-) -> None:
-    resp = cross_type_service.invoke(
-        "list_items", {"subject": "econ.cpi", "family": "market_price"},
-    )
-    assert resp["items"], "family filter should not empty the result"
-    for item in resp["items"]:
-        assert item["family"] == "market_price"
-        assert item["kind"] == "market_bar"
-
-
 def test_list_items_document_rows_carry_family_tag(
     cross_type_service: LocalMacroDataService,
 ) -> None:
@@ -447,12 +404,13 @@ def test_list_items_document_rows_carry_family_tag(
     assert docs[0]["family"] == "note"
 
 
-def test_list_items_with_query_suppresses_indicator_and_bar_branches(
+def test_list_items_with_query_suppresses_indicator_branch(
     cross_type_service: LocalMacroDataService,
 ) -> None:
     """When the caller provides a free-text query, only the documents
-    branch runs — indicators / market bars carry no FTS-addressable
-    text, so surfacing them would silently ignore the query."""
+    branch runs — indicators carry no FTS-addressable text, so
+    surfacing them would silently ignore the query. The market-bar
+    branch retired in issue #118 P4 (no cross-store JOIN)."""
     resp = cross_type_service.invoke(
         "list_items", {"subject": "econ.cpi", "q": "inflation"},
     )
@@ -820,14 +778,13 @@ def test_list_items_concept_bridge_respects_alias_source(tmp_path: Path) -> None
 def test_list_items_without_family_filter_shows_all_branches(
     cross_type_service: LocalMacroDataService,
 ) -> None:
-    """With ``family`` omitted, documents, indicators, and market bars
-    all surface — dropping later branches to fit a global ``limit``
-    would re-introduce the crowding bug. Each branch keeps its own
-    cap."""
+    """With ``family`` omitted, documents and indicators both surface
+    — dropping the later branch to fit a global ``limit`` would
+    re-introduce the crowding bug. Each branch keeps its own cap.
+    The market-bar branch retired in issue #118 P4."""
     resp = cross_type_service.invoke(
         "list_items", {"subject": "econ.cpi", "limit": 5},
     )
     kinds = {i.get("kind") for i in resp["items"]}
     assert "document" in kinds
     assert "indicator" in kinds
-    assert "market_bar" in kinds

@@ -1,18 +1,14 @@
 """Tests for the P2 identity + history repair flow (issue #1).
 
-Covers:
-
-* EODHDIdentityClient: search, delisted list, symbol-change-history,
-  exchanges-list parsing
-* OpenFIGIClient: /v3/mapping batch + by-ISIN / by-ticker convenience
-* IdentityRepairService: lazy repair flow on break_detected instruments
-  - ISIN-first EODHD search → auto_isin segments
-  - OpenFIGI fallback → auto_figi segments (includes FIGI enrichment)
-  - delisted scan → name_match segments
-  - symbol-change-history → ticker_rename segments for old + new
-  - history_status promotions: break_detected → stitched or manual_review
-  - idempotency: running twice doesn't duplicate segments
-* Orchestrator registers `identity_repair` source
+Skip-marked at module level after issue #118 P4 retired the SQLite
+market lane. ``IdentityRepairService`` reads ``market_instruments`` /
+``market_symbol_history`` and writes ``upsert_market_symbol_segment`` /
+``update_instrument_history_status`` — all SQLite-only methods that
+no longer exist on ``SQLiteEngineStore``. The orchestrator no longer
+registers the ``identity_repair`` source either. The follow-up
+backfill issue rewires identity repair against
+``ClickHouseMarketStore.instruments`` (or replaces it with the
+EODHD universe walk) and re-enables this suite.
 """
 
 from __future__ import annotations
@@ -22,6 +18,13 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+
+pytestmark = pytest.mark.skip(
+    reason=(
+        "identity-repair service pending CH rewire — "
+        "issue #118 P4 retired SQLite market lane"
+    )
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))

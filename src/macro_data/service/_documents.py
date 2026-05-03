@@ -80,25 +80,23 @@ class DocumentsOpsMixin(LocalMacroDataServiceBase):
                 summary["kind"] = "document"
                 items.append(summary)
 
-        # Indicator + market-bar branches only run when the caller is
-        # asking by subject. Without a subject the join chain
-        # (subject_aliases → concept_map / market_instruments) can't
-        # produce meaningful rows, and widening the branches to "all
-        # indicators" would explode the result set.
+        # Indicator branch only runs when the caller is asking by
+        # subject. Without a subject the subject_aliases → concept_map
+        # join chain can't produce meaningful rows, and widening the
+        # branch to "all indicators" would explode the result set. The
+        # market-price branch retired in issue #118 P4 — market data
+        # lives in ClickHouse now and ``list_items`` deliberately stays
+        # macro-line-only (no cross-store JOIN attempted).
         if subject and not query and not document_type and not country_code:
             if family_filter in (None, "economic_data"):
                 items.extend(
                     self._store.list_subject_indicators(subject, limit=limit)
                 )
-            if family_filter in (None, "market_price"):
-                items.extend(
-                    self._store.list_subject_market_bars(subject, limit=limit)
-                )
 
         # When a family filter is set, only one branch ran and its own
         # SQL LIMIT has already capped the result to `limit`. Without a
         # filter, every branch returns up to `limit` rows so the
-        # envelope can carry up to ``3 * limit`` — intentional, since
+        # envelope can carry up to ``2 * limit`` — intentional, since
         # the callers asked for cross-type visibility and dropping the
         # later branches to fit a global `limit` would re-introduce the
         # crowding bug Codex flagged.

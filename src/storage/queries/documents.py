@@ -1100,62 +1100,6 @@ class _DocumentsQueriesMixin:
         )
         return kept[:limit]
 
-    def list_subject_market_bars(
-        self, subject_id: str, *, limit: int = 50,
-    ) -> list[dict[str, Any]]:
-        """Return market-price bars reached from ``subject_id``.
-
-        A subject links to a market instrument when any of its aliases
-        match ``market_instruments.primary_ticker``, ``.instrument_id``,
-        or appears as a value in ``.provider_symbols_json`` — the last
-        branch covers synthetic macro instruments (e.g.
-        ``MACRO_RATES_US_10Y``) whose ``provider_symbols_json`` stores
-        the underlying indicator series id (``DGS10``). Rows are tagged
-        ``family = 'market_price'``."""
-        with self._connection(commit=False) as connection:
-            rows = connection.execute(
-                """
-                SELECT DISTINCT
-                  mi.instrument_id AS instrument_id,
-                  mi.primary_ticker AS primary_ticker,
-                  mi.asset_class AS asset_class,
-                  bars.date AS date,
-                  bars.bar_interval AS bar_interval,
-                  bars.open AS open, bars.high AS high,
-                  bars.low AS low, bars.close AS close,
-                  bars.volume AS volume
-                FROM subject_aliases sa
-                JOIN market_instruments mi
-                  ON mi.primary_ticker = sa.alias_value
-                  OR mi.instrument_id = sa.alias_value
-                  OR EXISTS (
-                    SELECT 1 FROM json_each(mi.provider_symbols_json) je
-                    WHERE je.value = sa.alias_value
-                  )
-                JOIN market_price_bars bars
-                  ON bars.instrument_id = mi.instrument_id
-                WHERE sa.subject_id = ?
-                ORDER BY bars.date DESC
-                LIMIT ?
-                """,
-                (subject_id, limit),
-            ).fetchall()
-        return [
-            {
-                "family": "market_price",
-                "kind": "market_bar",
-                "instrument_id": r["instrument_id"],
-                "ticker": r["primary_ticker"],
-                "asset_class": r["asset_class"],
-                "date": r["date"],
-                "bar_interval": r["bar_interval"],
-                "open": r["open"], "high": r["high"],
-                "low": r["low"], "close": r["close"],
-                "volume": r["volume"],
-            }
-            for r in rows
-        ]
-
     def _search_documents_filtered(
         self,
         query: str,
