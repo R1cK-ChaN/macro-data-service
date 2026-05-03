@@ -61,18 +61,36 @@ class NYFedRatesClient:
 
     def fetch_sofr(self, last_n: int = 5) -> list[NYFedRate]:
         """Fetch the last N SOFR observations."""
+        observations, _payload, _params = self.fetch_sofr_with_raw(last_n=last_n)
+        return observations
+
+    def fetch_sofr_with_raw(
+        self, *, last_n: int = 5,
+    ) -> tuple[list[NYFedRate], dict, dict[str, str]]:
         url = f"{self.BASE_URL}/secured/sofr/last/{last_n}.json"
-        return self._fetch_rates(url, "SOFR")
+        return self._fetch_rates_with_raw(url, "SOFR", last_n=last_n)
 
     def fetch_effr(self, last_n: int = 5) -> list[NYFedRate]:
         """Fetch the last N EFFR observations."""
+        observations, _payload, _params = self.fetch_effr_with_raw(last_n=last_n)
+        return observations
+
+    def fetch_effr_with_raw(
+        self, *, last_n: int = 5,
+    ) -> tuple[list[NYFedRate], dict, dict[str, str]]:
         url = f"{self.BASE_URL}/unsecured/effr/last/{last_n}.json"
-        return self._fetch_rates(url, "EFFR")
+        return self._fetch_rates_with_raw(url, "EFFR", last_n=last_n)
 
     def fetch_obfr(self, last_n: int = 5) -> list[NYFedRate]:
         """Fetch the last N OBFR observations."""
+        observations, _payload, _params = self.fetch_obfr_with_raw(last_n=last_n)
+        return observations
+
+    def fetch_obfr_with_raw(
+        self, *, last_n: int = 5,
+    ) -> tuple[list[NYFedRate], dict, dict[str, str]]:
         url = f"{self.BASE_URL}/unsecured/obfr/last/{last_n}.json"
-        return self._fetch_rates(url, "OBFR")
+        return self._fetch_rates_with_raw(url, "OBFR", last_n=last_n)
 
     def fetch_all_rates(self, last_n: int = 5) -> list[NYFedRate]:
         """Fetch SOFR, EFFR, and OBFR with a short delay between requests."""
@@ -86,20 +104,50 @@ class NYFedRatesClient:
 
     def fetch_gscpi(self, last_n: int | None = 30) -> list[NYFedGSCPI]:
         """Fetch Global Supply Chain Pressure Index observations."""
+        observations, _payload, _params = self.fetch_gscpi_with_raw(last_n=last_n)
+        return observations
+
+    def fetch_gscpi_with_raw(
+        self, *, last_n: int | None = 30,
+    ) -> tuple[list[NYFedGSCPI], dict, dict[str, str]]:
+        """Fetch GSCPI and return ``(rows, payload, params)``.
+
+        The workbook body is binary (XLSX/BIFF8). For ``obs_raw`` storage
+        we wrap the parsed observations as the canonical payload — the
+        original bytes can't be JSON-encoded and the parser is the
+        source of truth for the dataset's observable shape (issue #116).
+        """
         response = self.session.get(GSCPI_DATA_URL, timeout=30)
         response.raise_for_status()
         rows = parse_gscpi_workbook(response.content)
         if last_n is None:
-            return rows
-        if last_n <= 0:
-            return []
-        return rows[-last_n:]
+            sliced = rows
+        elif last_n <= 0:
+            sliced = []
+        else:
+            sliced = rows[-last_n:]
+        payload = {
+            "series_id": "NYFED_GSCPI",
+            "observations": [{"date": r.date, "value": r.value} for r in rows],
+        }
+        params = {"url": GSCPI_DATA_URL, "last_n": str(last_n) if last_n is not None else ""}
+        return sliced, payload, params
 
     def _fetch_rates(self, url: str, rate_type: str) -> list[NYFedRate]:
+        observations, _payload, _params = self._fetch_rates_with_raw(url, rate_type)
+        return observations
+
+    def _fetch_rates_with_raw(
+        self, url: str, rate_type: str, *, last_n: int | None = None,
+    ) -> tuple[list[NYFedRate], dict, dict[str, str]]:
         response = self.session.get(url, timeout=30)
         response.raise_for_status()
         data = response.json()
-        return self._parse_rates(data, rate_type)
+        observations = self._parse_rates(data, rate_type)
+        params = {"url": url, "rate_type": rate_type}
+        if last_n is not None:
+            params["last_n"] = str(last_n)
+        return observations, data, params
 
     def _parse_rates(self, data: dict, rate_type: str) -> list[NYFedRate]:
         rates: list[NYFedRate] = []

@@ -256,6 +256,213 @@ def redbook_content_hash(payload: dict[str, Any]) -> str:
     return _hash_canonical(canonicalize_redbook_payload(payload))
 
 
+# ── EIA Open Data v2 ──────────────────────────────────────────────────────
+
+# EIA wraps observations under ``response.data[]`` with a ``request`` /
+# ``apiVersion`` envelope at the top level. Both echo the request, drop them.
+_EIA_DROP_RESPONSE = ("warnings", "warning", "links", "command", "params")
+
+
+def canonicalize_eia_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize an EIA v2 ``/data`` response.
+
+    Sorts ``response.data[]`` by ``(period, sorted-row-json)`` and strips
+    request-echo top-level fields so a daily refresh with a sliding
+    ``start`` window dedupes through INSERT OR IGNORE. The EIA shape is
+    ``{request: {…}, apiVersion: …, response: {data: [...], total: N, …}}``;
+    we keep only ``response.data`` (sorted) plus ``response.total`` for
+    audit. ``request`` and ``apiVersion`` change every fetch.
+
+    The full-row tie-breaker is required because some EIA datasets store
+    the observation in a named column (``generation``, ``revenue``,
+    ``sales`` per the ``data[]`` request parameter) rather than ``value``;
+    without it, two rows with the same period but different facet values
+    would collapse to the same sort key, and a tie-order flip on
+    identical content would mint a fresh hash and defeat dedupe.
+    """
+    response = payload.get("response", {})
+    if not isinstance(response, dict):
+        return json.dumps({"response": {}}, sort_keys=True, ensure_ascii=False)
+    data = response.get("data", [])
+    cleaned_rows = [row for row in data if isinstance(row, dict)]
+    cleaned_rows.sort(key=lambda r: (
+        r.get("period") or "",
+        json.dumps(r, sort_keys=True, ensure_ascii=False),
+    ))
+    cleaned_response = {
+        k: v for k, v in response.items()
+        if k not in _EIA_DROP_RESPONSE and k != "data"
+    }
+    cleaned_response["data"] = cleaned_rows
+    return json.dumps({"response": cleaned_response}, sort_keys=True, ensure_ascii=False)
+
+
+def eia_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_eia_payload(payload))
+
+
+# ── Treasury Fiscal Data ──────────────────────────────────────────────────
+
+# Treasury Fiscal Data wraps rows in ``data[]`` with ``meta`` (pagination,
+# data-types, format-detector) and ``links`` (pagination URLs that change
+# every fetch). Both are query-time, drop them.
+_TREASURY_DROP_TOP = ("meta", "links")
+
+
+def canonicalize_treasury_fiscal_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize a Treasury Fiscal Data ``/services/api/...`` response.
+
+    Sorts ``data[]`` by ``record_date`` (Treasury's universal observation
+    key) and drops ``meta`` + ``links`` (pagination + count metadata that
+    change every fetch). Falls back to repr-sort when ``record_date`` is
+    absent so the hash stays deterministic.
+    """
+    data = payload.get("data", [])
+    cleaned = [row for row in data if isinstance(row, dict)]
+    cleaned.sort(key=lambda r: (r.get("record_date") or "", json.dumps(r, sort_keys=True)))
+    return json.dumps({"data": cleaned}, sort_keys=True, ensure_ascii=False)
+
+
+def treasury_fiscal_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_treasury_fiscal_payload(payload))
+
+
+# ── NY Fed reference rates + GSCPI ────────────────────────────────────────
+
+def canonicalize_nyfed_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize an NY Fed reference-rate or GSCPI snapshot.
+
+    Reference-rate endpoints return ``{refRates: [...]}``; GSCPI is
+    projected through the fetcher into ``{observations: [...]}`` (the
+    upstream is a binary workbook). Both shapes get sorted by date and
+    bound to a ``series_id`` injected by the fetcher so per-rate dispatch
+    over the same envelope hashes distinctly. ``mostRecentlyObserved`` /
+    cache-control echoes are dropped if present.
+    """
+    series_id = payload.get("series_id", "")
+    ref_rates = payload.get("refRates", [])
+    if isinstance(ref_rates, list) and ref_rates:
+        cleaned = [row for row in ref_rates if isinstance(row, dict)]
+        cleaned.sort(key=lambda r: (r.get("effectiveDate") or "", str(r.get("percentRate") or "")))
+        return json.dumps(
+            {"series_id": series_id, "refRates": cleaned},
+            sort_keys=True, ensure_ascii=False,
+        )
+    observations = payload.get("observations", [])
+    cleaned_obs = [
+        {"date": row.get("date"), "value": row.get("value")}
+        for row in observations
+        if isinstance(row, dict)
+    ]
+    cleaned_obs.sort(key=lambda r: (r.get("date") or "", str(r.get("value") or "")))
+    return json.dumps(
+        {"series_id": series_id, "observations": cleaned_obs},
+        sort_keys=True, ensure_ascii=False,
+    )
+
+
+def nyfed_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_nyfed_payload(payload))
+
+
+# ── Eurostat JSON-stat ────────────────────────────────────────────────────
+
+# JSON-stat envelope wraps observations under ``value`` (position → value
+# map) plus ``dimension.time.category.index`` (position → period). The
+# updated/extension fields echo the request timestamp, drop them.
+_EUROSTAT_DROP_TOP = ("updated", "extension", "label", "source", "href")
+
+
+def canonicalize_eurostat_jsonstat_payload(
+    payload: dict[str, Any], *, series_id: str = "",
+) -> str:
+    """Canonicalize a Eurostat JSON-stat response.
+
+    Reduces to ``{series_id, observations: [...]}`` so the per-series
+    dispatch over the same dataset hashes distinctly. Eurostat's JSON-stat
+    shape (``dimension.time.category.index`` + ``value`` map) needs joining
+    by position before hashing — otherwise two fetches that re-order the
+    sparse ``value`` dict by Python insertion-order would mint a fresh
+    hash. ``updated`` / ``extension.lang`` / ``label`` echo the request
+    rather than the data, drop them.
+
+    Includes the position-keyed ``status`` flag in each observation when
+    Eurostat publishes one — JSON-stat carries ``status`` (e.g. ``"p"``
+    provisional, ``"e"`` estimated, ``":"`` confidential, ``"u"`` low
+    reliability) per-position; a provisional→final flip with the same
+    numeric value would otherwise hash identically and be dropped by
+    INSERT OR IGNORE, suppressing the audit row that the revision
+    actually happened.
+    """
+    time_dim = payload.get("dimension", {}).get("time", {}).get("category", {}).get("index", {})
+    pos_to_period = {v: k for k, v in time_dim.items()} if isinstance(time_dim, dict) else {}
+    values = payload.get("value", {})
+    status_map = payload.get("status", {})
+    if not isinstance(status_map, dict):
+        status_map = {}
+    rows: list[dict[str, Any]] = []
+    if isinstance(values, dict):
+        for pos_str, val in values.items():
+            try:
+                pos = int(pos_str)
+            except (TypeError, ValueError):
+                continue
+            if val is None:
+                continue
+            period = pos_to_period.get(pos)
+            if period is None:
+                continue
+            row: dict[str, Any] = {"period": period, "value": val}
+            status = status_map.get(pos_str)
+            if status is not None:
+                row["status"] = status
+            rows.append(row)
+    rows.sort(key=lambda r: (
+        r.get("period") or "",
+        str(r.get("value") or ""),
+        str(r.get("status") or ""),
+    ))
+    return json.dumps(
+        {"series_id": series_id, "observations": rows},
+        sort_keys=True, ensure_ascii=False,
+    )
+
+
+def eurostat_jsonstat_content_hash(payload: dict[str, Any], *, series_id: str = "") -> str:
+    return _hash_canonical(canonicalize_eurostat_jsonstat_payload(payload, series_id=series_id))
+
+
+# ── World Bank Indicators v2 ──────────────────────────────────────────────
+
+def canonicalize_worldbank_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize a World Bank ``/v2/country/{c}/indicator/{i}`` response.
+
+    The World Bank shape is ``[{page_info}, [records]]``; the fetcher
+    wraps it under ``payload['response']``. ``page_info`` echoes the
+    request (page index + per_page + total when nothing changed); we
+    keep only ``page_info.total`` for audit and sort the records by
+    ``(country.id, date)`` to immunize against upstream reordering.
+    """
+    response = payload.get("response", [])
+    if not isinstance(response, list) or len(response) < 2:
+        return json.dumps({"response": []}, sort_keys=True, ensure_ascii=False)
+    page_info_raw = response[0] if isinstance(response[0], dict) else {}
+    records = response[1] if isinstance(response[1], list) else []
+    cleaned = [row for row in records if isinstance(row, dict)]
+    cleaned.sort(key=lambda r: (
+        ((r.get("country") or {}).get("id") or ""),
+        (r.get("date") or ""),
+    ))
+    return json.dumps(
+        {"page_info": {"total": page_info_raw.get("total", 0)}, "records": cleaned},
+        sort_keys=True, ensure_ascii=False,
+    )
+
+
+def worldbank_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_worldbank_payload(payload))
+
+
 # ── sentix Economic Index ────────────────────────────────────────────────
 
 def canonicalize_sentix_payload(payload: dict[str, Any]) -> str:
@@ -286,17 +493,38 @@ def sentix_content_hash(payload: dict[str, Any]) -> str:
 
 # ── Dispatch ──────────────────────────────────────────────────────────────
 
+def _eurostat_dispatch(payload: dict[str, Any]) -> str:
+    """Dispatch Eurostat payloads by shape.
+
+    Production fetcher uses JSON-stat (``dimension.time.category.index`` +
+    ``value`` map); SDMX-JSON catalog discovery uses ``data.dataSets[]``.
+    Same source name, two upstream shapes — pick the right canonicalizer
+    by inspecting the envelope.
+    """
+    if isinstance(payload.get("dimension"), dict):
+        return canonicalize_eurostat_jsonstat_payload(
+            payload, series_id=str(payload.get("series_id", "")),
+        )
+    return canonicalize_sdmx_payload(payload)
+
+
 _HASH_BY_SOURCE = {
     "fred": fred_content_hash,
     "bls": bls_content_hash,
     # SDMX-JSON family — BIS is excluded because its endpoint returns CSV.
+    # Eurostat dispatches by payload shape: production fetcher uses
+    # JSON-stat, catalog discovery uses SDMX-JSON.
     "imf": sdmx_content_hash,
     "ecb": sdmx_content_hash,
     "bundesbank": sdmx_content_hash,
-    "eurostat": sdmx_content_hash,
     "oecd": sdmx_content_hash,
     "unsd": sdmx_content_hash,
     "ilo": sdmx_content_hash,
+    "eurostat": lambda p: _hash_canonical(_eurostat_dispatch(p)),
+    "eia": eia_content_hash,
+    "treasury_fiscal": treasury_fiscal_content_hash,
+    "nyfed": nyfed_content_hash,
+    "worldbank": worldbank_content_hash,
     "mof_jp": mof_jp_content_hash,
     "aisi": aisi_content_hash,
     "ism": ism_content_hash,

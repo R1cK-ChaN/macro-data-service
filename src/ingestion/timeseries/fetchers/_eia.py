@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ from typing import Any
 
 from ingestion.scrapers.eia import EIAClient
 from ingestion.series_config import EIA_SERIES
+from ingestion.timeseries.canonicalize import content_hash_for_source
 from ingestion.types import RawObservation, RawSeries
 
 logger = logging.getLogger(__name__)
@@ -47,7 +49,7 @@ class EIAFetcher:
 
     def _fetch_one(self, cfg: dict[str, Any]) -> RawSeries | None:
         try:
-            obs_list = self.client.get_series(
+            obs_list, payload, params = self.client.get_series_with_raw(
                 cfg["route"],
                 params=cfg["params"],
                 series_id=cfg["series_id"],
@@ -64,10 +66,14 @@ class EIAFetcher:
             )
             for obs in obs_list
         )
+        content_hash = content_hash_for_source("eia", payload) if payload else None
         return RawSeries(
             source="eia",
             series_id=cfg["series_id"],
             observations=raw_obs,
             fetched_at=datetime.now(UTC).isoformat(),
             series_metadata={"category": cfg.get("category", "energy")},
+            raw_payload=payload or None,
+            content_hash=content_hash,
+            request_params_json=json.dumps(params, sort_keys=True) if params else None,
         )

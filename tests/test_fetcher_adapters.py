@@ -183,9 +183,11 @@ class TestEIAFetcher:
         from ingestion.fetchers._eia import EIAFetcher
 
         mock_client = MagicMock()
-        mock_client.get_series.return_value = [
-            _FakeEIAObs(series_id="EIA_BRENT", value=82.5, unit="usd_per_barrel"),
-        ]
+        mock_client.get_series_with_raw.return_value = (
+            [_FakeEIAObs(series_id="EIA_BRENT", value=82.5, unit="usd_per_barrel")],
+            {"response": {"data": [{"period": "2024-01-01", "value": 82.5, "units": "usd_per_barrel"}]}},
+            {"route": "petroleum/pri/spt/data", "length": "100"},
+        )
         fetcher = EIAFetcher(
             client=mock_client,
             series_config={"brent": {"route": "petroleum/pri/spt/data", "params": {}, "series_id": "EIA_BRENT", "category": "energy"}},
@@ -193,6 +195,7 @@ class TestEIAFetcher:
         results = fetcher.fetch()
         assert len(results) == 1
         assert results[0].observations[0].provider_metadata["unit"] == "usd_per_barrel"
+        assert results[0].content_hash is not None
 
 
 class TestTreasuryFetcher:
@@ -200,12 +203,25 @@ class TestTreasuryFetcher:
         from ingestion.fetchers._treasury import TreasuryFetcher
 
         mock_client = MagicMock()
-        mock_client.fetch_debt_outstanding.return_value = [_FakeTreasuryObs(value=34_000_000)]
-        mock_client.fetch_tga_balance.return_value = [_FakeTreasuryObs(value=500_000)]
-        mock_client.fetch_avg_interest_rates.return_value = [_FakeTreasuryObs(value=3.2)]
+        mock_client.fetch_debt_outstanding_with_raw.return_value = (
+            [_FakeTreasuryObs(value=34_000_000)],
+            {"data": [{"record_date": "2024-01-01", "tot_pub_debt_out_amt": "34000000"}]},
+            {"endpoint": "v2/accounting/od/debt_to_penny"},
+        )
+        mock_client.fetch_tga_balance_with_raw.return_value = (
+            [_FakeTreasuryObs(value=500_000)],
+            {"data": [{"record_date": "2024-01-01", "open_today_bal": "500000"}]},
+            {"endpoint": "v1/accounting/dts/operating_cash_balance"},
+        )
+        mock_client.fetch_avg_interest_rates_with_raw.return_value = (
+            [_FakeTreasuryObs(value=3.2)],
+            {"data": [{"record_date": "2024-01-01", "avg_interest_rate_amt": "3.2"}]},
+            {"endpoint": "v2/accounting/od/avg_interest_rates"},
+        )
         fetcher = TreasuryFetcher(client=mock_client)
         results = fetcher.fetch()
         assert len(results) == 3
+        assert all(r.content_hash is not None for r in results)
 
 
 class TestNYFedFetcher:
@@ -213,10 +229,26 @@ class TestNYFedFetcher:
         from ingestion.fetchers._nyfed import NYFedFetcher
 
         mock_client = MagicMock()
-        mock_client.fetch_sofr.return_value = [_FakeNYFedRate(type="SOFR", rate=5.33)]
-        mock_client.fetch_effr.return_value = [_FakeNYFedRate(type="EFFR", rate=5.33)]
-        mock_client.fetch_obfr.return_value = [_FakeNYFedRate(type="OBFR", rate=5.32)]
-        mock_client.fetch_gscpi.return_value = [_FakeNYFedGSCPI()]
+        mock_client.fetch_sofr_with_raw.return_value = (
+            [_FakeNYFedRate(type="SOFR", rate=5.33)],
+            {"refRates": [{"effectiveDate": "2024-01-01", "percentRate": 5.33}]},
+            {"url": "https://markets.newyorkfed.org/api/rates/secured/sofr/last/30.json", "rate_type": "SOFR"},
+        )
+        mock_client.fetch_effr_with_raw.return_value = (
+            [_FakeNYFedRate(type="EFFR", rate=5.33)],
+            {"refRates": [{"effectiveDate": "2024-01-01", "percentRate": 5.33}]},
+            {"url": "https://markets.newyorkfed.org/api/rates/unsecured/effr/last/30.json", "rate_type": "EFFR"},
+        )
+        mock_client.fetch_obfr_with_raw.return_value = (
+            [_FakeNYFedRate(type="OBFR", rate=5.32)],
+            {"refRates": [{"effectiveDate": "2024-01-01", "percentRate": 5.32}]},
+            {"url": "https://markets.newyorkfed.org/api/rates/unsecured/obfr/last/30.json", "rate_type": "OBFR"},
+        )
+        mock_client.fetch_gscpi_with_raw.return_value = (
+            [_FakeNYFedGSCPI()],
+            {"observations": [{"date": "2024-01-31", "value": 0.5}]},
+            {"url": "https://www.newyorkfed.org/.../gscpi_data.xlsx", "last_n": "30"},
+        )
         fetcher = NYFedFetcher(client=mock_client)
         results = fetcher.fetch()
         assert len(results) == 4
@@ -224,6 +256,12 @@ class TestNYFedFetcher:
         assert {r.series_id for r in results} == {
             "NYFED_SOFR", "NYFED_EFFR", "NYFED_OBFR", "NYFED_GSCPI",
         }
+        assert all(r.content_hash is not None for r in results)
+        # Per-series content hashes must be distinct (refRates envelope is
+        # the same shape across SOFR/EFFR/OBFR; the series_id tag in the
+        # tagged_payload is what disambiguates).
+        rate_hashes = {r.series_id: r.content_hash for r in results if r.series_id != "NYFED_GSCPI"}
+        assert len(set(rate_hashes.values())) == 3
 
 
 class TestSDMXFetcher:
@@ -254,9 +292,11 @@ class TestOECDFetcher:
         from ingestion.series_config import OECDSeriesConfig
 
         mock_client = MagicMock()
-        mock_client.fetch_data.return_value = [
-            _FakeOECDObs(series_id="OECD_CLI_US", value=100.5),
-        ]
+        mock_client.fetch_data_with_raw.return_value = (
+            [_FakeOECDObs(series_id="OECD_CLI_US", value=100.5)],
+            {"data": {"dataSets": [{"series": {"0:0:0": {"observations": {"0": [100.5]}}}}]}},
+            {"dataflow_id": "DSD_STES@DF_CLI", "agency_id": "OECD", "key": "USA"},
+        )
         cfg = OECDSeriesConfig(
             dataflow="DSD_STES@DF_CLI", series_id="OECD_CLI_US", category="leading",
             filters={"REF_AREA": "USA"},
@@ -268,6 +308,7 @@ class TestOECDFetcher:
         results = fetcher.fetch()
         assert len(results) == 1
         assert results[0].observations[0].provider_metadata["agency_id"] == "OECD"
+        assert results[0].content_hash is not None
 
 
 class TestWorldBankFetcher:
@@ -276,9 +317,13 @@ class TestWorldBankFetcher:
         from ingestion.series_config import WorldBankSeriesConfig
 
         mock_client = MagicMock()
-        mock_client.get_indicator.return_value = [
-            _FakeWBObs(series_id="WB_GDP_PCAP_US", value=65000, indicator="NY.GDP.PCAP.PP.CD", country_code="USA"),
-        ]
+        mock_client.get_indicator_with_raw.return_value = (
+            [_FakeWBObs(series_id="WB_GDP_PCAP_US", value=65000, indicator="NY.GDP.PCAP.PP.CD", country_code="USA")],
+            {"response": [{"total": 1, "page": 1, "pages": 1, "per_page": 50}, [
+                {"date": "2024", "value": 65000, "country": {"id": "USA", "value": "United States"}, "indicator": {"id": "NY.GDP.PCAP.PP.CD"}},
+            ]]},
+            {"url": "https://api.worldbank.org/v2/country/USA/indicator/NY.GDP.PCAP.PP.CD", "per_page": "50"},
+        )
         cfg = WorldBankSeriesConfig(indicator="NY.GDP.PCAP.PP.CD", country="USA", series_id="WB_GDP_PCAP_US", category="development")
         fetcher = WorldBankFetcher(
             client=mock_client,
@@ -287,3 +332,4 @@ class TestWorldBankFetcher:
         results = fetcher.fetch()
         assert len(results) == 1
         assert results[0].observations[0].provider_metadata["country_code"] == "USA"
+        assert results[0].content_hash is not None

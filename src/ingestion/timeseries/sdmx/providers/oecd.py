@@ -470,6 +470,40 @@ class OECDClient:
         limit: int | None = 100,
         dimension_at_observation: str | None = None,
     ) -> list[OECDObservation]:
+        observations, _payload, _params = self.fetch_data_with_raw(
+            dataflow_id,
+            agency_id=agency_id, version=version, key=key,
+            filters=filters, use_defaults=use_defaults,
+            series_id=series_id, start_period=start_period, end_period=end_period,
+            updated_after=updated_after, limit=limit,
+            dimension_at_observation=dimension_at_observation,
+        )
+        return observations
+
+    def fetch_data_with_raw(
+        self,
+        dataflow_id: str,
+        *,
+        agency_id: str = DEFAULT_AGENCY_ID,
+        version: str | None = None,
+        key: str | None = None,
+        filters: Mapping[str, str | Sequence[str]] | None = None,
+        use_defaults: bool = False,
+        series_id: str | None = None,
+        start_period: str | None = None,
+        end_period: str | None = None,
+        updated_after: str | None = None,
+        limit: int | None = 100,
+        dimension_at_observation: str | None = None,
+    ) -> tuple[list[OECDObservation], dict, dict[str, str]]:
+        """Fetch OECD observations and return ``(parsed, raw_payload, params)``.
+
+        Used by the issue #116 ``obs_raw`` write path so the projector
+        boundary lands both the typed observations and the SDMX-JSON
+        envelope. Returns the canonical SDMX dispatch shape so the
+        existing ``sdmx_content_hash`` registered for ``oecd`` produces
+        the audit hash.
+        """
         resolved_key = self._resolve_key(
             dataflow_id,
             agency_id=agency_id,
@@ -489,7 +523,7 @@ class OECDClient:
             limit=limit,
             dimension_at_observation=dimension_at_observation,
         )
-        return self._parse_json(
+        observations = self._parse_json(
             payload,
             series_id=series_id,
             dataflow=dataflow_id,
@@ -497,6 +531,24 @@ class OECDClient:
             agency_id=agency_id,
             limit=limit,
         )
+        audit_params: dict[str, str] = {
+            "dataflow_id": dataflow_id,
+            "agency_id": agency_id,
+            "key": resolved_key,
+        }
+        if version:
+            audit_params["version"] = version
+        if start_period:
+            audit_params["startPeriod"] = start_period
+        if end_period:
+            audit_params["endPeriod"] = end_period
+        if updated_after:
+            audit_params["updatedAfter"] = updated_after
+        if limit:
+            audit_params["lastNObservations"] = str(limit)
+        if dimension_at_observation:
+            audit_params["dimensionAtObservation"] = dimension_at_observation
+        return observations, payload, audit_params
 
     def fetch_series(
         self,
@@ -518,6 +570,25 @@ class OECDClient:
             series_id=series_id,
             start_period=start_period,
             end_period=end_period,
+            limit=limit,
+        )
+
+    def fetch_series_with_raw(
+        self,
+        dataflow_id: str,
+        key: str,
+        *,
+        agency_id: str = DEFAULT_AGENCY_ID,
+        version: str | None = None,
+        series_id: str | None = None,
+        start_period: str | None = None,
+        end_period: str | None = None,
+        limit: int | None = 100,
+    ) -> tuple[list[OECDObservation], dict, dict[str, str]]:
+        return self.fetch_data_with_raw(
+            dataflow_id,
+            agency_id=agency_id, version=version, key=key,
+            series_id=series_id, start_period=start_period, end_period=end_period,
             limit=limit,
         )
 

@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from ingestion.scrapers.treasury_fiscal import TreasuryFiscalClient
 from ingestion.series_config import TREASURY_DATASETS
+from ingestion.timeseries.canonicalize import content_hash_for_source
 from ingestion.types import RawObservation, RawSeries
 
 logger = logging.getLogger(__name__)
 
 _METHOD_MAP = {
-    "debt_outstanding": "fetch_debt_outstanding",
-    "dts_operating_cash": "fetch_tga_balance",
-    "avg_interest_rates": "fetch_avg_interest_rates",
+    "debt_outstanding": "fetch_debt_outstanding_with_raw",
+    "dts_operating_cash": "fetch_tga_balance_with_raw",
+    "avg_interest_rates": "fetch_avg_interest_rates_with_raw",
 }
 
 
@@ -51,7 +53,7 @@ class TreasuryFetcher:
         if method_name is None:
             return None
         try:
-            obs_list = getattr(self.client, method_name)(limit=30)
+            obs_list, payload, params = getattr(self.client, method_name)(limit=30)
         except Exception as exc:
             logger.error("Treasury fetch failed [%s method=%s]: %s", cfg.get("series_id", "?"), method_name, exc)
             return None
@@ -63,10 +65,14 @@ class TreasuryFetcher:
             )
             for obs in obs_list
         )
+        content_hash = content_hash_for_source("treasury_fiscal", payload) if payload else None
         return RawSeries(
             source="treasury_fiscal",
             series_id=cfg["series_id"],
             observations=raw_obs,
             fetched_at=datetime.now(UTC).isoformat(),
             series_metadata={"category": cfg.get("category", "fiscal")},
+            raw_payload=payload or None,
+            content_hash=content_hash,
+            request_params_json=json.dumps(params, sort_keys=True) if params else None,
         )

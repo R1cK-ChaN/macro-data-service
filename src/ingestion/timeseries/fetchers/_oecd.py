@@ -6,6 +6,7 @@ and the ``OECDSeriesConfig`` dataclass.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import UTC, datetime
@@ -14,6 +15,7 @@ from ingestion.sdmx.providers.oecd import OECDClient
 
 logger = logging.getLogger(__name__)
 from ingestion.series_config import OECD_SERIES, OECDSeriesConfig
+from ingestion.timeseries.canonicalize import content_hash_for_source
 from ingestion.types import RawObservation, RawSeries
 
 
@@ -54,13 +56,13 @@ class OECDFetcher:
         version = cfg.version if cfg.version != "latest" else None
         try:
             if cfg.key is not None:
-                obs_list = self.client.fetch_series(
+                obs_list, payload, params = self.client.fetch_series_with_raw(
                     cfg.dataflow, cfg.key,
                     agency_id=cfg.agency_id, version=version,
                     series_id=cfg.series_id, limit=100,
                 )
             else:
-                obs_list = self.client.fetch_data(
+                obs_list, payload, params = self.client.fetch_data_with_raw(
                     cfg.dataflow,
                     agency_id=cfg.agency_id, version=version,
                     filters=cfg.filters, series_id=cfg.series_id, limit=100,
@@ -85,10 +87,14 @@ class OECDFetcher:
             )
             for obs in obs_list
         )
+        content_hash = content_hash_for_source("oecd", payload) if payload else None
         return RawSeries(
             source="oecd",
             series_id=cfg.series_id,
             observations=raw_obs,
             fetched_at=datetime.now(UTC).isoformat(),
             series_metadata={"category": cfg.category, "dataflow": cfg.dataflow},
+            raw_payload=payload or None,
+            content_hash=content_hash,
+            request_params_json=json.dumps(params, sort_keys=True) if params else None,
         )

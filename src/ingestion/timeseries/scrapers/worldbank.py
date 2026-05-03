@@ -430,18 +430,35 @@ class WorldBankClient:
         per_page: int = 1000,
         fetch_all_pages: bool = False,
     ) -> list[WorldBankObservation]:
-        """Fetch indicator observations for a country (or all countries).
+        """Fetch indicator observations for a country (or all countries)."""
+        observations, _payload, _params = self.get_indicator_with_raw(
+            indicator_code, country,
+            series_id=series_id,
+            start_year=start_year, end_year=end_year,
+            limit=limit, per_page=per_page, fetch_all_pages=fetch_all_pages,
+        )
+        return observations
 
-        Args:
-            indicator_code: World Bank indicator, e.g. ``"NY.GDP.PCAP.PP.CD"``.
-            country: Country code (``"USA"``), semicolon-separated list
-                (``"USA;CHN;GBR"``), or ``"all"`` for every country.
-            series_id: Logical series id for the returned records.
-            start_year: Optional start year filter.
-            end_year: Optional end year filter.
-            limit: Maximum observations to return (ignored when *fetch_all_pages*).
-            per_page: Page size for API requests.
-            fetch_all_pages: When ``True``, paginate through all results.
+    def get_indicator_with_raw(
+        self,
+        indicator_code: str,
+        country: str = "all",
+        *,
+        series_id: str,
+        start_year: int | None = None,
+        end_year: int | None = None,
+        limit: int = 50,
+        per_page: int = 1000,
+        fetch_all_pages: bool = False,
+    ) -> tuple[list[WorldBankObservation], dict, dict[str, str]]:
+        """Fetch indicator observations and return ``(parsed, payload, params)``.
+
+        Used by the issue #116 ``obs_raw`` write path. The single-page
+        path returns the API's literal ``[{page_info}, [records]]``
+        envelope as ``payload['response']``; the paginated path
+        accumulates all records under the same shape so the parser
+        replay path is identical regardless of which fetch mode landed
+        the audit row.
         """
         url = f"{self.BASE_URL}/country/{country}/indicator/{indicator_code}"
         params: dict[str, str] = {}
@@ -452,19 +469,39 @@ class WorldBankClient:
         elif end_year:
             params["date"] = f"1960:{end_year}"
 
+        audit_params: dict[str, str] = {
+            "url": url,
+            "indicator": indicator_code,
+            "country": country,
+            **params,
+        }
+
         if fetch_all_pages:
-            records = self._get_all_pages(url, params=params, per_page=per_page)
-            return self._parse_observation_records(
+            records, api_total = self._get_all_pages_with_total(
+                url, params=params, per_page=per_page,
+            )
+            audit_params["per_page"] = str(per_page)
+            audit_params["fetch_all_pages"] = "true"
+            payload = {
+                "response": [{"total": api_total, "page": 1, "pages": 1, "per_page": per_page}, records],
+            }
+            observations = self._parse_observation_records(
                 records, series_id=series_id, indicator=indicator_code,
             )
+            return observations, payload, audit_params
 
-        # Single-page fetch (backward-compatible behavior)
+        # Single-page fetch
         params["format"] = "json"
         params["per_page"] = str(limit)
+        audit_params["format"] = "json"
+        audit_params["per_page"] = str(limit)
         response = self._get_json(url, params=params)
-        return self._parse_json(
-            response.json(), series_id=series_id, indicator=indicator_code, limit=limit,
+        body = response.json()
+        observations = self._parse_json(
+            body, series_id=series_id, indicator=indicator_code, limit=limit,
         )
+        payload = {"response": body if isinstance(body, list) else []}
+        return observations, payload, audit_params
 
     def fetch_indicator_raw(
         self,

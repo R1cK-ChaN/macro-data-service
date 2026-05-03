@@ -83,6 +83,27 @@ class EurostatClient(SDMXClient):
         limit: int = 100,
     ) -> list[SDMXObservation]:
         """Fetch observations from the Eurostat JSON-stat endpoint."""
+        observations, _payload, _params = self.get_dataset_with_raw(
+            dataset_code, params=params, series_id=series_id, limit=limit,
+        )
+        return observations
+
+    def get_dataset_with_raw(
+        self,
+        dataset_code: str,
+        *,
+        params: dict[str, str] | None = None,
+        series_id: str,
+        limit: int = 100,
+    ) -> tuple[list[SDMXObservation], dict, dict[str, str]]:
+        """Fetch JSON-stat observations and return the raw envelope.
+
+        Used by the issue #116 ``obs_raw`` write path so the projector
+        boundary can land both the typed observations and the upstream
+        payload. Eurostat's JSON-stat shape differs from SDMX-JSON
+        (``dimension.time.category.index`` + ``value`` map) so it gets
+        its own canonicalize function (``canonicalize_eurostat_jsonstat_payload``).
+        """
         url = f"{self.JSON_STAT_BASE}/{dataset_code}"
         query: dict[str, str] = {"format": "JSON", "lang": "en"}
         if params:
@@ -90,13 +111,33 @@ class EurostatClient(SDMXClient):
 
         response = self.session.get(url, params=query, timeout=self.timeout)
         response.raise_for_status()
-        data = response.json()
+        payload = response.json()
+        observations = self._parse_jsonstat_payload(
+            payload, dataset_code=dataset_code, series_id=series_id, limit=limit,
+        )
+        audit_params = {"dataset": dataset_code, **{k: str(v) for k, v in query.items()}}
+        return observations, payload, audit_params
 
-        time_dim = data.get("dimension", {}).get("time", {}).get("category", {}).get("index", {})
+    def _parse_jsonstat_payload(
+        self,
+        payload: dict,
+        *,
+        dataset_code: str,
+        series_id: str,
+        limit: int,
+    ) -> list[SDMXObservation]:
+        """Project a Eurostat JSON-stat payload into typed observations.
+
+        Standalone helper so the issue #116 re-projection path can replay
+        a stored ``obs_raw`` row through the same parser the live HTTP
+        path uses — no behavior drift between live ingest and audit
+        replay.
+        """
+        time_dim = payload.get("dimension", {}).get("time", {}).get("category", {}).get("index", {})
         if not time_dim:
             return []
         pos_to_period: dict[int, str] = {v: k for k, v in time_dim.items()}
-        values = data.get("value", {})
+        values = payload.get("value", {})
 
         observations: list[SDMXObservation] = []
         for pos_str, val in values.items():
