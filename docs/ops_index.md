@@ -125,14 +125,13 @@ Total: **117** ops across 6 mixins.
 | `list_items` | Merged feed across the unified surface: documents + indicator observations + market-price bars, all filterable by ``subject``. |
 | `list_subjects` | List the subject vocabulary. Seeds the yaml on first call so the response is always complete on a fresh DB. |
 
-## News (`_news.py`) — 6 ops
+## News (`_news.py`) — 5 ops
 
 | Op | Summary |
 | --- | --- |
 | `fetch_article` | (no docstring) |
 | `fetch_live_news` | (no docstring) |
 | `get_recent_news` | (no docstring) |
-| `get_trends` | (no docstring) |
 | `refresh_news` | (no docstring) |
 | `search_news` | (no docstring) |
 
@@ -155,4 +154,3 @@ Total: **117** ops across 6 mixins.
 | `refresh_all_sources` | (no docstring) |
 | `refresh_source` | (no docstring) |
 | `run_schedule` | (no docstring) |
-

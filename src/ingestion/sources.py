@@ -37,8 +37,6 @@ from ingestion.timeseries.scrapers.fred import FredClient
 from ingestion.timeseries.sdmx.providers.imf import IMFClient
 from ingestion.timeseries.sdmx._errors import OECDRateLimitError
 from ingestion.timeseries.sdmx.providers.oecd import OECDClient
-from ingestion.trends.scrapers.reddit import RedditTrendClient, RedditTrendPost
-from ingestion.trends.scrapers.weibo import WeiboTrendClient, WeiboTrendItem
 from ingestion.timeseries.scrapers.worldbank import WorldBankClient, WorldBankRateLimitError
 from ingestion.timeseries.scrapers.mof_jgb import MOFJGBClient
 from ingestion.timeseries.scrapers.nyfed import NYFedRatesClient
@@ -57,7 +55,6 @@ from storage import (
     ObsRawRecord,
     ReleaseStatusRecord,
     SQLiteEngineStore,
-    TrendTopicRecord,
 )
 
 
@@ -215,7 +212,7 @@ SOURCE_FAMILIES: dict[str, str] = {
     # release_report
     "gov_reports": "release_report",
     "fed": "release_report",
-    # news / calendar / trend / signal
+    # news / calendar / signal
     "news": "news",
     "calendar": "calendar",
     "corp_calendar_earnings": "calendar",
@@ -223,8 +220,6 @@ SOURCE_FAMILIES: dict[str, str] = {
     "corp_calendar_split": "calendar",
     "corp_calendar_dividend": "calendar",
     "corp_calendar_dividend_details": "calendar",
-    "reddit_trends": "trend",
-    "weibo_trends": "trend",
     "rate_probability": "signal",
 }
 
@@ -261,15 +256,6 @@ from ingestion.clients._oecd_client import OECDIngestionClient, _OECDRateLimiter
 from ingestion.clients._ilo_unsd import ILOIngestionClient, UNSDIngestionClient
 from ingestion.clients._worldbank_client import WorldBankIngestionClient, _WorldBankRateLimiter
 from ingestion.clients._fed import FedIngestionClient
-from ingestion.clients._trends import (
-    RawNewsEntry,
-    PreparedNewsRecord,
-    RedditTrendSourceConfig,
-    RawTrendEntry,
-    PreparedTrendRecord,
-    RedditTrendIngestionClient,
-    WeiboTrendIngestionClient,
-)
 from ingestion.clients._news import NewsIngestionClient
 from ingestion.clients._gov_report import GovReportIngestionClient
 
@@ -282,8 +268,6 @@ class IngestionOrchestrator:
         fred: FREDIngestionClient | None = None,
         fed: FedIngestionClient | None = None,
         news: NewsIngestionClient | None = None,
-        reddit_trends: RedditTrendIngestionClient | None = None,
-        weibo_trends: WeiboTrendIngestionClient | None = None,
         rate_probability: RateProbabilityClient | None = None,
         nyfed: NYFedRatesClient | None = None,
         gov_report: GovReportIngestionClient | None = None,
@@ -308,8 +292,6 @@ class IngestionOrchestrator:
         self.fred = fred or FREDIngestionClient()
         self.fed = fed or FedIngestionClient()
         self.news = news or NewsIngestionClient()
-        self.reddit_trends = reddit_trends or RedditTrendIngestionClient()
-        self.weibo_trends = weibo_trends or WeiboTrendIngestionClient()
         self.rate_probability = rate_probability or RateProbabilityClient()
         self.nyfed = nyfed or NYFedRatesClient()
         self.gov_report = gov_report or GovReportIngestionClient()
@@ -394,8 +376,6 @@ class IngestionOrchestrator:
             self._build_fred_nondaily_source(),
             self._build_fred_full_source(),
             self._build_news_source(),
-            self._build_reddit_trends_source(),
-            self._build_weibo_trends_source(),
             self._build_rate_probability_source(),
             self._build_fred_vintages_source(),
             self._build_nyfed_rates_source(),
@@ -424,8 +404,6 @@ class IngestionOrchestrator:
             "fed",
             "fred_daily",
             "news",
-            "reddit_trends",
-            "weibo_trends",
             "rate_probability",
             "nyfed_rates",
             "gov_reports",
@@ -787,28 +765,6 @@ class IngestionOrchestrator:
             store=lambda items: self.news.store_articles(self.store, items),
             max_retries=1,
             retry_backoff_seconds=1.0,
-        )
-
-    def _build_reddit_trends_source(self) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="reddit_trends",
-            interval_seconds=3600,
-            fetch=self.reddit_trends.fetch_entries,
-            normalize=self.reddit_trends.normalize_entries,
-            validate=self.reddit_trends.validate_entries,
-            deduplicate=self.reddit_trends.deduplicate_entries,
-            store=lambda items: self.reddit_trends.store_topics(self.store, items),
-        )
-
-    def _build_weibo_trends_source(self) -> IngestionSourceDefinition:
-        return IngestionSourceDefinition(
-            name="weibo_trends",
-            interval_seconds=3600,
-            fetch=self.weibo_trends.fetch_entries,
-            normalize=self.weibo_trends.normalize_entries,
-            validate=self.weibo_trends.validate_entries,
-            deduplicate=self.weibo_trends.deduplicate_entries,
-            store=lambda items: self.weibo_trends.store_topics(self.store, items),
         )
 
     def _build_rate_probability_source(self) -> IngestionSourceDefinition:

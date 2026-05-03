@@ -44,7 +44,6 @@ from .indicator import (
 )
 from .news import (
     NewsArticleRecord,
-    TrendTopicRecord,
 )
 from .sentiment import (
     XPostRecord,
@@ -90,6 +89,5 @@ __all__ = [
     "ReleaseStatusRecord",
     "ResolvedObservation",
     "StoredEventRecord",
-    "TrendTopicRecord",
     "XPostRecord",
 ]

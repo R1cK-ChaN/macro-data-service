@@ -1,7 +1,7 @@
 """News-domain query helpers for SQLiteEngineStore.
 
-Covers news_articles + trend_topics + article_fingerprint plus the
-news-context retrieval used by downstream callers.
+Covers news_articles + article_fingerprint plus the news-context
+retrieval used by downstream callers.
 
 Extracted from storage.sqlite in issue #71 Tier 2.1B-2. Methods rely on
 the ``self._connection`` context manager defined on the SQLiteEngineStore
@@ -15,7 +15,6 @@ services that want enrichment run their own pipeline against these rows.
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import sqlite3
 from datetime import timedelta
@@ -27,10 +26,7 @@ from contracts import (
     format_epoch_iso_in_timezone,
     utc_now,
 )
-from storage.models.news import (
-    NewsArticleRecord,
-    TrendTopicRecord,
-)
+from storage.models.news import NewsArticleRecord
 
 
 class _NewsQueriesMixin:
@@ -67,71 +63,6 @@ class _NewsQueriesMixin:
                     utc_now().isoformat(),
                 ),
             )
-
-    def upsert_trend_topic(self, trend: TrendTopicRecord) -> None:
-        with self._connection(commit=True) as connection:
-            connection.execute(
-                """
-                INSERT OR REPLACE INTO trend_topics (
-                    trend_id, provider, provider_topic_id, title_raw,
-                    topic, summary, keywords_json, category, region,
-                    popularity_score, provider_rank, engagement_score,
-                    comment_count, observed_at, expires_at, raw_json,
-                    normalized_topic_hash, scraped_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    trend.trend_id,
-                    trend.provider,
-                    trend.provider_topic_id,
-                    trend.title_raw,
-                    trend.topic,
-                    trend.summary,
-                    json.dumps(trend.keywords, ensure_ascii=True),
-                    trend.category,
-                    trend.region,
-                    float(trend.popularity_score),
-                    int(trend.provider_rank),
-                    float(trend.engagement_score),
-                    int(trend.comment_count),
-                    int(trend.observed_at),
-                    int(trend.expires_at),
-                    json.dumps(trend.raw_json, ensure_ascii=True, sort_keys=True),
-                    trend.normalized_topic_hash,
-                    utc_now().isoformat(),
-                ),
-            )
-
-    def list_active_trends(
-        self,
-        *,
-        limit: int = 10,
-        hours: int = 48,
-        category: str | None = None,
-        region: str | None = None,
-    ) -> list[TrendTopicRecord]:
-        now_ts = int(utc_now().timestamp())
-        cutoff = int((utc_now() - timedelta(hours=hours)).timestamp())
-        conditions = ["expires_at >= ?", "observed_at >= ?"]
-        params: list[Any] = [now_ts, cutoff]
-        if category:
-            conditions.append("category = ?")
-            params.append(category)
-        if region:
-            conditions.append("region = ?")
-            params.append(region)
-        params.append(limit)
-        with self._connection(commit=False) as connection:
-            rows = connection.execute(
-                f"""
-                SELECT * FROM trend_topics
-                WHERE {' AND '.join(conditions)}
-                ORDER BY popularity_score DESC, observed_at DESC, trend_id DESC
-                LIMIT ?
-                """,
-                params,
-            ).fetchall()
-        return [self._row_to_trend_topic(row) for row in rows]
 
     def list_recent_news(
         self,
@@ -367,37 +298,4 @@ class _NewsQueriesMixin:
             content_fetched=bool(row["content_fetched"]),
             language=row["language"] or "en",
             authors=row["authors"] or "",
-        )
-
-    def _row_to_trend_topic(self, row: sqlite3.Row) -> TrendTopicRecord:
-        try:
-            keywords = json.loads(row["keywords_json"] or "[]")
-        except json.JSONDecodeError:
-            keywords = []
-        if not isinstance(keywords, list):
-            keywords = []
-        try:
-            raw_json = json.loads(row["raw_json"] or "{}")
-        except json.JSONDecodeError:
-            raw_json = {}
-        if not isinstance(raw_json, dict):
-            raw_json = {}
-        return TrendTopicRecord(
-            trend_id=row["trend_id"],
-            provider=row["provider"],
-            provider_topic_id=row["provider_topic_id"],
-            title_raw=row["title_raw"],
-            topic=row["topic"],
-            summary=row["summary"],
-            keywords=[str(item) for item in keywords if str(item).strip()],
-            category=row["category"] or "",
-            region=row["region"] or "global",
-            popularity_score=float(row["popularity_score"]),
-            provider_rank=int(row["provider_rank"]),
-            engagement_score=float(row["engagement_score"]),
-            comment_count=int(row["comment_count"]),
-            observed_at=int(row["observed_at"]),
-            expires_at=int(row["expires_at"]),
-            raw_json=raw_json,
-            normalized_topic_hash=row["normalized_topic_hash"] or "",
         )

@@ -167,8 +167,6 @@ from .rateprobability import (
     FedRateProbability,
     RateProbabilityClient,
 )
-from .reddit import RedditTrendClient, RedditTrendPost
-from .weibo import WeiboTrendClient, WeiboTrendItem
 
 __all__ = [
     # Data classes
@@ -268,7 +266,6 @@ __all__ = [
     "SentixAuthError",
     "SentixObservation",
     "SentixSeriesRow",
-    "RedditTrendPost",
     "ScrapedIndicator",
     "ScrapedMarketQuote",
     "ScrapedNewsItem",
@@ -299,9 +296,6 @@ __all__ = [
     "BloombergArticleClient",
     "FTArticleClient",
     "ReutersArticleClient",
-    "RedditTrendClient",
-    "WeiboTrendClient",
-    "WeiboTrendItem",
     "WSJArticleClient",
     # Structured Data APIs
     "AISIClient",

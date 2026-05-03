@@ -454,7 +454,7 @@ defeats the whole aggregation-layer premise.
 src/
   contracts.py              Core DTOs (Event, CalendarItem, RegimeState, ...)
   storage/
-    sqlite.py               SQLiteEngineStore — composes 7 query mixins + connection-management base
+    sqlite.py               SQLiteEngineStore — composes 6 query mixins + connection-management base
     schema.py               apply_schema(connection) — every CREATE TABLE / INDEX / additive ALTER
     models/                 Frozen record dataclasses, per-domain (issue #58 Tier 2.1A)
     queries/                Per-domain SQL helpers, mixed into SQLiteEngineStore (issue #71 Tier 2.1B)
@@ -463,7 +463,7 @@ src/
       fundamentals.py       fundamentals_raw + company/financials/highlights/estimates (issue #68)
       indicator.py          indicators, vintages, obs_*, concept_map, source_capability + catalog_*, seed dicts
       market.py             market_prices/instruments/symbol_history/price_bars
-      news.py               news_articles, trend_topics, article_fingerprint, news_context scoring
+      news.py               news_articles, article_fingerprint, news_context scoring
       sentiment.py          x_tracked_accounts, x_posts, x_keyword_pool — X (Twitter) lane (issue #76)
     STORAGE.md              Table-by-table narrative (kept in sync with schema.py)
     subjects.py             Subject vocabulary loader + tagger
@@ -474,7 +474,7 @@ src/
     release_schedule.py     Date-math resolvers + availability state machine
     validation/             Data quality + cross-source checks
     sdmx/                   Unified SDMX engine (base client, parsing, providers/)
-    timeseries/, news/, documents/, trends/, market/, calendar/, sentiment/  One dir per domain
+    timeseries/, news/, documents/, market/, calendar/, sentiment/  One dir per domain
     quality/                data_quality_filer — macro data-quality auto-filer (issue #102)
     _shared/                http_transport, url_canon, selector versioning, redaction
   macro_data/
@@ -483,7 +483,7 @@ src/
       _calendar.py          calendar econ + corp ops + event_to_dict
       _timeseries.py        indicator/catalog/concept/release/surprise/fed-comm ops
       _documents.py         document feed + cross-type list_items
-      _news.py              news + trends + article fetcher
+      _news.py              news + article fetcher
       _market.py            market snapshot + live-markets fetcher
       _ops_health.py        refresh-all/run-schedule/source listing/health/alerts
     cli.py, server.py       Thin boundaries
