@@ -45,7 +45,7 @@ DEFAULT_REPRO_COMMANDS = (
     "PYTHONPATH=src python3 -m macro_data.cli validate "
     "--db-path .macro-data/engine.db --json",
     "PYTHONPATH=src python3 -c "
-    "\"from shadow_runner import compute_digest; import json; "
+    "\"from ingestion.quality.shadow_digest import compute_digest; import json; "
     "print(json.dumps(compute_digest('.macro-data/engine.db'), indent=2))\"",
 )
 

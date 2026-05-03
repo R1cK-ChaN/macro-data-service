@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import sys
 from dataclasses import asdict
@@ -157,6 +158,29 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--days", type=int, default=7, help="History lookback days")
     validate.add_argument("--json", action="store_true", dest="json_output", help="JSON output")
     validate.add_argument("--db-path", default=None)
+
+    launch_gate = subparsers.add_parser("launch-gate")
+    launch_gate.add_argument("--db-path", default=None)
+    launch_gate.add_argument(
+        "--date",
+        type=lambda s: dt.date.fromisoformat(s),
+        default=None,
+        help="Run date label (YYYY-MM-DD).",
+    )
+    launch_gate.add_argument("--state-path", type=Path, default=None)
+    launch_gate.add_argument("--log-path", type=Path, default=None)
+    launch_gate.add_argument("--dry-run", action="store_true")
+    launch_gate.add_argument(
+        "--skip-issue-update",
+        action="store_true",
+        help="Evaluate the gate without reconciling the data-quality issue.",
+    )
+    launch_gate.add_argument(
+        "--no-clickhouse-market-stats",
+        action="store_true",
+        help="Use an empty market-bars inventory instead of probing ClickHouse.",
+    )
+    launch_gate.add_argument("--json", action="store_true", dest="json_output")
 
     refresh_indicator = subparsers.add_parser("refresh-indicator")
     refresh_indicator.add_argument("concept_id", help="Concept ID (e.g. CPI_US)")
@@ -517,6 +541,48 @@ def _run_validate(args: argparse.Namespace) -> int:
     return 0 if report.passed else 1
 
 
+def _run_launch_gate(args: argparse.Namespace) -> int:
+    from ingestion._shared.redaction import redact_secrets
+    from ingestion.quality.launch_gate import (
+        append_launch_gate_log,
+        default_launch_gate_log_path,
+        run_launch_gate,
+    )
+
+    db_path = Path(args.db_path) if args.db_path else Path(".macro-data/engine.db")
+    market_bars: dict[str, object] = {}
+    try:
+        if not args.no_clickhouse_market_stats:
+            from macro_data.factory import build_local_macro_data_service
+
+            service = build_local_macro_data_service(db_path=db_path)
+            market_bars = service._market_manifest_stats()
+
+        result = run_launch_gate(
+            engine_db=db_path,
+            target_date=args.date,
+            market_bars=market_bars,
+            state_path=args.state_path,
+            log_path=args.log_path,
+            dry_run=args.dry_run,
+            update_issue=not args.skip_issue_update,
+        )
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+        return 1 if result.blocked else 0
+    except Exception as exc:
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        log_path = args.log_path or default_launch_gate_log_path(db_path)
+        payload = {
+            "status": "blocked",
+            "generated_at": now,
+            "target_date": (args.date or dt.datetime.now(dt.timezone.utc).date()).isoformat(),
+            "error": redact_secrets(repr(exc)),
+        }
+        append_launch_gate_log(log_path, payload)
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 1
+
+
 def _run_refresh_indicator(args: argparse.Namespace) -> int:
     from ingestion.sources import IngestionOrchestrator
     from storage import SQLiteEngineStore
@@ -695,6 +761,9 @@ def main(argv: list[str] | None = None) -> int:
     # SQLiteEngineStore and the ingestion client constructors).
     if args.command == "validate":
         return _run_validate(args)
+
+    if args.command == "launch-gate":
+        return _run_launch_gate(args)
 
     # Release schedule (no service needed for --show/--due/--status/--run)
     if args.command == "schedule":

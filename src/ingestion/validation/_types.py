@@ -21,6 +21,7 @@ class ValidationLayer(str, Enum):
     CROSS_SOURCE = "cross_source"
     DATA_DIFF = "data_diff"
     CONCEPT = "concept"
+    LAUNCH = "launch"
 
 
 @dataclass(frozen=True)

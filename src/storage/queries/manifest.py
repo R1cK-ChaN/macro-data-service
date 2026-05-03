@@ -322,11 +322,10 @@ def _quality_for_dataset(
     aliases = _QUALITY_ALIASES.get(dataset, ())
     for report in reports:
         source = str(report.get("source") or "")
-        if _source_matches_aliases(source, aliases):
-            return _quality_payload(report)
-    for report in reports:
-        source = str(report.get("source") or "")
-        if source in _GLOBAL_QUALITY_SOURCES:
+        if (
+            _source_matches_aliases(source, aliases)
+            or source in _GLOBAL_QUALITY_SOURCES
+        ):
             return _quality_payload(report)
     return {"last_quality_run": None, "quality_status": "unknown"}
 

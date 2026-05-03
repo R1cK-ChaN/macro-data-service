@@ -327,6 +327,24 @@ class MacroDataCLITest(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("0 checks", payload["error"])
 
+    def test_launch_gate_command_emits_json(self) -> None:
+        fake_result = Mock()
+        fake_result.blocked = False
+        fake_result.to_dict.return_value = {"status": "green"}
+
+        output = io.StringIO()
+        with patch("ingestion.quality.launch_gate.run_launch_gate", return_value=fake_result):
+            with redirect_stdout(output):
+                rc = main([
+                    "launch-gate",
+                    "--db-path", "/tmp/engine.db",
+                    "--skip-issue-update",
+                    "--no-clickhouse-market-stats",
+                ])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(output.getvalue())["status"], "green")
+
 
 if __name__ == "__main__":
     unittest.main()
