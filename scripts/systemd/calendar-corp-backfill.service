@@ -19,6 +19,7 @@ Type=oneshot
 # Default is a dry-run plan — no credentials touched, no DB writes — so
 # `systemctl start` without overrides is safe.
 Environment="REPO_ROOT=%h/Desktop/analyst/macro-data-service"
+Environment="MACRO_DATA_PROFILE=prod"
 Environment="CORP_BACKFILL_ARGS=--dry-run --subtype split --phase early"
 WorkingDirectory=%h/Desktop/analyst/macro-data-service
 ExecStart=/bin/sh -c '%h/Desktop/analyst/macro-data-service/scripts/backfill_corp_calendar.py $CORP_BACKFILL_ARGS'

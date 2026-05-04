@@ -9,6 +9,7 @@ Type=oneshot
 # /home/rick/Desktop/analyst/macro-data-service. The wrapper resolves
 # .macro-data/, .env, and scripts/ relative to it.
 Environment=REPO_ROOT=%h/Desktop/analyst/macro-data-service
+Environment=MACRO_DATA_PROFILE=prod
 ExecStart=%h/Desktop/analyst/macro-data-service/scripts/calendar_refresh_schedules_wrapper.sh
 
 # Soft watchdog — 28 connectors at a few seconds each, plus per-connector
