@@ -27,6 +27,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=None)
     serve.add_argument("--db-path", default=None)
     serve.add_argument("--api-token", default=None)
+    serve.add_argument("--api-tokens-path", default=None)
+    serve.add_argument("--workers", type=int, default=None)
 
     refresh = subparsers.add_parser("refresh")
     refresh.add_argument("--db-path", default=None)
@@ -728,6 +730,10 @@ def main(argv: list[str] | None = None) -> int:
             serve_argv.extend(["--db-path", args.db_path])
         if args.api_token is not None:
             serve_argv.extend(["--api-token", args.api_token])
+        if args.api_tokens_path is not None:
+            serve_argv.extend(["--api-tokens-path", args.api_tokens_path])
+        if args.workers is not None:
+            serve_argv.extend(["--workers", str(args.workers)])
         return serve_main(serve_argv)
 
     # World Bank commands (no service needed)

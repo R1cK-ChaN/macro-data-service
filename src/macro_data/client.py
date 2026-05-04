@@ -45,7 +45,7 @@ class HttpMacroDataClient:
     def invoke(self, operation: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         headers = {"Content-Type": "application/json"}
         if self._config.api_token:
-            headers["Authorization"] = f"Bearer {self._config.api_token}"
+            headers["X-API-Key"] = self._config.api_token
         response = httpx.post(
             f"{self._config.base_url}/v1/ops/{operation}",
             headers=headers,
