@@ -36,6 +36,268 @@ def _round_trip(payload: dict) -> dict:
     return json.loads(json.dumps(payload, sort_keys=True, ensure_ascii=False))
 
 
+# ── FRED vintages ─────────────────────────────────────────────────────────
+
+
+def test_fred_vintages_bronze_replay_matches_silver():
+    from ingestion.fetchers._vintages import FredVintageFetcher
+    from ingestion.timeseries.scrapers.fred import (
+        FredVintageObservation, _parse_fred_vintage_observations,
+    )
+
+    payload = {
+        "observations": [
+            {
+                "date": "2024-01-01",
+                "realtime_start": "2024-02-01",
+                "realtime_end": "2024-03-31",
+                "value": "100.0",
+            },
+            {
+                "date": "2024-01-01",
+                "realtime_start": "2024-04-01",
+                "realtime_end": "9999-12-31",
+                "value": "101.5",
+            },
+        ],
+    }
+    expected = _parse_fred_vintage_observations(payload, series_id="GDP")
+
+    fake_client = MagicMock()
+    fake_client.get_vintages_with_raw.return_value = (
+        expected,
+        payload,
+        {"series_id": "GDP", "observation_start": "2023-01-01"},
+    )
+    fetcher = FredVintageFetcher(
+        client=fake_client,
+        series_ids=("GDP",),
+        series_config={"GDP": {"name": "GDP"}},
+        request_delay_seconds=0,
+    )
+    [rs] = fetcher.fetch()
+    silver = [(o.date, o.vintage_date, o.value) for o in rs.vintages]
+
+    replayed = _parse_fred_vintage_observations(
+        _round_trip(rs.raw_payload), series_id="GDP",
+    )
+    replay = [(o.date, o.vintage_date, o.value) for o in replayed]
+
+    assert silver == replay
+    assert silver == [
+        ("2024-01-01", "2024-02-01", 100.0),
+        ("2024-01-01", "2024-04-01", 101.5),
+    ]
+    assert rs.source == "fred_vintages"
+    assert rs.storage_source == "fred"
+    assert rs.content_hash is not None
+    assert isinstance(replayed[0], FredVintageObservation)
+
+
+# ── IMF vintages ──────────────────────────────────────────────────────────
+
+
+def _sdmx_payload(values: list[tuple[str, float]]) -> dict:
+    return {
+        "data": {
+            "dataSets": [
+                {
+                    "series": {
+                        "0:0": {
+                            "observations": {
+                                str(idx): [value]
+                                for idx, (_period, value) in enumerate(values)
+                            }
+                        }
+                    }
+                }
+            ],
+            "structures": [
+                {
+                    "dimensions": {
+                        "observation": [
+                            {
+                                "id": "TIME_PERIOD",
+                                "values": [
+                                    {"id": period}
+                                    for period, _value in values
+                                ],
+                            }
+                        ]
+                    }
+                }
+            ],
+        }
+    }
+
+
+def test_imf_vintages_bronze_replay_matches_silver():
+    from ingestion.fetchers._vintages import IMFVintageFetcher
+    from ingestion.timeseries.sdmx.providers.imf import (
+        IMFVintageObservation, _parse_imf_vintage_payload,
+    )
+
+    payload = {
+        "dataflow_id": "QNEA",
+        "key": "CHN.B1GQ.V.NSA.XDC.Q",
+        "series_id": "IMF_CN_GDP",
+        "version": "7.0.0",
+        "responses": [
+            {
+                "asOf": "2026-02-01",
+                "payload": _sdmx_payload([("2024-Q1", 100.0), ("2024-Q2", 101.0)]),
+            },
+            {
+                "asOf": "2026-03-01",
+                "payload": _sdmx_payload([("2024-Q1", 102.0), ("2024-Q2", 103.0)]),
+            },
+        ],
+    }
+    expected = [
+        obs
+        for response in payload["responses"]
+        for obs in _parse_imf_vintage_payload(
+            response["payload"],
+            series_id="IMF_CN_GDP",
+            dataflow="QNEA",
+            vintage_date=response["asOf"],
+            limit=30,
+        )
+    ]
+
+    fake_client = MagicMock()
+    fake_client.get_vintages_with_raw.return_value = (
+        expected,
+        payload,
+        {"series_id": "IMF_CN_GDP", "asOfDates": ["2026-02-01", "2026-03-01"]},
+    )
+    fetcher = IMFVintageFetcher(
+        client=fake_client,
+        vintage_series=("cn_gdp",),
+        series_config={
+            "cn_gdp": {
+                "dataflow": "QNEA",
+                "version": "7.0.0",
+                "key": "CHN.B1GQ.V.NSA.XDC.Q",
+                "series_id": "IMF_CN_GDP",
+                "category": "growth",
+            }
+        },
+        snapshot_count=2,
+    )
+    [rs] = fetcher.fetch()
+    silver = [(o.date, o.vintage_date, o.value) for o in rs.vintages]
+
+    replay_payload = _round_trip(rs.raw_payload)
+    replayed = [
+        obs
+        for response in replay_payload["responses"]
+        for obs in _parse_imf_vintage_payload(
+            response["payload"],
+            series_id=replay_payload["series_id"],
+            dataflow=replay_payload["dataflow_id"],
+            vintage_date=response["asOf"],
+            limit=30,
+        )
+    ]
+    replay = [(o.date, o.vintage_date, o.value) for o in replayed]
+
+    assert silver == replay
+    assert silver == [
+        ("2024-04-01", "2026-02-01", 101.0),
+        ("2024-01-01", "2026-02-01", 100.0),
+        ("2024-04-01", "2026-03-01", 103.0),
+        ("2024-01-01", "2026-03-01", 102.0),
+    ]
+    assert rs.source == "imf_vintages"
+    assert rs.storage_source == "imf"
+    assert rs.vintage_quality == "synthetic_snapshot"
+    assert rs.content_hash is not None
+    assert isinstance(replayed[0], IMFVintageObservation)
+
+
+# ── WorldBank catalog ─────────────────────────────────────────────────────
+
+
+def test_worldbank_catalog_bronze_replay_matches_silver():
+    from ingestion.fetchers._worldbank import WorldBankCatalogFetcher
+    from ingestion.timeseries.scrapers.worldbank import (
+        WorldBankIndicatorInfo,
+        _parse_worldbank_indicator_payload,
+    )
+
+    payload = {
+        "response": [
+            {"total": 2, "page": 1, "pages": 1, "per_page": 1000},
+            [
+                {
+                    "country": {"id": "US", "value": "United States"},
+                    "date": "2025",
+                    "value": 1.0,
+                },
+                {
+                    "country": {"id": "JP", "value": "Japan"},
+                    "date": "2025",
+                    "value": 2.0,
+                },
+            ],
+        ]
+    }
+    expected = _parse_worldbank_indicator_payload(
+        payload,
+        series_id="WB_SP.POP.TOTL",
+        indicator="SP.POP.TOTL",
+        limit=None,
+    )
+
+    fake_client = MagicMock()
+    fake_client.list_indicators.return_value = [
+        WorldBankIndicatorInfo(
+            id="SP.POP.TOTL",
+            name="Population, total",
+            source_name="World Development Indicators",
+        )
+    ]
+    fake_client.get_indicator_with_raw.return_value = (
+        expected,
+        payload,
+        {"indicator": "SP.POP.TOTL", "country": "all"},
+    )
+    fetcher = WorldBankCatalogFetcher(client=fake_client, max_workers=1)
+    [rs] = fetcher.fetch()
+    silver = [
+        (
+            obs.provider_metadata["storage_series_id"],
+            obs.date,
+            obs.value,
+        )
+        for obs in rs.observations
+    ]
+
+    replayed = _parse_worldbank_indicator_payload(
+        _round_trip(rs.raw_payload),
+        series_id=rs.series_id,
+        indicator=rs.series_metadata["indicator"],
+        limit=None,
+    )
+    replay = [
+        (
+            f"{rs.series_id}_{obs.country_code}" if obs.country_code else rs.series_id,
+            obs.date,
+            obs.value,
+        )
+        for obs in replayed
+    ]
+
+    assert silver == replay
+    assert silver == [
+        ("WB_SP.POP.TOTL_US", "2025-01-01", 1.0),
+        ("WB_SP.POP.TOTL_JP", "2025-01-01", 2.0),
+    ]
+    assert rs.source == "worldbank_catalog"
+    assert rs.content_hash is not None
+
+
 # ── EIA ───────────────────────────────────────────────────────────────────
 
 
@@ -83,6 +345,59 @@ def test_eia_bronze_replay_matches_silver():
 
     assert silver == replay == [("2024-01-15", 82.5), ("2024-01-16", 83.0)]
     assert isinstance(replayed[0], EIAObservation)
+
+
+def test_eia_fred_fallback_bronze_replay_matches_silver():
+    from ingestion.fetchers._eia import EIAFetcher
+    from ingestion.timeseries.scrapers.eia import _parse_eia_observations
+    from ingestion.timeseries.scrapers.fred import FredObservation
+
+    fred_payload = {
+        "observations": [
+            {"date": "2026-03-19", "value": "68.5"},
+            {"date": "2026-03-20", "value": "69.0"},
+        ],
+    }
+    fake_eia = MagicMock()
+    fake_eia.get_series_with_raw.return_value = (
+        [], {}, {"route": "petroleum/pri/spt/data"},
+    )
+    fake_fred = MagicMock()
+    fake_fred.get_series_with_raw.return_value = (
+        [
+            FredObservation("DCOILWTICO", "2026-03-19", 68.5),
+            FredObservation("DCOILWTICO", "2026-03-20", 69.0),
+        ],
+        fred_payload,
+        {"series_id": "DCOILWTICO"},
+    )
+    fetcher = EIAFetcher(
+        client=fake_eia,
+        fred_client=fake_fred,
+        history_loader=lambda _series_id, _limit: [],
+        series_config={
+            "wti": {
+                "route": "petroleum/pri/spt/data",
+                "params": {"frequency": "daily"},
+                "series_id": "EIA_WTI",
+                "category": "energy",
+            },
+        },
+    )
+    [rs] = fetcher.fetch()
+    silver = [(o.date, o.value) for o in rs.observations]
+
+    replayed = _parse_eia_observations(
+        _round_trip(rs.raw_payload), series_id="EIA_WTI", value_col="value",
+    )
+    replay = [(o.date, o.value) for o in replayed]
+
+    assert silver == replay == [
+        ("2026-03-19", 68.5),
+        ("2026-03-20", 69.0),
+    ]
+    assert rs.raw_payload["fallback_source"] == "fred"
+    assert rs.content_hash is not None
 
 
 # ── Treasury Fiscal ───────────────────────────────────────────────────────

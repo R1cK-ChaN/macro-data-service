@@ -20,9 +20,16 @@ class FredFetcher:
         self,
         client: FredClient | None = None,
         series_config: dict[str, dict[str, Any]] | None = None,
+        *,
+        limit: int = 100,
+        request_delay_seconds: float = 0.2,
+        raise_on_error: bool = False,
     ) -> None:
         self.client = client or FredClient()
         self.series_config = series_config or MACRO_SERIES
+        self.limit = limit
+        self.request_delay_seconds = request_delay_seconds
+        self.raise_on_error = raise_on_error
 
     def fetch(self, *, lookback_days: int = 365) -> list[RawSeries]:
         start = (datetime.now(UTC) - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
@@ -31,7 +38,8 @@ class FredFetcher:
             rs = self._fetch_one(series_id, meta, start)
             if rs is not None:
                 results.append(rs)
-            time.sleep(0.2)
+            if self.request_delay_seconds > 0:
+                time.sleep(self.request_delay_seconds)
         return results
 
     def fetch_series(
@@ -48,9 +56,11 @@ class FredFetcher:
     ) -> RawSeries | None:
         try:
             obs_list, payload, params = self.client.get_series_with_raw(
-                series_id, start_date=start_date, limit=100,
+                series_id, start_date=start_date, limit=self.limit,
             )
         except Exception:
+            if self.raise_on_error:
+                raise
             return None
         raw_obs = tuple(
             RawObservation(date=obs.date, value=obs.value)

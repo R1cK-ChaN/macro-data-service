@@ -76,6 +76,26 @@ def _parse_fred_observations(
     return observations
 
 
+def _parse_fred_vintage_observations(
+    payload: dict, *, series_id: str,
+) -> list["FredVintageObservation"]:
+    """Parse ALFRED ``/series/observations`` payloads into vintage rows."""
+    observations: list[FredVintageObservation] = []
+    for obs in payload.get("observations", []):
+        if obs.get("value") == ".":
+            continue
+        try:
+            observations.append(FredVintageObservation(
+                series_id=series_id,
+                date=obs["date"],
+                vintage_date=obs.get("realtime_start", ""),
+                value=float(obs["value"]),
+            ))
+        except (KeyError, ValueError, TypeError):
+            continue
+    return observations
+
+
 class FredClient:
     """Client for the FRED and ALFRED REST APIs."""
 
@@ -183,37 +203,43 @@ class FredClient:
         revision history: each observation_date may appear multiple times with
         different ``realtime_start`` values showing how the value was revised.
         """
-        if not self.api_key:
-            return []
-        params: dict = {
+        observations, _payload, _params = self.get_vintages_with_raw(
+            series_id,
+            start_date=start_date,
+            realtime_start=realtime_start,
+            realtime_end=realtime_end,
+        )
+        return observations
+
+    def get_vintages_with_raw(
+        self,
+        series_id: str,
+        *,
+        start_date: str,
+        realtime_start: str = "1776-07-04",
+        realtime_end: str = "9999-12-31",
+    ) -> tuple[list[FredVintageObservation], dict, dict[str, str]]:
+        """Fetch ALFRED vintages and return parsed rows, payload, and audit params."""
+        params: dict[str, str] = {
             "series_id": series_id,
             "observation_start": start_date,
             "realtime_start": realtime_start,
             "realtime_end": realtime_end,
-            "api_key": self.api_key,
             "file_type": "json",
         }
+        if not self.api_key:
+            return [], {}, params
         response = self.session.get(
             f"{self.BASE_URL}/series/observations",
-            params=params,
+            params={**params, "api_key": self.api_key},
             timeout=30,
         )
         _raise_for_status(response)
         payload = response.json()
-        observations: list[FredVintageObservation] = []
-        for obs in payload.get("observations", []):
-            if obs.get("value") == ".":
-                continue
-            try:
-                observations.append(FredVintageObservation(
-                    series_id=series_id,
-                    date=obs["date"],
-                    vintage_date=obs.get("realtime_start", ""),
-                    value=float(obs["value"]),
-                ))
-            except (KeyError, ValueError, TypeError):
-                continue
-        return observations
+        observations = _parse_fred_vintage_observations(
+            payload, series_id=series_id,
+        )
+        return observations, payload, params
 
     def get_revision_history(
         self,

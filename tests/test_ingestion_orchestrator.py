@@ -127,7 +127,7 @@ class SourceFamilyTaggingTest(unittest.TestCase):
         report = orch.run_source("calendar")
         self.assertEqual(report.source, "calendar")
         self.assertEqual(report.stored, 0)
-        self.assertIsNone(report.fetched)
+        self.assertEqual(report.fetched, 0)
         self.assertNotIn("calendar", orch._default_refresh_order)
 
     def test_registered_definition_picks_up_family_from_registry(self) -> None:
@@ -149,7 +149,8 @@ class SourceFamilyTaggingTest(unittest.TestCase):
         orch.register_source(
             IngestionSourceDefinition(
                 name="fred_daily",
-                execute=lambda: 7,
+                fetch=lambda: ["row"],
+                store=lambda _rows: 7,
             )
         )
         report = orch.run_source("fred_daily")

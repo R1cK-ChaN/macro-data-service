@@ -59,6 +59,69 @@ def fred_content_hash(payload: dict[str, Any]) -> str:
     return _hash_canonical(canonicalize_fred_payload(payload))
 
 
+def canonicalize_fred_vintages_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize an ALFRED vintage response.
+
+    ``realtime_start`` / ``realtime_end`` are data-bearing vintage fields
+    in ALFRED responses, so this keeps them on each observation while
+    still dropping top-level request echoes.
+    """
+    obs = payload.get("observations") or []
+    cleaned = [
+        {
+            "date": row.get("date"),
+            "realtime_start": row.get("realtime_start"),
+            "realtime_end": row.get("realtime_end"),
+            "value": row.get("value"),
+        }
+        for row in obs
+        if isinstance(row, dict)
+    ]
+    cleaned.sort(key=lambda r: (
+        r.get("date") or "",
+        r.get("realtime_start") or "",
+        r.get("realtime_end") or "",
+        str(r.get("value") or ""),
+    ))
+    return json.dumps({"observations": cleaned}, sort_keys=True, ensure_ascii=False)
+
+
+def fred_vintages_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_fred_vintages_payload(payload))
+
+
+def canonicalize_imf_vintages_payload(payload: dict[str, Any]) -> str:
+    """Canonicalize the aggregate IMF SDMX ``asOf`` vintage payload."""
+    responses = payload.get("responses") or []
+    cleaned_responses = []
+    for item in responses:
+        if not isinstance(item, dict):
+            continue
+        response_payload = item.get("payload")
+        if not isinstance(response_payload, dict):
+            response_payload = {}
+        cleaned_responses.append({
+            "asOf": item.get("asOf"),
+            "payload": json.loads(canonicalize_sdmx_payload(response_payload)),
+        })
+    cleaned_responses.sort(key=lambda row: row.get("asOf") or "")
+    return json.dumps(
+        {
+            "dataflow_id": payload.get("dataflow_id"),
+            "key": payload.get("key"),
+            "series_id": payload.get("series_id"),
+            "version": payload.get("version"),
+            "responses": cleaned_responses,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def imf_vintages_content_hash(payload: dict[str, Any]) -> str:
+    return _hash_canonical(canonicalize_imf_vintages_payload(payload))
+
+
 # ── BLS ───────────────────────────────────────────────────────────────────
 
 # BLS wraps everything in ``status`` / ``responseTime`` / ``message`` plus
@@ -280,6 +343,24 @@ def canonicalize_eia_payload(payload: dict[str, Any]) -> str:
     would collapse to the same sort key, and a tie-order flip on
     identical content would mint a fresh hash and defeat dedupe.
     """
+    if payload.get("fallback_source") == "fred":
+        fallback_source = str(payload.get("fallback_source", ""))
+        fallback_series_id = str(payload.get("fallback_series_id", ""))
+        response = payload.get("response", {})
+        fred_canonical = (
+            json.loads(canonicalize_fred_payload(response))
+            if isinstance(response, dict) else {"observations": []}
+        )
+        return json.dumps(
+            {
+                "fallback_source": fallback_source,
+                "fallback_series_id": fallback_series_id,
+                **fred_canonical,
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+
     response = payload.get("response", {})
     if not isinstance(response, dict):
         return json.dumps({"response": {}}, sort_keys=True, ensure_ascii=False)
@@ -525,11 +606,14 @@ _HASH_BY_SOURCE = {
     "treasury_fiscal": treasury_fiscal_content_hash,
     "nyfed": nyfed_content_hash,
     "worldbank": worldbank_content_hash,
+    "worldbank_catalog": worldbank_content_hash,
     "mof_jp": mof_jp_content_hash,
     "aisi": aisi_content_hash,
     "ism": ism_content_hash,
     "redbook": redbook_content_hash,
     "sentix": sentix_content_hash,
+    "fred_vintages": fred_vintages_content_hash,
+    "imf_vintages": imf_vintages_content_hash,
 }
 
 

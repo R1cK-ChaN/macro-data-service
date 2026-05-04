@@ -70,6 +70,24 @@ def _parse_eia_observations(
     The ``value_col`` is the EIA v2 ``data[]`` parameter (e.g. ``"sales"``,
     ``"generation"``) which names the value column in each row.
     """
+    if payload.get("fallback_source") == "fred":
+        from ingestion.timeseries.scrapers.fred import _parse_fred_observations
+
+        fred_payload = payload.get("response", {})
+        fallback_series_id = str(payload.get("fallback_series_id", ""))
+        return [
+            EIAObservation(
+                series_id=series_id,
+                date=obs.date,
+                value=obs.value,
+                unit=str(payload.get("unit", "")),
+            )
+            for obs in _parse_fred_observations(
+                fred_payload if isinstance(fred_payload, dict) else {},
+                series_id=fallback_series_id,
+            )
+        ]
+
     rows = payload.get("response", {}).get("data", [])
     observations: list[EIAObservation] = []
     for row in rows:
