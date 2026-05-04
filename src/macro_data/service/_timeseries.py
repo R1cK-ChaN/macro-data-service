@@ -10,6 +10,56 @@ from .base import (
     logger,
 )
 
+_VINTAGE_QUALITY_ORDER: tuple[str, ...] = (
+    "native_pit",
+    "synthetic_snapshot",
+    "single_observation",
+)
+_MIN_VINTAGE_QUALITY_VALUES: frozenset[str] = frozenset(
+    (*_VINTAGE_QUALITY_ORDER, "any")
+)
+_MIN_VINTAGE_QUALITY_ALLOWLIST: dict[str, tuple[str, ...]] = {
+    "native_pit": ("native_pit",),
+    "synthetic_snapshot": ("native_pit", "synthetic_snapshot"),
+    "single_observation": _VINTAGE_QUALITY_ORDER,
+    "any": (),
+}
+
+
+def _normalise_min_vintage_quality(raw: Any, *, as_of: str | None) -> str:
+    quality = str(raw or "").strip()
+    if not quality:
+        return "native_pit" if as_of is not None else "any"
+    if quality not in _MIN_VINTAGE_QUALITY_VALUES:
+        allowed = " / ".join((*_VINTAGE_QUALITY_ORDER, "any"))
+        raise ValueError(f"min_vintage_quality must be one of {allowed}; got {quality!r}")
+    return quality
+
+
+def _vintage_quality_filter_metadata(
+    store: Any,
+    *,
+    concept_id: str,
+    date: str | None,
+    as_of: str | None,
+    min_vintage_quality: str,
+) -> dict[str, Any]:
+    available_fn = getattr(store, "available_vintage_qualities", None)
+    if not callable(available_fn):
+        return {
+            "min_vintage_quality": min_vintage_quality,
+            "vintage_quality_filtered": False,
+            "available_qualities": [],
+        }
+    available = available_fn(concept_id, date=date, as_of=as_of)
+    allowlist = set(_MIN_VINTAGE_QUALITY_ALLOWLIST[min_vintage_quality])
+    filtered = bool(available) and bool(allowlist) and not (allowlist & set(available))
+    return {
+        "min_vintage_quality": min_vintage_quality,
+        "vintage_quality_filtered": filtered,
+        "available_qualities": available if filtered else [],
+    }
+
 
 class TimeseriesOpsMixin(LocalMacroDataServiceBase):
     def _op_sync_catalog_discovery(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -148,9 +198,31 @@ class TimeseriesOpsMixin(LocalMacroDataServiceBase):
             self._store.seed_concept_map()
         date = (arguments.get("date") or "").strip() or None
         as_of = (arguments.get("as_of") or "").strip() or None
-        obs = self._store.resolve_indicator(concept_id, date=date, as_of=as_of)
+        try:
+            min_quality = _normalise_min_vintage_quality(
+                arguments.get("min_vintage_quality"),
+                as_of=as_of,
+            )
+        except ValueError as exc:
+            return {"error": str(exc), "resolved": None, "concept_id": concept_id}
+        obs = self._store.resolve_indicator(
+            concept_id,
+            date=date,
+            as_of=as_of,
+            min_vintage_quality=min_quality,
+        )
         if obs is None:
-            return {"resolved": None, "concept_id": concept_id}
+            return {
+                "resolved": None,
+                "concept_id": concept_id,
+                **_vintage_quality_filter_metadata(
+                    self._store,
+                    concept_id=concept_id,
+                    date=date,
+                    as_of=as_of,
+                    min_vintage_quality=min_quality,
+                ),
+            }
         from dataclasses import asdict
         return {"resolved": asdict(obs)}
 
@@ -162,15 +234,41 @@ class TimeseriesOpsMixin(LocalMacroDataServiceBase):
             self._store.seed_concept_map()
         limit = int(arguments.get("limit", 12))
         as_of = (arguments.get("as_of") or "").strip() or None
+        try:
+            min_quality = _normalise_min_vintage_quality(
+                arguments.get("min_vintage_quality"),
+                as_of=as_of,
+            )
+        except ValueError as exc:
+            return {
+                "error": str(exc),
+                "concept_id": concept_id,
+                "total": 0,
+                "observations": [],
+            }
         results = self._store.resolve_indicator_history(
-            concept_id, limit=limit, as_of=as_of,
+            concept_id,
+            limit=limit,
+            as_of=as_of,
+            min_vintage_quality=min_quality,
         )
         from dataclasses import asdict
-        return {
+        payload = {
             "concept_id": concept_id,
             "total": len(results),
             "observations": [asdict(r) for r in results],
         }
+        if not results:
+            payload.update(
+                _vintage_quality_filter_metadata(
+                    self._store,
+                    concept_id=concept_id,
+                    date=None,
+                    as_of=as_of,
+                    min_vintage_quality=min_quality,
+                )
+            )
+        return payload
 
     def _op_get_release_schedule(self, arguments: dict[str, Any]) -> dict[str, Any]:
         concept_id = (arguments.get("concept_id") or "").strip() or None

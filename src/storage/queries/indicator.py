@@ -70,6 +70,50 @@ _CALENDAR_FALLBACK_KEYWORDS: dict[str, tuple[list[str], str]] = {
     "UNEMP_EU":             (["Unemployment Rate"], "EU"),
 }
 
+_VINTAGE_QUALITY_ORDER: tuple[str, ...] = (
+    "native_pit",
+    "synthetic_snapshot",
+    "single_observation",
+)
+_MIN_VINTAGE_QUALITY_VALUES: frozenset[str] = frozenset(
+    (*_VINTAGE_QUALITY_ORDER, "any")
+)
+_MIN_VINTAGE_QUALITY_ALLOWLIST: dict[str, tuple[str, ...]] = {
+    "native_pit": ("native_pit",),
+    "synthetic_snapshot": ("native_pit", "synthetic_snapshot"),
+    "single_observation": _VINTAGE_QUALITY_ORDER,
+    "any": (),
+}
+
+
+def _resolve_min_vintage_quality(
+    *,
+    as_of: str | None,
+    min_vintage_quality: str | None,
+) -> str:
+    if min_vintage_quality is None or not min_vintage_quality.strip():
+        return "native_pit" if as_of is not None else "any"
+    quality = min_vintage_quality.strip()
+    if quality not in _MIN_VINTAGE_QUALITY_VALUES:
+        allowed = " / ".join((*_VINTAGE_QUALITY_ORDER, "any"))
+        raise ValueError(f"min_vintage_quality must be one of {allowed}; got {quality!r}")
+    return quality
+
+
+def _vintage_quality_clause(
+    min_vintage_quality: str,
+    *,
+    table_alias: str | None = None,
+) -> tuple[str, tuple[str, ...]]:
+    qualities = _MIN_VINTAGE_QUALITY_ALLOWLIST[min_vintage_quality]
+    if not qualities:
+        return "", ()
+    column = "vintage_quality"
+    if table_alias:
+        column = f"{table_alias}.{column}"
+    placeholders = ", ".join("?" for _ in qualities)
+    return f"AND {column} IN ({placeholders})", qualities
+
 
 _FRED_FAMILY_MAP: dict[str, tuple[str, str, str, str, str]] = {
     # series_id: (family_id, canonical_name, unit, frequency, seasonal_adjustment)
@@ -1730,15 +1774,20 @@ class _IndicatorQueriesMixin:
         *,
         date: str | None = None,
         as_of: str | None = None,
+        min_vintage_quality: str | None = None,
     ) -> ResolvedObservation | None:
         """Return the highest-priority observation for a concept on a given date.
 
         ``date`` selects the observation date; ``as_of`` selects the
         vintage cutoff (issue #114 P3). When ``as_of`` is set, the
         result is the value as reported at ``vintage_date <= as_of`` —
-        a true point-in-time read. When ``as_of`` is ``None``, the
-        latest projection (the ``indicators`` view) is consulted.
+        a true point-in-time read. ``min_vintage_quality`` defaults to
+        ``native_pit`` for PIT reads and ``any`` for latest reads.
         """
+        effective_min_quality = _resolve_min_vintage_quality(
+            as_of=as_of,
+            min_vintage_quality=min_vintage_quality,
+        )
         mappings = self.get_concept_series(concept_id)
         if not mappings:
             return None
@@ -1752,6 +1801,7 @@ class _IndicatorQueriesMixin:
                     series_id=m.provider_series_id,
                     date=date,
                     as_of=as_of,
+                    min_vintage_quality=effective_min_quality,
                 )
                 if row is None:
                     continue
@@ -1799,24 +1849,60 @@ class _IndicatorQueriesMixin:
                 )
             return best
 
+    def available_vintage_qualities(
+        self,
+        concept_id: str,
+        *,
+        date: str | None = None,
+        as_of: str | None = None,
+    ) -> list[str]:
+        """Return visible vintage_quality values for a concept query."""
+        mappings = self.get_concept_series(concept_id)
+        if not mappings:
+            return []
+        qualities: set[str] = set()
+        with self._connection(commit=False) as connection:
+            for m in mappings:
+                clauses = ["source = ?", "series_id = ?"]
+                params: list[Any] = [m.source_id, m.provider_series_id]
+                if date is not None:
+                    clauses.append("observation_date = ?")
+                    params.append(date)
+                if as_of is not None:
+                    clauses.append("date(vintage_date) <= date(?)")
+                    params.append(as_of)
+                rows = connection.execute(
+                    "SELECT DISTINCT vintage_quality FROM indicator_vintages "
+                    f"WHERE {' AND '.join(clauses)}",
+                    params,
+                ).fetchall()
+                qualities.update(row["vintage_quality"] for row in rows)
+        order = {quality: i for i, quality in enumerate(_VINTAGE_QUALITY_ORDER)}
+        return sorted(qualities, key=lambda q: order.get(q, len(order)))
+
     def resolve_indicator_history(
         self,
         concept_id: str,
         *,
         limit: int = 12,
         as_of: str | None = None,
+        min_vintage_quality: str | None = None,
     ) -> list[ResolvedObservation]:
         """Return a resolved time series, picking the highest-priority source per date.
 
         Issue #114 P3: when ``as_of`` is set, the projection is
         reconstructed at vintage_date <= as_of (point-in-time read);
-        when ``None``, the ``indicators`` view (latest of all time) is
-        consulted. If the latest-projection has fewer than
+        ``min_vintage_quality`` defaults to ``native_pit`` for PIT reads
+        and ``any`` for latest reads. If the latest-projection has fewer than
         :data:`_CALENDAR_FALLBACK_THRESHOLD` rows, results are augmented
         with ``cal_econ_event.actual`` rows tagged ``provenance='calendar'``
         so concepts whose source rejects long history (paywalled / window
         limits) still surface release-shaped values.
         """
+        effective_min_quality = _resolve_min_vintage_quality(
+            as_of=as_of,
+            min_vintage_quality=min_vintage_quality,
+        )
         mappings = self.get_concept_series(concept_id)
         if not mappings:
             return []
@@ -1833,7 +1919,7 @@ class _IndicatorQueriesMixin:
         source_data: list[dict[str, float]] = []
         with self._connection(commit=False) as connection:
             for m in mappings:
-                if as_of is None:
+                if as_of is None and effective_min_quality == "any":
                     rows = connection.execute(
                         "SELECT date, value FROM indicators "
                         "WHERE source = ? AND series_id = ? "
@@ -1841,8 +1927,16 @@ class _IndicatorQueriesMixin:
                         (m.source_id, m.provider_series_id),
                     ).fetchall()
                 else:
+                    quality_clause, quality_params = _vintage_quality_clause(
+                        effective_min_quality
+                    )
+                    cutoff_clause = ""
+                    cutoff_params: tuple[str, ...] = ()
+                    if as_of is not None:
+                        cutoff_clause = "AND date(vintage_date) <= date(?)"
+                        cutoff_params = (as_of,)
                     rows = connection.execute(
-                        """
+                        f"""
                         SELECT v.observation_date AS date, v.value AS value
                         FROM indicator_vintages v
                         JOIN (
@@ -1850,7 +1944,8 @@ class _IndicatorQueriesMixin:
                                    MAX(vintage_date) AS vd
                             FROM indicator_vintages
                             WHERE source = ? AND series_id = ?
-                              AND date(vintage_date) <= date(?)
+                              {cutoff_clause}
+                              {quality_clause}
                             GROUP BY observation_date
                         ) latest
                           ON latest.source = v.source
@@ -1859,7 +1954,12 @@ class _IndicatorQueriesMixin:
                          AND latest.vd = v.vintage_date
                         ORDER BY v.observation_date DESC
                         """,
-                        (m.source_id, m.provider_series_id, as_of),
+                        (
+                            m.source_id,
+                            m.provider_series_id,
+                            *cutoff_params,
+                            *quality_params,
+                        ),
                     ).fetchall()
                 data = {r["date"]: r["value"] for r in rows}
                 source_data.append(data)
@@ -1870,6 +1970,17 @@ class _IndicatorQueriesMixin:
         # ``limit=12`` would always trip the ``< 24`` fallback even for
         # series with years of native rows. Codex P3 round 1 finding.
         full_projection_depth = len(all_dates)
+        quality_gate_blocked = False
+        if full_projection_depth == 0 and effective_min_quality != "any":
+            available_qualities = self.available_vintage_qualities(
+                concept_id,
+                as_of=as_of,
+            )
+            allowed_qualities = set(_MIN_VINTAGE_QUALITY_ALLOWLIST[effective_min_quality])
+            quality_gate_blocked = (
+                bool(available_qualities)
+                and not (allowed_qualities & set(available_qualities))
+            )
         sorted_dates = sorted(all_dates, reverse=True)[:limit]
         results: list[ResolvedObservation] = []
         for d in sorted_dates:
@@ -1903,7 +2014,10 @@ class _IndicatorQueriesMixin:
                 )
         # Calendar fallback: when the *full* projection is shallow,
         # augment with cal_econ_event.actual rows. Issue #114 P3.
-        if full_projection_depth < _CALENDAR_FALLBACK_THRESHOLD:
+        if (
+            full_projection_depth < _CALENDAR_FALLBACK_THRESHOLD
+            and not quality_gate_blocked
+        ):
             results = self._augment_with_calendar(
                 concept_id, results, limit=limit, as_of=as_of,
             )
@@ -1917,6 +2031,7 @@ class _IndicatorQueriesMixin:
         series_id: str,
         date: str | None,
         as_of: str | None,
+        min_vintage_quality: str,
     ) -> sqlite3.Row | None:
         """Pick the latest visible value for a (source, series_id) pair.
 
@@ -1930,7 +2045,7 @@ class _IndicatorQueriesMixin:
         ``2026-05-02T12:00:00+00:00``. When ``None``, the
         ``indicators`` view (latest of all time) is consulted.
         """
-        if as_of is None:
+        if as_of is None and min_vintage_quality == "any":
             if date is not None:
                 return connection.execute(
                     "SELECT date, value FROM indicators "
@@ -1943,22 +2058,29 @@ class _IndicatorQueriesMixin:
                 "ORDER BY date DESC LIMIT 1",
                 (source, series_id),
             ).fetchone()
+        quality_clause, quality_params = _vintage_quality_clause(min_vintage_quality)
+        cutoff_clause = ""
+        cutoff_params: tuple[str, ...] = ()
+        if as_of is not None:
+            cutoff_clause = "AND date(vintage_date) <= date(?)"
+            cutoff_params = (as_of,)
         if date is not None:
             return connection.execute(
-                """
+                f"""
                 SELECT observation_date AS date, value
                 FROM indicator_vintages
                 WHERE source = ? AND series_id = ?
                   AND observation_date = ?
-                  AND date(vintage_date) <= date(?)
+                  {cutoff_clause}
+                  {quality_clause}
                 ORDER BY vintage_date DESC LIMIT 1
                 """,
-                (source, series_id, date, as_of),
+                (source, series_id, date, *cutoff_params, *quality_params),
             ).fetchone()
-        # No date — pick latest observation_date that has at least one
-        # vintage with vintage_date <= as_of, then latest such vintage.
+        # Pick latest observation_date that has at least one qualifying
+        # vintage, then latest such vintage.
         return connection.execute(
-            """
+            f"""
             SELECT v.observation_date AS date, v.value AS value
             FROM indicator_vintages v
             JOIN (
@@ -1966,7 +2088,8 @@ class _IndicatorQueriesMixin:
                        MAX(vintage_date) AS vd
                 FROM indicator_vintages
                 WHERE source = ? AND series_id = ?
-                  AND date(vintage_date) <= date(?)
+                  {cutoff_clause}
+                  {quality_clause}
                 GROUP BY observation_date
             ) latest
               ON latest.source = v.source
@@ -1975,7 +2098,7 @@ class _IndicatorQueriesMixin:
              AND latest.vd = v.vintage_date
             ORDER BY v.observation_date DESC LIMIT 1
             """,
-            (source, series_id, as_of),
+            (source, series_id, *cutoff_params, *quality_params),
         ).fetchone()
 
     def _augment_with_calendar(

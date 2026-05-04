@@ -206,6 +206,12 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.add_argument("--date", default=None, help="Specific date (YYYY-MM-DD)")
     resolve.add_argument("--as-of", dest="as_of", default=None,
                          help="Vintage cutoff (YYYY-MM-DD) — return projection as of this date")
+    resolve.add_argument(
+        "--min-vintage-quality",
+        choices=("native_pit", "synthetic_snapshot", "single_observation", "any"),
+        default=None,
+        help="Minimum vintage quality for vintage-backed reads",
+    )
     resolve.add_argument("--history", action="store_true", help="Show resolved time series")
     resolve.add_argument("--limit", type=int, default=12, help="History limit (default 12)")
     resolve.add_argument("--json", action="store_true", dest="json_output", help="JSON output")
@@ -629,7 +635,10 @@ def _run_resolve(args: argparse.Namespace) -> int:
 
     if args.history:
         results = store.resolve_indicator_history(
-            args.concept_id, limit=args.limit, as_of=as_of,
+            args.concept_id,
+            limit=args.limit,
+            as_of=as_of,
+            min_vintage_quality=args.min_vintage_quality,
         )
         if not results:
             print(f"No data found for {args.concept_id}")
@@ -644,7 +653,12 @@ def _run_resolve(args: argparse.Namespace) -> int:
                       f"p={r.priority}  {r.role}{alt and '  alt=' + alt}{tag}")
         return 0
 
-    obs = store.resolve_indicator(args.concept_id, date=args.date, as_of=as_of)
+    obs = store.resolve_indicator(
+        args.concept_id,
+        date=args.date,
+        as_of=as_of,
+        min_vintage_quality=args.min_vintage_quality,
+    )
     if obs is None:
         print(f"No data found for {args.concept_id}" + (f" on {args.date}" if args.date else ""))
         return 1
