@@ -12,6 +12,7 @@ dependencies = [
     "clickhouse-connect>=0.7",
     "curl_cffi",
     "feedparser",
+    "fastapi",
     "httpx",
     "markdownify",
     "mmh3>=4.1.0",
@@ -24,6 +25,8 @@ dependencies = [
     "PyYAML",
     "readability-lxml",
     "requests",
+    "slowapi",
+    "uvicorn[standard]",
     "yfinance",
 ]
 

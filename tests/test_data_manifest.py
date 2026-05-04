@@ -2,20 +2,20 @@ from __future__ import annotations
 
 import json
 import sys
-import threading
+import asyncio
 from datetime import datetime, timezone
-from http.client import HTTPConnection
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from fastapi import FastAPI
+import httpx
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from ingestion.validation import ValidationStore
-from macro_data.server import MacroDataRequestHandler
+from macro_data.server import ApiToken, create_app
 from macro_data.service import LocalMacroDataService
 from storage.sqlite import (
     DocSourceRecord,
@@ -292,30 +292,22 @@ def test_clickhouse_manifest_stats_use_part_metadata() -> None:
 @pytest.fixture()
 def live_server(store: SQLiteEngineStore):
     service = LocalMacroDataService(store=store)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), MacroDataRequestHandler)
-    httpd.service = service  # type: ignore[attr-defined]
-    httpd.api_token = ""  # type: ignore[attr-defined]
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    host, port = httpd.server_address[0], httpd.server_address[1]
-    try:
-        yield host, port
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-        thread.join(timeout=5)
+    return create_app(
+        service=service,
+        token_config={"valid-token": ApiToken("test-consumer")},
+    )
 
 
-def _http_get(host: str, port: int, path: str) -> tuple[int, dict[str, Any]]:
-    conn = HTTPConnection(host, port, timeout=5)
-    try:
-        conn.request("GET", path)
-        response = conn.getresponse()
-        raw = response.read().decode("utf-8")
-    finally:
-        conn.close()
-    payload = json.loads(raw) if raw else {}
-    return response.status, payload
+async def _async_get(app: FastAPI, path: str) -> tuple[int, dict[str, Any]]:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get(path, headers={"X-API-Key": "valid-token"})
+    payload = response.json() if response.content else {}
+    return response.status_code, payload
+
+
+def _http_get(app: FastAPI, path: str) -> tuple[int, dict[str, Any]]:
+    return asyncio.run(_async_get(app, path))
 
 
 def test_http_manifest_route_returns_manifest(
@@ -323,9 +315,8 @@ def test_http_manifest_route_returns_manifest(
     live_server,
 ) -> None:
     _seed_available_surfaces(store)
-    host, port = live_server
 
-    status, payload = _http_get(host, port, "/v1/manifest")
+    status, payload = _http_get(live_server, "/v1/manifest")
 
     assert status == 200
     rows = _by_dataset(payload)

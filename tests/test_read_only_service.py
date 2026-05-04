@@ -227,35 +227,49 @@ def test_read_only_factory_requires_bootstrap_rows(tmp_path: Path) -> None:
         build_read_only_macro_data_service(db_path=db_path)
 
 
-def test_server_main_uses_read_only_factory(
+def test_create_app_defers_token_file_parse_until_startup(tmp_path: Path) -> None:
+    token_path = tmp_path / "api_tokens.json"
+    token_path.write_text("not json", encoding="utf-8")
+
+    app = server.create_app(
+        service_factory=lambda: object(),  # type: ignore[return-value]
+        token_path=token_path,
+    )
+
+    assert app.state.api_tokens == {}
+
+
+def test_server_main_configures_uvicorn_entrypoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: dict[str, Any] = {}
-    sentinel_service = object()
-
-    def fake_build_read_only_macro_data_service(
-        db_path: Path | None = None,
-    ) -> object:
-        calls["db_path"] = db_path
-        return sentinel_service
 
     def fake_serve(**kwargs: Any) -> None:
         calls["serve"] = kwargs
 
-    monkeypatch.setattr(
-        factory,
-        "build_read_only_macro_data_service",
-        fake_build_read_only_macro_data_service,
-    )
     monkeypatch.setattr(server, "serve", fake_serve)
+    monkeypatch.setenv("ANALYST_MACRO_DATA_DB_PATH", "")
+    monkeypatch.setenv("ANALYST_MACRO_DATA_API_TOKEN", "")
+    monkeypatch.setenv("ANALYST_MACRO_DATA_API_TOKENS_PATH", "")
 
     db_path = tmp_path / "engine.db"
+    token_path = tmp_path / "api_tokens.json"
     result = server.main([
         "--host", "127.0.0.1",
         "--port", "0",
         "--db-path", str(db_path),
+        "--api-token", "secret",
+        "--api-tokens-path", str(token_path),
+        "--workers", "3",
     ])
 
     assert result == 0
-    assert calls["db_path"] == db_path
-    assert calls["serve"]["service"] is sentinel_service
+    assert os.environ["ANALYST_MACRO_DATA_DB_PATH"] == str(db_path)
+    assert os.environ["ANALYST_MACRO_DATA_API_TOKEN"] == "secret"
+    assert os.environ["ANALYST_MACRO_DATA_API_TOKENS_PATH"] == str(token_path)
+    assert calls["serve"] == {
+        "host": "127.0.0.1",
+        "port": 0,
+        "api_token": "secret",
+        "workers": 3,
+    }

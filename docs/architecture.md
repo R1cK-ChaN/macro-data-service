@@ -429,27 +429,37 @@ expose an HTTP route → call it. No exceptions, no "for now we'll just
 import it." Breaking this rule couples downstream to our storage shape and
 defeats the whole aggregation-layer premise.
 
-- **HTTP API** (`macro-data-api`) — the contract. Routes are a thin mapping
-  over `LocalMacroDataService` ops; schema is the `contracts.py` DTOs.
-  Runtime construction uses `build_read_only_macro_data_service`: SQLite
-  opens live WAL paths with `mode=ro` when WAL sidecars exist and
-  checkpointed snapshots with `mode=ro&immutable=1`, schema/seed bootstrap
-  writes are disabled, and `/health` reads existing capability/checkpoint
-  rows through a reader health backend. The public service also attaches a
-  ClickHouse market store without schema initialization so `/v1/manifest`
-  reports market-bar availability from the market lane. Startup validates `concept_map`,
-  `release_schedule`, `source_capability`, `subjects`, and
-  `subject_aliases` contain rows.
+- **HTTP API** (`macro-data-api`) — the contract. FastAPI serves the app under
+  uvicorn, with worker count from `ANALYST_MACRO_DATA_WORKERS` / `UVICORN_WORKERS`
+  and a default of 2. Routes are a thin mapping over `LocalMacroDataService`
+  ops; schema is the `contracts.py` DTOs. Runtime construction uses
+  `build_read_only_macro_data_service`: SQLite opens live WAL paths with
+  `mode=ro` when WAL sidecars exist and checkpointed snapshots with
+  `mode=ro&immutable=1`, schema/seed bootstrap writes are disabled, and
+  `/health` reads existing capability/checkpoint rows through a reader health
+  backend. The public service also attaches a ClickHouse market store without
+  schema initialization so `/v1/manifest` reports market-bar availability from
+  the market lane. Startup validates `concept_map`, `release_schedule`,
+  `source_capability`, `subjects`, and `subject_aliases` contain rows.
+  Startup also loads `/etc/macro-data/api_tokens.json` (override:
+  `ANALYST_MACRO_DATA_API_TOKENS_PATH`) as a token → consumer mapping. Every
+  route except `/healthz` requires `X-API-Key`; unknown or missing tokens return
+  HTTP 401. Each token has a 60 req/min fixed-window limit by default and may set
+  `rate_limit_per_minute` in the token file; the production limiter stores
+  shared window state in SQLite at `ANALYST_MACRO_DATA_RATE_LIMIT_DB` (default
+  `/tmp/macro-data-api-rate-limits.sqlite3`) so multiple uvicorn workers enforce
+  one cap. Access logs are JSON records with `method`, `path`, `status`,
+  `consumer_id`, and `latency_ms`.
   `POST /v1/ops/<op>` is locked to a read-only allowlist
   (`PUBLIC_READ_OPS` in `macro_data/server.py`, issue #104):
   `resolve_indicator`, `resolve_indicator_history`, `get_data_manifest`,
-  `list_items`, `get_document`, `get_release_schedule`, `get_release_status`. Anything
-  else returns HTTP 403, even with a valid bearer token. Existing
-  `GET` routes (`/healthz`, `/health`, `/v1/manifest`, `/v1/calendar`,
-  `/v1/calendar/revisions`, `/v1/fundamentals/{ticker}`) stay public.
+  `list_items`, `get_document`, `get_release_schedule`, `get_release_status`.
+  All other ops return HTTP 403 after authentication. Existing read `GET` routes
+  (`/health`, `/v1/manifest`, `/v1/calendar`, `/v1/calendar/revisions`,
+  `/v1/fundamentals/{ticker}`) remain available behind the same API-key gate.
   Admin / write ops (`refresh_*`, `run_schedule`, `fundamentals_fetch`,
   `sync_catalog_*`, …) reach the same in-process service through the CLI
-  and systemd jobs but are not exposed over HTTP.
+  and systemd jobs.
 - **CLI** (`macro-data-service`) — operational only. Subcommands like
   `refresh`, `refresh-source`, `schedule --run`, `health`, plus the new
   `list_items` op (issue #5). Used for bootstrap, backfills, and debugging

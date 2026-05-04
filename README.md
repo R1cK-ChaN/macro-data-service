@@ -254,9 +254,17 @@ Calendar and fundamentals use the same replay shape. `cal_econ_raw`, `cal_corp_r
 
 ## HTTP API
 
+The API is served by FastAPI under uvicorn. `GET /healthz` is the liveness
+probe and is open for uptime checks. Other routes require `X-API-Key`;
+tokens are loaded at startup from `/etc/macro-data/api_tokens.json` unless
+`ANALYST_MACRO_DATA_API_TOKENS_PATH` is set.
+
 - `GET /health`      customer-facing source health matrix
 - `GET /healthz`     lightweight liveness probe
 - `GET /v1/manifest` data availability manifest for consumer routing
+- `GET /v1/calendar` unified calendar feed
+- `GET /v1/calendar/revisions` corporate calendar revision feed
+- `GET /v1/fundamentals/{ticker}` fundamentals projection
 - `POST /v1/ops/<operation>`
 
 Key operations:
@@ -448,6 +456,19 @@ macro-data-service serve --host 127.0.0.1 --port 8765
 
 SQLite path: `.macro-data/engine.db`
 
+API token file shape:
+
+```json
+{
+  "tokens": {
+    "secret-token": {
+      "consumer_id": "analyst-project",
+      "rate_limit_per_minute": 60
+    }
+  }
+}
+```
+
 ### Environment variables
 
 `src/env.py` reads from process env first, then `.env` at the repo root.
@@ -464,6 +485,10 @@ SQLite path: `.macro-data/engine.db`
 | `OPENFIGI_API_KEY` | historical identity-repair prototype | optional (anonymous tier works) |
 | `DOCUMENT_EXTRACT_API_KEY` / `OPENAI_API_KEY` | Gov-report 17-field LLM extraction (`make_extractor_from_env`, **reads `os.environ` only — not `.env`**) | optional; unset → scraper metadata |
 | `DOCUMENT_EXTRACT_MODEL`, `DOCUMENT_EXTRACT_BASE_URL`, `DOCUMENT_EXTRACT_CONTEXT_CHARS` | Model / endpoint / chunk-size overrides for the gov-report extractor (same process-env-only loading) | optional |
+| `ANALYST_MACRO_DATA_API_TOKENS_PATH` | FastAPI public API token mapping path | optional; default `/etc/macro-data/api_tokens.json` |
+| `ANALYST_MACRO_DATA_RATE_LIMIT_DB` | shared SQLite fixed-window rate-limit state | optional; default `/tmp/macro-data-api-rate-limits.sqlite3` |
+| `ANALYST_MACRO_DATA_WORKERS` | uvicorn worker count for `macro-data-service serve` | optional; default `2` |
+| `ANALYST_MACRO_DATA_API_TOKEN` | client token sent as `X-API-Key`; server also accepts it as a local inline token for CLI launches | optional |
 
 ## Agent wiring
 

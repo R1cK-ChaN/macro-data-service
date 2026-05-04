@@ -5,8 +5,7 @@ Three layers, mirroring ``test_calendar_http_route``:
 - **Storage** — direct ``SQLiteEngineStore.list_corp_revisions`` calls
   and ``list_corp_revision_versions`` for the per-event chain.
 - **Service op** — ``LocalMacroDataService.invoke("list_corp_revisions")``.
-- **HTTP route** — ``GET /v1/calendar/revisions`` driven by a real
-  ``ThreadingHTTPServer``.
+- **HTTP route** — ``GET /v1/calendar/revisions`` driven through FastAPI.
 
 Plus a projector-level test that ``store_corp_raw`` emits a structured
 log line when a new ``content_hash`` lands for an already-seen
@@ -18,17 +17,17 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-import threading
+import asyncio
 from datetime import datetime, timezone
-from http.client import HTTPConnection
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+from fastapi import FastAPI
+import httpx
 import pytest
 
 from ingestion.calendar.eodhd_api.parser import CalendarCorpRawRecord
 from ingestion.calendar.eodhd_api.projector import store_corp_raw
-from macro_data.server import MacroDataRequestHandler
+from macro_data.server import ApiToken, create_app
 from macro_data.service import LocalMacroDataService
 from storage.sqlite import SQLiteEngineStore
 
@@ -411,37 +410,28 @@ def test_service_op_handles_blank_filters(store: SQLiteEngineStore) -> None:
 @pytest.fixture()
 def live_server(store: SQLiteEngineStore):
     svc = LocalMacroDataService(store=store)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), MacroDataRequestHandler)
-    httpd.service = svc  # type: ignore[attr-defined]
-    httpd.api_token = ""  # type: ignore[attr-defined]
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    host, port = httpd.server_address[0], httpd.server_address[1]
-    try:
-        yield host, port
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-        thread.join(timeout=5)
+    return create_app(
+        service=svc,
+        token_config={"valid-token": ApiToken("test-consumer")},
+    )
 
 
-def _http_get(host: str, port: int, path: str) -> tuple[int, dict]:
-    conn = HTTPConnection(host, port, timeout=5)
-    try:
-        conn.request("GET", path)
-        resp = conn.getresponse()
-        body = resp.read().decode("utf-8")
-    finally:
-        conn.close()
-    return resp.status, json.loads(body) if body else {}
+async def _async_get(app: FastAPI, path: str) -> tuple[int, dict]:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get(path, headers={"X-API-Key": "valid-token"})
+    return response.status_code, response.json() if response.content else {}
+
+
+def _http_get(app: FastAPI, path: str) -> tuple[int, dict]:
+    return asyncio.run(_async_get(app, path))
 
 
 def test_http_route_returns_revisions_envelope(
     store: SQLiteEngineStore, live_server,
 ) -> None:
     _seed_event_with_revisions(store)
-    host, port = live_server
-    status, payload = _http_get(host, port, "/v1/calendar/revisions")
+    status, payload = _http_get(live_server, "/v1/calendar/revisions")
     assert status == 200
     assert payload["meta"]["count"] == 1
     assert payload["data"][0]["versions"] == 3
@@ -456,9 +446,8 @@ def test_http_route_filter_by_ticker(
     _seed_event_with_revisions(
         store, provider_event_id="eodhd-earn-MSFT", ticker="MSFT",
     )
-    host, port = live_server
     status, payload = _http_get(
-        host, port, "/v1/calendar/revisions?ticker=AAPL",
+        live_server, "/v1/calendar/revisions?ticker=AAPL",
     )
     assert status == 200
     assert payload["meta"]["count"] == 1
@@ -469,9 +458,8 @@ def test_http_route_include_versions_for_one_event(
     store: SQLiteEngineStore, live_server,
 ) -> None:
     _seed_event_with_revisions(store)
-    host, port = live_server
     status, payload = _http_get(
-        host, port,
+        live_server,
         "/v1/calendar/revisions?event_id=eodhd:eodhd-earn-AAPL-20260201"
         "&include_versions=true",
     )
@@ -482,9 +470,8 @@ def test_http_route_include_versions_for_one_event(
 def test_http_route_invalid_from_ts_returns_400(
     store: SQLiteEngineStore, live_server,
 ) -> None:
-    host, port = live_server
     status, payload = _http_get(
-        host, port, "/v1/calendar/revisions?from_ts=not-a-date",
+        live_server, "/v1/calendar/revisions?from_ts=not-a-date",
     )
     assert status == 400
     assert "error" in payload

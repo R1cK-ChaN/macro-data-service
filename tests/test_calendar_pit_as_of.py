@@ -16,12 +16,12 @@ resolve. A separate corp dividend fixture exercises the C1 fallback.
 from __future__ import annotations
 
 import json
-import threading
+import asyncio
 from datetime import datetime, timedelta, timezone
-from http.client import HTTPConnection
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+from fastapi import FastAPI
+import httpx
 import pytest
 
 from ingestion.calendar.nbs_api import release_entry_to_records
@@ -30,7 +30,7 @@ from ingestion.calendar._official_shared.projector import (
     project_events,
     store_raw,
 )
-from macro_data.server import MacroDataRequestHandler
+from macro_data.server import ApiToken, create_app
 from macro_data.service import LocalMacroDataService
 from storage.sqlite import SQLiteEngineStore
 
@@ -475,38 +475,29 @@ def test_service_op_no_corp_unsupported_flag(
 @pytest.fixture()
 def live_server(store: SQLiteEngineStore):
     svc = LocalMacroDataService(store=store)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), MacroDataRequestHandler)
-    httpd.service = svc  # type: ignore[attr-defined]
-    httpd.api_token = ""  # type: ignore[attr-defined]
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    host, port = httpd.server_address[0], httpd.server_address[1]
-    try:
-        yield host, port
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-        thread.join(timeout=5)
+    return create_app(
+        service=svc,
+        token_config={"valid-token": ApiToken("test-consumer")},
+    )
 
 
-def _http_get(host: str, port: int, path: str) -> tuple[int, dict]:
-    conn = HTTPConnection(host, port, timeout=5)
-    try:
-        conn.request("GET", path)
-        resp = conn.getresponse()
-        body = resp.read().decode("utf-8")
-    finally:
-        conn.close()
-    return resp.status, json.loads(body) if body else {}
+async def _async_get(app: FastAPI, path: str) -> tuple[int, dict]:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get(path, headers={"X-API-Key": "valid-token"})
+    return response.status_code, response.json() if response.content else {}
+
+
+def _http_get(app: FastAPI, path: str) -> tuple[int, dict]:
+    return asyncio.run(_async_get(app, path))
 
 
 def test_http_route_as_of_resolves_vintage(
     store: SQLiteEngineStore, live_server,
 ) -> None:
     _seed_revised_econ_event(store)
-    host, port = live_server
     status, payload = _http_get(
-        host, port,
+        live_server,
         "/v1/calendar?as_of=2026-02-01T00:00:00%2B00:00",
     )
     assert status == 200
@@ -516,10 +507,9 @@ def test_http_route_as_of_resolves_vintage(
 def test_http_route_future_as_of_returns_400(
     store: SQLiteEngineStore, live_server,
 ) -> None:
-    host, port = live_server
     future = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
     status, payload = _http_get(
-        host, port,
+        live_server,
         f"/v1/calendar?as_of={future}",
     )
     assert status == 400

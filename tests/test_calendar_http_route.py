@@ -4,9 +4,8 @@ Three layers:
 
 - **Storage** — direct ``SQLiteEngineStore.list_calendar_items`` calls.
 - **Service op** — ``LocalMacroDataService.invoke("list_calendar_items")``.
-- **HTTP route** — real ``ThreadingHTTPServer`` on a free port,
-  driven by ``http.client`` so the request path exercises the query-
-  parser, dispatcher, and JSON writer.
+- **HTTP route** — FastAPI app via ASGI transport so the request path exercises
+  middleware, query parsing, dispatch, and JSON response handling.
 
 Fixture data is seeded by projecting synthetic NBS + ECB scaffolds
 through the shared ``project_events``, so the test doubles as a
@@ -16,11 +15,11 @@ cross-connector smoke check on the consolidated projector.
 from __future__ import annotations
 
 import json
-import threading
-from http.client import HTTPConnection
-from http.server import ThreadingHTTPServer
+import asyncio
 from pathlib import Path
 
+from fastapi import FastAPI
+import httpx
 import pytest
 
 from ingestion.calendar.ecb_api import fetch_ecb_calendar
@@ -32,7 +31,7 @@ from ingestion.calendar._official_shared.projector import (
     store_raw,
 )
 from ingestion.timeseries.sdmx._types import SDMXObservation
-from macro_data.server import MacroDataRequestHandler
+from macro_data.server import ApiToken, create_app
 from macro_data.service import LocalMacroDataService
 from storage.sqlite import SQLiteEngineStore
 
@@ -311,41 +310,31 @@ def test_service_op_handles_non_int_pagination(
 
 @pytest.fixture()
 def live_server(store: SQLiteEngineStore):
-    """Start a real ThreadingHTTPServer on a free port, yield its
-    (host, port) tuple, then shut down cleanly."""
     svc = LocalMacroDataService(store=store)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), MacroDataRequestHandler)
-    httpd.service = svc  # type: ignore[attr-defined]
-    httpd.api_token = ""  # type: ignore[attr-defined]
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    host, port = httpd.server_address[0], httpd.server_address[1]
-    try:
-        yield host, port
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-        thread.join(timeout=5)
+    return create_app(
+        service=svc,
+        token_config={"valid-token": ApiToken("test-consumer")},
+    )
 
 
-def _http_get(host: str, port: int, path: str) -> tuple[int, dict]:
-    conn = HTTPConnection(host, port, timeout=5)
-    try:
-        conn.request("GET", path)
-        resp = conn.getresponse()
-        body = resp.read().decode("utf-8")
-    finally:
-        conn.close()
-    parsed = json.loads(body) if body else {}
-    return resp.status, parsed
+async def _async_get(app: FastAPI, path: str, *, token: str | None = "valid-token") -> tuple[int, dict]:
+    headers = {"X-API-Key": token} if token is not None else {}
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get(path, headers=headers)
+    parsed = response.json() if response.content else {}
+    return response.status_code, parsed
+
+
+def _http_get(app: FastAPI, path: str, *, token: str | None = "valid-token") -> tuple[int, dict]:
+    return asyncio.run(_async_get(app, path, token=token))
 
 
 def test_http_route_returns_full_envelope(
     store: SQLiteEngineStore, live_server,
 ) -> None:
     _seed_nbs_cpi(store, months=[1, 2, 3])
-    host, port = live_server
-    status, payload = _http_get(host, port, "/v1/calendar")
+    status, payload = _http_get(live_server, "/v1/calendar")
     assert status == 200
     assert payload["meta"]["count"] == 3
     assert len(payload["data"]) == 3
@@ -356,9 +345,8 @@ def test_http_route_parses_jsonapi_pagination(
     store: SQLiteEngineStore, live_server,
 ) -> None:
     _seed_nbs_cpi(store, months=[1, 2, 3, 4, 5])
-    host, port = live_server
     status, payload = _http_get(
-        host, port, "/v1/calendar?page%5Boffset%5D=2&page%5Blimit%5D=2",
+        live_server, "/v1/calendar?page%5Boffset%5D=2&page%5Blimit%5D=2",
     )
     assert status == 200
     assert payload["meta"] == {"count": 5, "offset": 2, "limit": 2}
@@ -371,8 +359,7 @@ def test_http_route_applies_query_filters(
 ) -> None:
     _seed_nbs_cpi(store, months=[1, 2])
     _seed_ecb_dfr(store)
-    host, port = live_server
-    status, payload = _http_get(host, port, "/v1/calendar?provider=ecb")
+    status, payload = _http_get(live_server, "/v1/calendar?provider=ecb")
     assert status == 200
     assert payload["meta"]["count"] == 1
     assert payload["data"][0]["provider"] == "ecb"
@@ -381,8 +368,7 @@ def test_http_route_applies_query_filters(
 def test_http_route_empty_result_still_has_envelope(
     store: SQLiteEngineStore, live_server,
 ) -> None:
-    host, port = live_server
-    status, payload = _http_get(host, port, "/v1/calendar?provider=unknown")
+    status, payload = _http_get(live_server, "/v1/calendar?provider=unknown")
     assert status == 200
     assert payload["meta"]["count"] == 0
     assert payload["data"] == []
@@ -392,8 +378,7 @@ def test_http_route_empty_result_still_has_envelope(
 def test_http_route_unknown_path_returns_404(
     store: SQLiteEngineStore, live_server,
 ) -> None:
-    host, port = live_server
-    status, payload = _http_get(host, port, "/v1/does-not-exist")
+    status, payload = _http_get(live_server, "/v1/does-not-exist")
     assert status == 404
     assert "error" in payload
 
@@ -402,7 +387,6 @@ def test_healthz_still_responds(
     store: SQLiteEngineStore, live_server,
 ) -> None:
     # Safety rail — the new route must not shadow existing handlers.
-    host, port = live_server
-    status, payload = _http_get(host, port, "/healthz")
+    status, payload = _http_get(live_server, "/healthz", token=None)
     assert status == 200
     assert payload == {"status": "ok"}

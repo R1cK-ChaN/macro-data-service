@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-import threading
-from http.client import HTTPConnection
-from http.server import ThreadingHTTPServer
+import asyncio
 from pathlib import Path
 from urllib.parse import quote
 
+from fastapi import FastAPI
+import httpx
 import pytest
 
 from ingestion.market.fundamentals.eodhd_fundamentals import (
@@ -19,7 +19,7 @@ from ingestion.market.fundamentals.eodhd_fundamentals import (
     project_fundamentals_highlights,
     store_fundamentals_raw,
 )
-from macro_data.server import MacroDataRequestHandler
+from macro_data.server import ApiToken, create_app
 from macro_data.service import LocalMacroDataService
 from storage.sqlite import SQLiteEngineStore
 
@@ -88,35 +88,26 @@ def store(tmp_path: Path) -> SQLiteEngineStore:
 @pytest.fixture()
 def live_server(store: SQLiteEngineStore):
     svc = LocalMacroDataService(store=store)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), MacroDataRequestHandler)
-    httpd.service = svc  # type: ignore[attr-defined]
-    httpd.api_token = ""  # type: ignore[attr-defined]
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    host, port = httpd.server_address[0], httpd.server_address[1]
-    try:
-        yield host, port
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-        thread.join(timeout=5)
+    return create_app(
+        service=svc,
+        token_config={"valid-token": ApiToken("test-consumer")},
+    )
 
 
-def _get(host: str, port: int, path: str) -> tuple[int, dict]:
-    conn = HTTPConnection(host, port, timeout=5)
-    try:
-        conn.request("GET", path)
-        resp = conn.getresponse()
-        body = resp.read().decode("utf-8")
-    finally:
-        conn.close()
-    parsed = json.loads(body) if body else {}
-    return resp.status, parsed
+async def _async_get(app: FastAPI, path: str) -> tuple[int, dict]:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get(path, headers={"X-API-Key": "valid-token"})
+    parsed = response.json() if response.content else {}
+    return response.status_code, parsed
+
+
+def _get(app: FastAPI, path: str) -> tuple[int, dict]:
+    return asyncio.run(_async_get(app, path))
 
 
 def test_get_fundamentals_returns_company_and_financials(live_server) -> None:
-    host, port = live_server
-    status, body = _get(host, port, "/v1/fundamentals/AAPL.US")
+    status, body = _get(live_server, "/v1/fundamentals/AAPL.US")
     assert status == 200
     assert body["company"]["name"] == "Apple Inc"
     assert len(body["financials"]) == 1
@@ -124,9 +115,8 @@ def test_get_fundamentals_returns_company_and_financials(live_server) -> None:
 
 
 def test_get_fundamentals_filter_by_statement_and_period(live_server) -> None:
-    host, port = live_server
     status, body = _get(
-        host, port, "/v1/fundamentals/AAPL.US?statement=IS&period=A",
+        live_server, "/v1/fundamentals/AAPL.US?statement=IS&period=A",
     )
     assert status == 200
     assert all(
@@ -136,16 +126,14 @@ def test_get_fundamentals_filter_by_statement_and_period(live_server) -> None:
 
 
 def test_get_fundamentals_invalid_statement_400(live_server) -> None:
-    host, port = live_server
-    status, body = _get(host, port, "/v1/fundamentals/AAPL.US?statement=XX")
+    status, body = _get(live_server, "/v1/fundamentals/AAPL.US?statement=XX")
     assert status == 400
     assert "error" in body
 
 
 def test_get_fundamentals_future_as_of_400(live_server) -> None:
-    host, port = live_server
     status, body = _get(
-        host, port, "/v1/fundamentals/AAPL.US?as_of=9999-01-01T00:00:00Z",
+        live_server, "/v1/fundamentals/AAPL.US?as_of=9999-01-01T00:00:00Z",
     )
     assert status == 400
     assert "error" in body
@@ -154,8 +142,7 @@ def test_get_fundamentals_future_as_of_400(live_server) -> None:
 def test_get_fundamentals_unknown_ticker_returns_empty_projections(
     live_server,
 ) -> None:
-    host, port = live_server
-    status, body = _get(host, port, "/v1/fundamentals/UNKNOWN.X")
+    status, body = _get(live_server, "/v1/fundamentals/UNKNOWN.X")
     assert status == 200
     assert body["company"] is None
     assert body["highlights"] is None
@@ -163,15 +150,13 @@ def test_get_fundamentals_unknown_ticker_returns_empty_projections(
 
 
 def test_get_fundamentals_url_decodes_ticker(live_server) -> None:
-    host, port = live_server
     encoded = quote("AAPL.US", safe="")
-    status, body = _get(host, port, f"/v1/fundamentals/{encoded}")
+    status, body = _get(live_server, f"/v1/fundamentals/{encoded}")
     assert status == 200
     assert body["ticker"] == "AAPL.US"
 
 
 def test_get_fundamentals_missing_ticker_400(live_server) -> None:
-    host, port = live_server
-    status, body = _get(host, port, "/v1/fundamentals/")
+    status, body = _get(live_server, "/v1/fundamentals/")
     assert status == 400
     assert "error" in body
