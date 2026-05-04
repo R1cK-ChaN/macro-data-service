@@ -3,6 +3,9 @@
 Files in this directory wire the recurring calendar jobs into
 `systemd --user` timers:
 
+Each service sets `Environment=MACRO_DATA_PROFILE=prod` so recurring writer
+jobs run under the VPS writer profile.
+
 | Unit | Cadence | Purpose | Issue |
 | --- | --- | --- | --- |
 | `calendar-schedule-refresh.timer` | daily 04:00 UTC | every connector pulls forward-looking schedule rows | #31 |

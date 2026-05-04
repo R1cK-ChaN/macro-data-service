@@ -9,6 +9,7 @@ Type=oneshot
 # close). The wrapper resolves .macro-data/, .env, and scripts/ relative
 # to REPO_ROOT and acquires the shared calendar_recurring.lock.
 Environment=REPO_ROOT=%h/Desktop/analyst/macro-data-service
+Environment=MACRO_DATA_PROFILE=prod
 ExecStart=%h/Desktop/analyst/macro-data-service/scripts/calendar_corp_forward_wrapper.sh
 
 # Soft watchdog — five subtypes × max 30 requests at EODHD's free-tier

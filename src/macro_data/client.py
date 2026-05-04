@@ -23,7 +23,12 @@ class MacroDataHttpConfig:
 
     @classmethod
     def from_env(cls) -> MacroDataHttpConfig | None:
-        base_url = get_env_value("ANALYST_MACRO_DATA_BASE_URL", default="").strip()
+        base_url = get_env_value(
+            "ANALYST_MACRO_DATA_BASE_URL",
+            "MACRO_DATA_PROD_API_URL",
+            "MACRO_DATA_PROD_BASE_URL",
+            default="",
+        ).strip()
         if not base_url:
             return None
         timeout_raw = get_env_value("ANALYST_MACRO_DATA_TIMEOUT_SECONDS", default="20").strip()
@@ -33,7 +38,11 @@ class MacroDataHttpConfig:
             timeout_seconds = 20.0
         return cls(
             base_url=base_url.rstrip("/"),
-            api_token=get_env_value("ANALYST_MACRO_DATA_API_TOKEN", default="").strip(),
+            api_token=get_env_value(
+                "ANALYST_MACRO_DATA_API_TOKEN",
+                "MACRO_DATA_API_TOKEN",
+                default="",
+            ).strip(),
             timeout_seconds=max(timeout_seconds, 1.0),
         )
 

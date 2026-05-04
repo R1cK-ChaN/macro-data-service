@@ -6,6 +6,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 Environment=REPO_ROOT=%h/Desktop/analyst/macro-data-service
+Environment=MACRO_DATA_PROFILE=prod
 ExecStart=%h/Desktop/analyst/macro-data-service/scripts/market_daily_refresh_wrapper.sh
 TimeoutStartSec=7200
 Restart=no

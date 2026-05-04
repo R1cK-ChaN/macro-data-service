@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -90,7 +91,12 @@ class MacroDataCLITest(unittest.TestCase):
         with patch("macro_data.cli.OECDIngestionClient", return_value=fake_ingestion):
             with patch("storage.SQLiteEngineStore", return_value=fake_store):
                 with redirect_stdout(output):
-                    rc = main(["oecd-refresh-catalog", "--dataflow-limit", "1", "--sleep-seconds", "0"])
+                    rc = main([
+                        "oecd-refresh-catalog",
+                        "--dataflow-limit", "1",
+                        "--sleep-seconds", "0",
+                        "--allow-local-write",
+                    ])
 
         self.assertEqual(rc, 0)
         self.assertIn("oecd_catalog", output.getvalue())
@@ -112,13 +118,40 @@ class MacroDataCLITest(unittest.TestCase):
         }
         with patch("macro_data.factory.build_local_macro_data_service", return_value=fake_service):
             with redirect_stdout(output):
-                rc = main(["refresh-source", "--source", "news"])
+                rc = main(["refresh-source", "--source", "news", "--allow-local-write"])
 
         self.assertEqual(rc, 0)
         payload = json.loads(output.getvalue())
         self.assertEqual(payload["source"], "news")
         self.assertEqual(payload["stored"], 4)
         fake_service.invoke.assert_called_once_with("refresh_source", {"source": "news"})
+
+    def test_refresh_source_requires_prod_profile_by_default(self) -> None:
+        stderr_buf = io.StringIO()
+        with patch.dict(os.environ, {"MACRO_DATA_PROFILE": "dev"}), \
+             patch("sys.stderr", stderr_buf):
+            rc = main(["refresh-source", "--source", "news"])
+
+        self.assertEqual(rc, 2)
+        self.assertIn("writer ops run only on the VPS", stderr_buf.getvalue())
+
+    def test_diagnose_sources_requires_prod_profile_by_default(self) -> None:
+        stderr_buf = io.StringIO()
+        with patch.dict(os.environ, {"MACRO_DATA_PROFILE": "dev"}), \
+             patch("sys.stderr", stderr_buf):
+            rc = main(["diagnose-sources"])
+
+        self.assertEqual(rc, 2)
+        self.assertIn("writer ops run only on the VPS", stderr_buf.getvalue())
+
+    def test_launch_gate_requires_prod_profile_by_default(self) -> None:
+        stderr_buf = io.StringIO()
+        with patch.dict(os.environ, {"MACRO_DATA_PROFILE": "dev"}), \
+             patch("sys.stderr", stderr_buf):
+            rc = main(["launch-gate", "--skip-issue-update"])
+
+        self.assertEqual(rc, 2)
+        self.assertIn("writer ops run only on the VPS", stderr_buf.getvalue())
 
     def test_sources_capabilities_command_invokes_service(self) -> None:
         output = io.StringIO()
@@ -166,7 +199,14 @@ class MacroDataCLITest(unittest.TestCase):
         }
         with patch("macro_data.factory.build_local_macro_data_service", return_value=fake_service):
             with redirect_stdout(output):
-                rc = main(["catalog-list", "--source", "oecd", "--query", "cli", "--limit", "5", "--refresh"])
+                rc = main([
+                    "catalog-list",
+                    "--source", "oecd",
+                    "--query", "cli",
+                    "--limit", "5",
+                    "--refresh",
+                    "--allow-local-write",
+                ])
 
         self.assertEqual(rc, 0)
         payload = json.loads(output.getvalue())
@@ -186,7 +226,13 @@ class MacroDataCLITest(unittest.TestCase):
         }
         with patch("macro_data.factory.build_local_macro_data_service", return_value=fake_service):
             with redirect_stdout(output):
-                rc = main(["catalog-sync-latest", "--source", "worldbank", "--entity", "SP.POP.TOTL", "--limit", "3"])
+                rc = main([
+                    "catalog-sync-latest",
+                    "--source", "worldbank",
+                    "--entity", "SP.POP.TOTL",
+                    "--limit", "3",
+                    "--allow-local-write",
+                ])
 
         self.assertEqual(rc, 0)
         payload = json.loads(output.getvalue())
@@ -194,6 +240,42 @@ class MacroDataCLITest(unittest.TestCase):
         fake_service.invoke.assert_called_once_with(
             "sync_catalog_latest",
             {"source_id": "worldbank", "entity_ids": ["SP.POP.TOTL"], "limit": 3},
+        )
+
+    def test_dev_profile_resolve_uses_http_api(self) -> None:
+        output = io.StringIO()
+        fake_client = Mock()
+        fake_client.invoke.return_value = {
+            "resolved": {
+                "concept_id": "CPI_US",
+                "date": "2026-04-01",
+                "value": 3.1,
+                "source_id": "bls",
+                "provider_series_id": "CPIAUCSL",
+                "priority": 1,
+                "role": "primary",
+                "alternates": 0,
+            }
+        }
+        env = {
+            "MACRO_DATA_PROFILE": "dev",
+            "ANALYST_MACRO_DATA_BASE_URL": "https://macro-data.example",
+            "ANALYST_MACRO_DATA_API_TOKEN": "secret",
+        }
+        with patch.dict(os.environ, env), \
+             patch("macro_data.cli.HttpMacroDataClient", return_value=fake_client) as http_cls:
+            with redirect_stdout(output):
+                rc = main(["resolve", "CPI_US", "--json"])
+
+        self.assertEqual(rc, 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["concept_id"], "CPI_US")
+        config = http_cls.call_args.args[0]
+        self.assertEqual(config.base_url, "https://macro-data.example")
+        self.assertEqual(config.api_token, "secret")
+        fake_client.invoke.assert_called_once_with(
+            "resolve_indicator",
+            {"concept_id": "CPI_US"},
         )
 
     def test_default_engine_db_path_is_service_scoped(self) -> None:
@@ -340,6 +422,7 @@ class MacroDataCLITest(unittest.TestCase):
                     "--db-path", "/tmp/engine.db",
                     "--skip-issue-update",
                     "--no-clickhouse-market-stats",
+                    "--allow-local-write",
                 ])
 
         self.assertEqual(rc, 0)

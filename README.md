@@ -148,6 +148,10 @@ PYTHONPATH=src python3 scripts/backfill_market_history.py --status active
 PYTHONPATH=src python3 scripts/market_daily_refresh.py --date 2026-05-01
 ```
 
+Writer and source-diagnostic commands run on the VPS with
+`MACRO_DATA_PROFILE=prod`. Local fixture/debug writer runs use
+`--allow-local-write` and a temporary `--db-path`.
+
 ### Resolution
 
 ```bash
@@ -471,10 +475,12 @@ API token file shape:
 
 ### Environment variables
 
-`src/env.py` reads from process env first, then `.env` at the repo root.
+`src/env.py` reads from process env first, then `.env` at the repo root, then
+`~/.macro-data/dev.env`.
 
 | Variable | Used by | Required? |
 |---|---|---|
+| `MACRO_DATA_PROFILE` | Deployment profile: `dev` local client, `prod` VPS writer/API | optional; default `dev` |
 | `FRED_API_KEY` | FRED series, FX, and macro-market rate/FX projection | yes for any FRED data |
 | `BLS_API_KEY` | BLS series | yes for BLS |
 | `BEA_API_KEY` | BEA series | yes for BEA |
@@ -488,6 +494,7 @@ API token file shape:
 | `ANALYST_MACRO_DATA_API_TOKENS_PATH` | FastAPI public API token mapping path | optional; default `/etc/macro-data/api_tokens.json` |
 | `ANALYST_MACRO_DATA_RATE_LIMIT_DB` | shared SQLite fixed-window rate-limit state | optional; default `/tmp/macro-data-api-rate-limits.sqlite3` |
 | `ANALYST_MACRO_DATA_WORKERS` | uvicorn worker count for `macro-data-service serve` | optional; default `2` |
+| `ANALYST_MACRO_DATA_BASE_URL` | dev-profile client base URL for prod API reads | yes for local `resolve` |
 | `ANALYST_MACRO_DATA_API_TOKEN` | client token sent as `X-API-Key`; server also accepts it as a local inline token for CLI launches | optional |
 
 ## Agent wiring

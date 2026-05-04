@@ -15,7 +15,58 @@ from ingestion.sources import (
     render_wb_series_configs,
 )
 
+from env import get_macro_data_profile
+
+from .client import HttpMacroDataClient, MacroDataHttpConfig
 from .server import main as serve_main
+
+
+class LocalWriterGuardError(RuntimeError):
+    pass
+
+
+_WRITER_GUARDED_COMMANDS = frozenset({
+    "refresh",
+    "refresh-source",
+    "refresh-indicator",
+    "news-refresh",
+    "oecd-refresh-catalog",
+    "wb-refresh-catalog",
+    "catalog-sync-discovery",
+    "catalog-sync-latest",
+    "diagnose-sources",
+    "launch-gate",
+})
+
+
+def _add_allow_local_write_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--allow-local-write",
+        action="store_true",
+        help="Allow this writer op in dev profile for fixture/debug runs.",
+    )
+
+
+def _is_writer_command(args: argparse.Namespace) -> bool:
+    if args.command in _WRITER_GUARDED_COMMANDS:
+        return True
+    if args.command == "catalog-list" and bool(getattr(args, "refresh", False)):
+        return True
+    if args.command == "schedule":
+        return bool(args.run or not (args.show or args.due or args.status))
+    return False
+
+
+def _guard_writer_command(args: argparse.Namespace) -> None:
+    if not _is_writer_command(args) or bool(getattr(args, "allow_local_write", False)):
+        return
+    profile = get_macro_data_profile()
+    if profile != "prod":
+        raise LocalWriterGuardError(
+            "writer ops run only on the VPS. "
+            "Set MACRO_DATA_PROFILE=prod in the VPS systemd unit, "
+            "or pass --allow-local-write for a local fixture/debug run."
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,6 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     refresh = subparsers.add_parser("refresh")
     refresh.add_argument("--db-path", default=None)
+    _add_allow_local_write_argument(refresh)
 
     schedule = subparsers.add_parser("schedule")
     schedule.add_argument("--show", action="store_true", help="Show all concepts with next expected release")
@@ -42,6 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     schedule.add_argument("--poll-interval", type=int, default=300, help="Poll interval seconds")
     schedule.add_argument("--json", action="store_true", dest="json_output")
     schedule.add_argument("--db-path", default=None)
+    _add_allow_local_write_argument(schedule)
 
     health = subparsers.add_parser("health")
     health.add_argument("--indicator", default=None, help="Filter to a single indicator")
@@ -52,10 +105,12 @@ def build_parser() -> argparse.ArgumentParser:
     news_refresh = subparsers.add_parser("news-refresh")
     news_refresh.add_argument("--category", default=None)
     news_refresh.add_argument("--db-path", default=None)
+    _add_allow_local_write_argument(news_refresh)
 
     refresh_source = subparsers.add_parser("refresh-source")
     refresh_source.add_argument("--source", required=True)
     refresh_source.add_argument("--db-path", default=None)
+    _add_allow_local_write_argument(refresh_source)
 
     list_sources = subparsers.add_parser("list-sources")
     list_sources.add_argument("--family", default=None)
@@ -75,6 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
     catalog_list.add_argument("--limit", type=int, default=100)
     catalog_list.add_argument("--refresh", action="store_true")
     catalog_list.add_argument("--db-path", default=None)
+    _add_allow_local_write_argument(catalog_list)
 
     catalog_structure = subparsers.add_parser("catalog-structure")
     catalog_structure.add_argument("--source", required=True)
@@ -86,12 +142,14 @@ def build_parser() -> argparse.ArgumentParser:
     catalog_sync_discovery.add_argument("--query", default=None)
     catalog_sync_discovery.add_argument("--limit", type=int, default=None)
     catalog_sync_discovery.add_argument("--db-path", default=None)
+    _add_allow_local_write_argument(catalog_sync_discovery)
 
     catalog_sync_latest = subparsers.add_parser("catalog-sync-latest")
     catalog_sync_latest.add_argument("--source", required=True)
     catalog_sync_latest.add_argument("--entity", action="append", dest="entities", default=None)
     catalog_sync_latest.add_argument("--limit", type=int, default=None)
     catalog_sync_latest.add_argument("--db-path", default=None)
+    _add_allow_local_write_argument(catalog_sync_latest)
 
     catalog_status = subparsers.add_parser("catalog-status")
     catalog_status.add_argument("--source", default=None)
@@ -125,6 +183,7 @@ def build_parser() -> argparse.ArgumentParser:
     oecd_refresh.add_argument("--latest-observations", type=int, default=1)
     oecd_refresh.add_argument("--sleep-seconds", type=float, default=1.2)
     oecd_refresh.add_argument("--db-path", default=None)
+    _add_allow_local_write_argument(oecd_refresh)
 
     # -- World Bank catalog commands --
     subparsers.add_parser("wb-sources")
@@ -151,6 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
     wb_refresh.add_argument("--latest-observations", type=int, default=5)
     wb_refresh.add_argument("--sleep-seconds", type=float, default=0.3)
     wb_refresh.add_argument("--db-path", default=None)
+    _add_allow_local_write_argument(wb_refresh)
 
     validate = subparsers.add_parser("validate")
     validate.add_argument("--source", default=None, help="Validate a single source")
@@ -183,6 +243,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use an empty market-bars inventory instead of probing ClickHouse.",
     )
     launch_gate.add_argument("--json", action="store_true", dest="json_output")
+    _add_allow_local_write_argument(launch_gate)
 
     refresh_indicator = subparsers.add_parser("refresh-indicator")
     refresh_indicator.add_argument("concept_id", help="Concept ID (e.g. CPI_US)")
@@ -190,6 +251,7 @@ def build_parser() -> argparse.ArgumentParser:
     refresh_indicator.add_argument("--validate", action="store_true", help="Run validation after ingestion")
     refresh_indicator.add_argument("--json", action="store_true", dest="json_output", help="JSON output")
     refresh_indicator.add_argument("--db-path", default=None)
+    _add_allow_local_write_argument(refresh_indicator)
 
     validate_concept = subparsers.add_parser("validate-concept")
     validate_concept.add_argument("concept_id", nargs="?", default=None, help="Concept ID (e.g. CPI_US)")
@@ -220,6 +282,7 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose = subparsers.add_parser("diagnose-sources")
     diagnose.add_argument("--json", action="store_true", dest="json_output")
     diagnose.add_argument("--db-path", default=None)
+    _add_allow_local_write_argument(diagnose)
 
     return parser
 
@@ -624,7 +687,85 @@ def _run_refresh_indicator(args: argparse.Namespace) -> int:
     return 0 if not report.error else 1
 
 
-def _run_resolve(args: argparse.Namespace) -> int:
+def _resolve_arguments(args: argparse.Namespace) -> dict[str, object]:
+    arguments: dict[str, object] = {"concept_id": args.concept_id}
+    if args.date:
+        arguments["date"] = args.date
+    if getattr(args, "as_of", None):
+        arguments["as_of"] = args.as_of
+    if args.min_vintage_quality:
+        arguments["min_vintage_quality"] = args.min_vintage_quality
+    if args.history:
+        arguments["limit"] = args.limit
+    return arguments
+
+
+def _print_resolve_history(rows: list[dict[str, object]]) -> None:
+    for row in rows:
+        alt_count = row.get("alternates") or 0
+        alt = f"+{alt_count}" if alt_count else ""
+        provenance = row.get("provenance") or "native"
+        tag = f" [{provenance}]" if provenance != "native" else ""
+        print(f"  {row.get('date')}  {float(row.get('value', 0.0)):>12.4f}  "
+              f"{row.get('source_id', ''):<18}  "
+              f"p={row.get('priority')}  {row.get('role')}{alt and '  alt=' + alt}{tag}")
+
+
+def _print_resolve_observation(row: dict[str, object]) -> None:
+    alt = f"  alt={row.get('alternates')}" if row.get("alternates") else ""
+    print(f"  {row.get('concept_id')}  {row.get('date')}  {float(row.get('value', 0.0)):.4f}  "
+          f"source={row.get('source_id')}  series={row.get('provider_series_id')}  "
+          f"p={row.get('priority')}  {row.get('role')}{alt}")
+
+
+def _run_resolve_http(args: argparse.Namespace) -> int:
+    config = MacroDataHttpConfig.from_env()
+    if config is None:
+        print(
+            "dev profile resolve requires ANALYST_MACRO_DATA_BASE_URL "
+            "in ~/.macro-data/dev.env or process env.",
+            file=sys.stderr,
+        )
+        return 2
+
+    client = HttpMacroDataClient(config)
+    operation = "resolve_indicator_history" if args.history else "resolve_indicator"
+    try:
+        payload = client.invoke(operation, _resolve_arguments(args))
+    except Exception as exc:
+        print(f"prod API resolve failed at {config.base_url}: {exc}", file=sys.stderr)
+        return 1
+
+    if payload.get("error"):
+        if args.json_output:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(str(payload["error"]), file=sys.stderr)
+        return 1
+
+    if args.history:
+        rows = payload.get("observations") or []
+        if not isinstance(rows, list) or not rows:
+            print(f"No data found for {args.concept_id}")
+            return 1
+        if args.json_output:
+            print(json.dumps(rows, ensure_ascii=False, indent=2))
+        else:
+            _print_resolve_history([dict(row) for row in rows if isinstance(row, dict)])
+        return 0
+
+    obs = payload.get("resolved")
+    if not isinstance(obs, dict):
+        print(f"No data found for {args.concept_id}" + (f" on {args.date}" if args.date else ""))
+        return 1
+    if args.json_output:
+        print(json.dumps(obs, ensure_ascii=False, indent=2))
+    else:
+        _print_resolve_observation(dict(obs))
+    return 0
+
+
+def _run_resolve_local(args: argparse.Namespace) -> int:
     from dataclasses import asdict
     from storage import SQLiteEngineStore
 
@@ -646,11 +787,7 @@ def _run_resolve(args: argparse.Namespace) -> int:
         if args.json_output:
             print(json.dumps([asdict(r) for r in results], ensure_ascii=False, indent=2))
         else:
-            for r in results:
-                alt = f"+{r.alternates}" if r.alternates else ""
-                tag = f" [{r.provenance}]" if r.provenance != "native" else ""
-                print(f"  {r.date}  {r.value:>12.4f}  {r.source_id:<18}  "
-                      f"p={r.priority}  {r.role}{alt and '  alt=' + alt}{tag}")
+            _print_resolve_history([asdict(r) for r in results])
         return 0
 
     obs = store.resolve_indicator(
@@ -665,11 +802,19 @@ def _run_resolve(args: argparse.Namespace) -> int:
     if args.json_output:
         print(json.dumps(asdict(obs), ensure_ascii=False, indent=2))
     else:
-        alt = f"  alt={obs.alternates}" if obs.alternates else ""
-        print(f"  {obs.concept_id}  {obs.date}  {obs.value:.4f}  "
-              f"source={obs.source_id}  series={obs.provider_series_id}  "
-              f"p={obs.priority}  {obs.role}{alt}")
+        _print_resolve_observation(asdict(obs))
     return 0
+
+
+def _run_resolve(args: argparse.Namespace) -> int:
+    try:
+        profile = get_macro_data_profile()
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if profile == "dev":
+        return _run_resolve_http(args)
+    return _run_resolve_local(args)
 
 
 def _run_validate_concept(args: argparse.Namespace) -> int:
@@ -733,6 +878,11 @@ def _run_validate_concept(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    try:
+        _guard_writer_command(args)
+    except (LocalWriterGuardError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     if args.command == "serve":
         serve_argv: list[str] = []

@@ -50,6 +50,31 @@ the resolution layer.
 
 ---
 
+## Deployment topology
+
+Production has two VPS lanes and one local client lane.
+
+| Lane | Host | Responsibilities | Profile |
+|---|---|---|---|
+| Writer lane | VPS | Ingestion, release-aware refresh, calendar value sweeps, data-quality filing, backup snapshots, market/fundamentals refreshes | `MACRO_DATA_PROFILE=prod` |
+| Reader lane | VPS | `macro-data-api` / `macro-data-service serve`, public read ops, rate limiting, `X-API-Key` auth | `MACRO_DATA_PROFILE=prod` |
+| Local lane | Laptop / workstation | Development, parser/unit tests, read-only calls to the production API | `MACRO_DATA_PROFILE=dev` |
+
+`MACRO_DATA_PROFILE` defaults to `dev`. In the dev profile,
+`macro-data-service resolve ...` calls the HTTP API configured by
+`ANALYST_MACRO_DATA_BASE_URL` and sends `ANALYST_MACRO_DATA_API_TOKEN` as
+`X-API-Key`; both values can live in `~/.macro-data/dev.env`. Local writer CLI
+ops (`refresh`, `refresh-source`, `refresh-indicator`, catalog sync/refresh
+ops, `diagnose-sources`, `launch-gate`, and `schedule --run`) require either
+`MACRO_DATA_PROFILE=prod` or an explicit `--allow-local-write` debug/fixture
+override.
+
+Local tests use temporary DBs and fixtures. VPS systemd writer units set
+`Environment=MACRO_DATA_PROFILE=prod`, which gives ingestion ownership to the
+always-on host and keeps local work in the dev/read-only client lane.
+
+---
+
 ## Layers
 
 | Layer | Lives in | Role |

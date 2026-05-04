@@ -5,6 +5,34 @@ from typing import Any
 from macro_data.client import HttpMacroDataClient, MacroDataHttpConfig
 
 
+def test_http_config_reads_dev_env_file(monkeypatch, tmp_path) -> None:
+    env_file = tmp_path / "dev.env"
+    env_file.write_text(
+        "\n".join([
+            "ANALYST_MACRO_DATA_BASE_URL=https://macro-data.example",
+            "ANALYST_MACRO_DATA_API_TOKEN=secret",
+            "ANALYST_MACRO_DATA_TIMEOUT_SECONDS=7",
+        ]),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("ANALYST_MACRO_DATA_BASE_URL", raising=False)
+    monkeypatch.delenv("ANALYST_MACRO_DATA_API_TOKEN", raising=False)
+    monkeypatch.delenv("ANALYST_MACRO_DATA_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setenv("MACRO_DATA_ENV_FILES", str(env_file))
+
+    from env import clear_env_cache
+
+    clear_env_cache()
+    config = MacroDataHttpConfig.from_env()
+    clear_env_cache()
+
+    assert config == MacroDataHttpConfig(
+        base_url="https://macro-data.example",
+        api_token="secret",
+        timeout_seconds=7.0,
+    )
+
+
 def test_http_client_sends_x_api_key(monkeypatch) -> None:
     captured: dict[str, Any] = {}
 

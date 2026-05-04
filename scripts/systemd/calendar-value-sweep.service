@@ -9,6 +9,7 @@ Type=oneshot
 # /home/rick/Desktop/analyst/macro-data-service. The wrapper resolves
 # .macro-data/, .env, and scripts/ relative to it.
 Environment=REPO_ROOT=%h/Desktop/analyst/macro-data-service
+Environment=MACRO_DATA_PROFILE=prod
 ExecStart=%h/Desktop/analyst/macro-data-service/scripts/calendar_sweep_values_wrapper.sh
 
 # Soft watchdog — the hourly sweep is recent-window only, so a clean
