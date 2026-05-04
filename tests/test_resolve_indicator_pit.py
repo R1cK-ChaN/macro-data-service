@@ -11,12 +11,18 @@ Covers:
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from macro_data.service import LocalMacroDataService
 from storage.sqlite import (
     IndicatorVintageRecord,
     SQLiteEngineStore,
@@ -39,6 +45,14 @@ def _vintage(store, *, source, series_id, obs_date, vintage_date, value, q="nati
             value=value, vintage_quality=q,
         )
     )
+
+
+def _resolved_hash(obs) -> str:
+    payload = (
+        f"{obs.concept_id}|{obs.date}|{obs.value}|"
+        f"{obs.source_id}|{obs.provider_series_id}"
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 class TestAsOfSingle:
@@ -115,6 +129,194 @@ class TestAsOfHistory:
         )
         by_date = {r.date: r.value for r in results}
         assert by_date == {"2024-01-01": 101.0, "2024-02-01": 201.0, "2024-03-01": 303.0}
+
+
+class TestVintageQualityGate:
+    def _seed_calendar_event(self, store, *, ref_date, actual):
+        with store._connection(commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO cal_econ_event (
+                    provider, provider_event_id, event_time_utc,
+                    event_time_precision, reference_date, reference_label,
+                    country_code, indicator_id, category, title,
+                    importance, currency, unit, actual, previous, revised,
+                    forecast, consensus_forecast, ticker, source, source_url,
+                    content_hash, last_update_epoch_ms, observed_at_epoch_ms,
+                    created_at, updated_at, event_type
+                )
+                VALUES ('te', ?, ?, 'datetime', ?, '', 'US', NULL,
+                        'Inflation Rate YoY', 'Inflation Rate YoY',
+                        'high', 'USD', '%', ?, '', NULL, '', '', '', '', '',
+                        '', 0, 0, '2026-01-01', '2026-01-01', '')
+                """,
+                (f"id-quality-{ref_date}", ref_date + "T00:00:00", ref_date, actual),
+            )
+
+    def test_as_of_defaults_to_native_pit_and_pins_native_row_hash(self, store):
+        _vintage(
+            store, source="fred", series_id="CPIAUCSL",
+            obs_date="2024-01-01", vintage_date="2024-02-15", value=310.0,
+            q="native_pit",
+        )
+        _vintage(
+            store, source="fred", series_id="CPIAUCSL",
+            obs_date="2024-01-01", vintage_date="2024-03-15", value=311.0,
+            q="synthetic_snapshot",
+        )
+        obs = store.resolve_indicator(
+            "CPI_US", date="2024-01-01", as_of="2024-04-01",
+        )
+        assert obs is not None
+        assert obs.value == 310.0
+        assert _resolved_hash(obs) == (
+            "4022fc2e255507c2f0a0a7319bd85fcd264d11811a03d5a595cb40809719914f"
+        )
+
+    def test_as_of_any_allows_synthetic_snapshot(self, store):
+        _vintage(
+            store, source="fred", series_id="CPIAUCSL",
+            obs_date="2024-01-01", vintage_date="2024-02-15", value=310.0,
+            q="native_pit",
+        )
+        _vintage(
+            store, source="fred", series_id="CPIAUCSL",
+            obs_date="2024-01-01", vintage_date="2024-03-15", value=311.0,
+            q="synthetic_snapshot",
+        )
+        obs = store.resolve_indicator(
+            "CPI_US",
+            date="2024-01-01",
+            as_of="2024-04-01",
+            min_vintage_quality="any",
+        )
+        assert obs is not None
+        assert obs.value == 311.0
+
+    def test_history_quality_gate_defaults_to_native_pit(self, store):
+        _vintage(
+            store, source="fred", series_id="CPIAUCSL",
+            obs_date="2024-01-01", vintage_date="2024-02-15", value=310.0,
+            q="synthetic_snapshot",
+        )
+        _vintage(
+            store, source="fred", series_id="CPIAUCSL",
+            obs_date="2024-02-01", vintage_date="2024-03-15", value=312.0,
+            q="native_pit",
+        )
+        results = store.resolve_indicator_history(
+            "CPI_US", limit=12, as_of="2024-04-01",
+        )
+        assert [(r.date, r.value) for r in results] == [("2024-02-01", 312.0)]
+
+        results = store.resolve_indicator_history(
+            "CPI_US",
+            limit=12,
+            as_of="2024-04-01",
+            min_vintage_quality="any",
+        )
+        assert [(r.date, r.value) for r in results] == [
+            ("2024-02-01", 312.0),
+            ("2024-01-01", 310.0),
+        ]
+
+    def test_history_quality_thresholds_cover_all_three_tiers(self, store):
+        _vintage(
+            store, source="fred", series_id="CPIAUCSL",
+            obs_date="2024-01-01", vintage_date="2024-02-15", value=310.0,
+            q="native_pit",
+        )
+        _vintage(
+            store, source="fred", series_id="CPIAUCSL",
+            obs_date="2024-02-01", vintage_date="2024-03-15", value=311.0,
+            q="synthetic_snapshot",
+        )
+        _vintage(
+            store, source="fred", series_id="CPIAUCSL",
+            obs_date="2024-03-01", vintage_date="2024-04-15", value=312.0,
+            q="single_observation",
+        )
+        results = store.resolve_indicator_history(
+            "CPI_US",
+            limit=12,
+            as_of="2024-05-01",
+            min_vintage_quality="synthetic_snapshot",
+        )
+        assert [(r.date, r.value) for r in results] == [
+            ("2024-02-01", 311.0),
+            ("2024-01-01", 310.0),
+        ]
+
+        results = store.resolve_indicator_history(
+            "CPI_US",
+            limit=12,
+            as_of="2024-05-01",
+            min_vintage_quality="single_observation",
+        )
+        assert [(r.date, r.value) for r in results] == [
+            ("2024-03-01", 312.0),
+            ("2024-02-01", 311.0),
+            ("2024-01-01", 310.0),
+        ]
+
+    def test_service_marks_quality_filtered_response(self, store):
+        _vintage(
+            store, source="fred", series_id="CPIAUCSL",
+            obs_date="2024-01-01", vintage_date="2024-02-15", value=310.0,
+            q="synthetic_snapshot",
+        )
+        service = LocalMacroDataService(store=store)
+        response = service.invoke(
+            "resolve_indicator",
+            {
+                "concept_id": "CPI_US",
+                "date": "2024-01-01",
+                "as_of": "2024-04-01",
+            },
+        )
+        assert response["resolved"] is None
+        assert response["min_vintage_quality"] == "native_pit"
+        assert response["vintage_quality_filtered"] is True
+        assert response["available_qualities"] == ["synthetic_snapshot"]
+
+    def test_service_marks_history_quality_filtered_response(self, store):
+        _vintage(
+            store, source="fred", series_id="CPIAUCSL",
+            obs_date="2024-01-01", vintage_date="2024-02-15", value=310.0,
+            q="synthetic_snapshot",
+        )
+        service = LocalMacroDataService(store=store)
+        response = service.invoke(
+            "resolve_indicator_history",
+            {"concept_id": "CPI_US", "as_of": "2024-04-01"},
+        )
+        assert response["total"] == 0
+        assert response["observations"] == []
+        assert response["min_vintage_quality"] == "native_pit"
+        assert response["vintage_quality_filtered"] is True
+        assert response["available_qualities"] == ["synthetic_snapshot"]
+
+    def test_history_quality_gate_suppresses_calendar_fallback_when_blocked(self, store):
+        _vintage(
+            store, source="fred", series_id="CPIAUCSL",
+            obs_date="2024-01-01", vintage_date="2024-02-15", value=310.0,
+            q="synthetic_snapshot",
+        )
+        self._seed_calendar_event(store, ref_date="2024-01-01", actual="3.2")
+
+        results = store.resolve_indicator_history(
+            "CPI_US", limit=12, as_of="2024-04-01",
+        )
+        assert results == []
+
+        service = LocalMacroDataService(store=store)
+        response = service.invoke(
+            "resolve_indicator_history",
+            {"concept_id": "CPI_US", "as_of": "2024-04-01"},
+        )
+        assert response["total"] == 0
+        assert response["vintage_quality_filtered"] is True
+        assert response["available_qualities"] == ["synthetic_snapshot"]
 
 
 class TestProvenanceField:
@@ -279,6 +481,7 @@ class TestAsOfNormalisation:
         )
         obs = store.resolve_indicator(
             "CPI_US", date="2026-04-01", as_of="2026-05-02",
+            min_vintage_quality="any",
         )
         assert obs is not None
         assert obs.value == 320.0
@@ -292,6 +495,7 @@ class TestAsOfNormalisation:
         )
         obs = store.resolve_indicator(
             "CPI_US", date="2026-04-01", as_of="2026-05-01",
+            min_vintage_quality="any",
         )
         assert obs is None
 
