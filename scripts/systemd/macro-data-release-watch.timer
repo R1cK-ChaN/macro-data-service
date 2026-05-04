@@ -1,0 +1,11 @@
+[Unit]
+Description=One-minute macro-data release-aware refresh watcher (issue #130)
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Persistent=true
+Unit=macro-data-release-watch.service
+
+[Install]
+WantedBy=timers.target

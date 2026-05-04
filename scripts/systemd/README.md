@@ -6,6 +6,7 @@ Files in this directory wire the recurring calendar jobs into
 | Unit | Cadence | Purpose | Issue |
 | --- | --- | --- | --- |
 | `calendar-schedule-refresh.timer` | daily 04:00 UTC | every connector pulls forward-looking schedule rows | #31 |
+| `macro-data-release-watch.timer` | every minute | watched high-priority `release_schedule` concepts trigger source-specific value fetches | #130 |
 | `calendar-value-sweep.timer` | hourly at :15 | every value-side connector fills `actual` on recent rows | #31 |
 | `parity-daily.timer` | daily 06:00 UTC | TE-vs-official parity tripwire (depends on the 04:00 refresh having run) | #22 |
 | `fundamentals-forward.timer` | daily 23:00 ET | EODHD `/api/fundamentals/` snapshot for the seeded universe (~17 tickers) | #68 |
@@ -87,6 +88,8 @@ scripts/parity_daily_wrapper.sh --dry-run
 mkdir -p ~/.config/systemd/user
 cp scripts/systemd/calendar-schedule-refresh.service ~/.config/systemd/user/
 cp scripts/systemd/calendar-schedule-refresh.timer   ~/.config/systemd/user/
+cp scripts/systemd/macro-data-release-watch.service  ~/.config/systemd/user/
+cp scripts/systemd/macro-data-release-watch.timer    ~/.config/systemd/user/
 cp scripts/systemd/calendar-value-sweep.service      ~/.config/systemd/user/
 cp scripts/systemd/calendar-value-sweep.timer        ~/.config/systemd/user/
 
@@ -96,6 +99,7 @@ cp scripts/systemd/calendar-value-sweep.timer        ~/.config/systemd/user/
 
 systemctl --user daemon-reload
 systemctl --user enable --now calendar-schedule-refresh.timer
+systemctl --user enable --now macro-data-release-watch.timer
 systemctl --user enable --now calendar-value-sweep.timer
 ```
 
@@ -103,8 +107,10 @@ Verify:
 
 ```bash
 systemctl --user list-timers \
-    calendar-schedule-refresh.timer calendar-value-sweep.timer
+    calendar-schedule-refresh.timer macro-data-release-watch.timer \
+    calendar-value-sweep.timer
 journalctl --user -u calendar-schedule-refresh.service -n 100
+journalctl --user -u macro-data-release-watch.service -n 100
 journalctl --user -u calendar-value-sweep.service -n 100
 ```
 
@@ -113,6 +119,9 @@ Operations:
 * Schedule refresh log: `.macro-data/logs/calendar_refresh_schedules.log`
   (one JSON per run — `ok_count`, `failed_count`,
   `failed_connectors[]`, `wall_seconds`).
+* Release-aware watcher log: `.macro-data/logs/release_aware_refresh.log`
+  (one JSON per run — `due_count`, `triggered_count`,
+  `failed_count`, `results[]`).
 * Value sweep log: `.macro-data/logs/calendar_sweep_values.log` (same
   shape).
 * Per-connector breaker state: `cal_provider` table column
@@ -140,12 +149,12 @@ Design notes (calendar units):
   rows before the parity tripwire fires at 06:00 UTC. Value sweep at
   every `:15` is staggered off the 04:00 / 06:00 hourly slots so the
   three timers never collide on the engine DB.
-* `flock --nonblock` is held by the wrapper so an over-running run
-  silently skips the next slot rather than racing on the engine DB.
-  The refresh and sweep wrappers share one lock
-  (`.macro-data/calendar_recurring.lock`) — without sharing, the 04:15
-  sweep can step on a still-running 04:00 refresh and trip
-  `database is locked` ticks against the per-connector breakers.
+* `flock` is held by the wrappers so calendar jobs serialize writes
+  to the engine DB. The refresh, release-aware, and sweep wrappers
+  share one lock (`.macro-data/calendar_recurring.lock`). The
+  release-aware wrapper records its activation timestamp before
+  waiting for the lock and passes it as `--now`, so a short lock wait
+  preserves the intended release-window decision.
 * On resume after a long suspend, systemd queues the missed firings
   for refresh + sweep + parity together. `parity-daily.service`
   carries `After=calendar-schedule-refresh.service` and

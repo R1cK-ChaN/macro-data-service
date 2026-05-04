@@ -1,0 +1,18 @@
+[Unit]
+Description=Macro-data release-aware refresh watcher (issue #130)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=REPO_ROOT=%h/Desktop/analyst/macro-data-service
+ExecStart=%h/Desktop/analyst/macro-data-service/scripts/release_aware_refresh_wrapper.sh
+
+TimeoutStartSec=300
+Restart=no
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
