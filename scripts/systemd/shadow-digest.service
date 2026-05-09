@@ -1,0 +1,25 @@
+[Unit]
+Description=Macro-data shadow ingestion + digest cycle (issue #106)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Replace REPO_ROOT below with the absolute path to your checkout, e.g.
+# /home/data/macro-data-service on the VPS data lane.
+Environment=REPO_ROOT=%h/Desktop/analyst/macro-data-service
+Environment=MACRO_DATA_PROFILE=prod
+ExecStart=%h/Desktop/analyst/macro-data-service/scripts/shadow_runner_wrapper.sh
+
+# A full ingestion cycle across all sources can take 20-40 min on a
+# warm cache. 90 min covers cold-start and a slow upstream; longer
+# means a stuck upstream and the cycle should be killed.
+TimeoutStartSec=5400
+
+Restart=no
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
