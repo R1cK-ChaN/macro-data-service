@@ -47,7 +47,8 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get -qq update
 sudo DEBIAN_FRONTEND=noninteractive apt-get -qq -y install \
   ca-certificates curl gnupg lsb-release apt-transport-https \
   unattended-upgrades chrony fail2ban ufw git \
-  python3.12 python3.12-venv python3-pip
+  python3.12 python3.12-venv python3-pip \
+  rclone
 sudo systemctl enable --now unattended-upgrades.service >/dev/null
 
 # ---------- 2/8 timezone UTC + chrony -------------------------------------
