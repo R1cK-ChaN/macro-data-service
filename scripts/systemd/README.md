@@ -16,6 +16,9 @@ jobs run under the VPS writer profile.
 | `macro-data-market-refresh.timer` | daily 22:00 ET | EODHD US bulk bars/dividends/splits refresh | #119 |
 | `macro-data-market-self-heal.timer` | weekly Sunday 03:00 ET | stale-bar refetch and delisting detection | #119 |
 | `macro-data-market-spot-check.timer` | daily 22:30 ET | realtime-close spot check against stored closes | #119 |
+| `macro-data-refresh.timer` | daily 02:00 UTC | umbrella `refresh_all_sources` — catch-all for sources not on a release-watch loop | #106 |
+| `shadow-digest.timer` | every 6h at :30 (00/06/12/18 UTC) | full ingestion cycle + coverage digest (`shadow_runner.py --once`) | #106 |
+| `data-quality-daily.timer` | daily 07:00 UTC | macro DQ rollup → single GH `data-quality` issue (filer #102, packaging #106) | #106 |
 
 # Parity tripwire systemd unit
 
@@ -242,3 +245,91 @@ scripts/market_daily_refresh_wrapper.sh
 scripts/market_self_heal_wrapper.sh
 scripts/market_spot_check_wrapper.sh
 ```
+
+## Writer timer pack (issue #106)
+
+Three timers complete the writer set so a fresh VPS does not depend on
+manual `macro-data-service refresh` runs:
+
+- `macro-data-refresh.timer` (daily 02:00 UTC) — umbrella refresh of
+  every registered source. Catch-all for sources not on the
+  release-aware watcher (`macro-data-release-watch.timer` handles the
+  high-priority concepts).
+- `shadow-digest.timer` (every 6h at :30 — 00/06/12/18 UTC) — runs
+  `shadow_runner.py --once` for one full ingestion + coverage digest
+  cycle. Detects coverage drops outside the daily DQ window.
+- `data-quality-daily.timer` (daily 07:00 UTC) — wraps
+  `scripts/data_quality_daily.py` (filer #102), files / updates the
+  single `data-quality` GitHub issue based on validation + digest +
+  secret-leak signal.
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp scripts/systemd/macro-data-refresh.service ~/.config/systemd/user/
+cp scripts/systemd/macro-data-refresh.timer   ~/.config/systemd/user/
+cp scripts/systemd/shadow-digest.service      ~/.config/systemd/user/
+cp scripts/systemd/shadow-digest.timer        ~/.config/systemd/user/
+cp scripts/systemd/data-quality-daily.service ~/.config/systemd/user/
+cp scripts/systemd/data-quality-daily.timer   ~/.config/systemd/user/
+
+# Same Environment= / ExecStart= caveat as the other units — edit each
+# .service if your checkout is at a path other than
+# %h/Desktop/analyst/macro-data-service. On the VPS data lane this is
+# /home/data/macro-data-service.
+
+systemctl --user daemon-reload
+systemctl --user enable --now macro-data-refresh.timer
+systemctl --user enable --now shadow-digest.timer
+systemctl --user enable --now data-quality-daily.timer
+```
+
+Verify:
+
+```bash
+systemctl --user list-timers \
+    macro-data-refresh.timer shadow-digest.timer data-quality-daily.timer
+journalctl --user -u macro-data-refresh.service -n 50
+journalctl --user -u shadow-digest.service -n 50
+journalctl --user -u data-quality-daily.service -n 50
+```
+
+Manual run:
+
+```bash
+scripts/macro_data_refresh_wrapper.sh
+scripts/shadow_runner_wrapper.sh
+scripts/data_quality_daily_wrapper.sh
+
+# --help on each entry-point surfaces dry-run / subset flags
+python3 scripts/data_quality_daily.py --help
+PYTHONPATH=src python3 -m macro_data.cli refresh --help
+python3 shadow_runner.py --help
+```
+
+Operations:
+
+* `macro-data-refresh` log: stdout/stderr to journal; one structured
+  `refresh_all_sources` op result printed per run.
+* `shadow-digest` log: `.macro-data/logs/shadow.log` (one line per
+  source × cycle), `.macro-data/logs/daily_digest.jsonl` (one digest
+  per cycle).
+* `data-quality-daily` log: `.macro-data/logs/data_quality.log` (one
+  JSON per run); state at `.macro-data/data_quality_state.json`.
+* Lock files (one per job, none shared): `.macro-data/`
+  `macro_data_refresh.lock`, `shadow_digest.lock`,
+  `data_quality_daily.lock`.
+
+Design notes:
+
+* **Cadence design** — 02:00 UTC umbrella refresh seeds the engine DB
+  before calendar refresh (04:00), parity (06:00), and DQ (07:00) read
+  from it. Shadow cycles at :30 of each 6h slot stay clear of every
+  hour-of-day write window and the hourly :15 calendar value sweep.
+* **`shadow_runner.py --once`** (added in #106) — the script's
+  `while True` interval loop is for ad-hoc daemon runs. Under systemd,
+  `--once` exits after one cycle so the timer drives cadence,
+  matching the rest of the pack.
+* **No per-family refresh yet** — `macro-data-refresh` calls the
+  umbrella `refresh_all_sources` op. Per-family timers
+  (US / EU / JP / CN / global) are a future enhancement once each
+  family's refresh budget and cadence justify independent scheduling.

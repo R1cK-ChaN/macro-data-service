@@ -210,8 +210,14 @@ def run_shadow(
     *,
     interval_hours: float = 6,
     db_path: str | None = None,
+    cycles: int | None = None,
 ) -> None:
-    """Run ingestion every N hours, log everything, write daily digest."""
+    """Run ingestion every N hours, log everything, write daily digest.
+
+    ``cycles`` caps the loop after that many iterations; ``None`` (default)
+    means run forever. ``cycles=1`` is the systemd-timer mode — one full
+    pass + digest write + exit, with the timer driving the next firing.
+    """
     # Lazy import so logging is set up first
     sys.path.insert(0, str(Path(__file__).parent / "src"))
     from macro_data.factory import build_local_macro_data_service
@@ -228,7 +234,7 @@ def run_shadow(
     logger.info("Release schedules seeded")
 
     cycle = 0
-    while True:
+    while cycles is None or cycle < cycles:
         cycle += 1
         logger.info("═══ Shadow cycle %d starting ═══", cycle)
         t0 = time.perf_counter()
@@ -281,7 +287,13 @@ def run_shadow(
         except Exception as exc:
             logger.error("Failed to compute digest: %s", exc)
 
-        # Sleep until next cycle
+        # Skip the inter-cycle sleep when this was the last scheduled
+        # cycle — under systemd `--once` (cycles=1) the timer drives the
+        # next firing, so any sleep here would just push the oneshot
+        # service into TimeoutStartSec and cost a failed unit per run.
+        if cycles is not None and cycle >= cycles:
+            break
+
         logger.info("Sleeping %.1fh until next cycle...", interval_hours)
         time.sleep(interval_hours * 3600)
 
@@ -292,11 +304,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Shadow mode ingestion runner")
     parser.add_argument("--interval", type=float, default=6, help="Hours between cycles (default 6)")
     parser.add_argument("--db-path", default=None, help="Database path")
+    parser.add_argument("--once", action="store_true",
+                        help="Run a single cycle and exit (for systemd timer use)")
     args = parser.parse_args()
 
     setup_logging()
-    logger.info("Starting shadow mode (interval=%.1fh)", args.interval)
+    cycles = 1 if args.once else None
+    logger.info("Starting shadow mode (interval=%.1fh, cycles=%s)",
+                args.interval, "once" if args.once else "forever")
     try:
-        run_shadow(interval_hours=args.interval, db_path=args.db_path)
+        run_shadow(interval_hours=args.interval, db_path=args.db_path, cycles=cycles)
     except KeyboardInterrupt:
         logger.info("Shadow mode stopped by user")

@@ -1,0 +1,25 @@
+[Unit]
+Description=Macro-data umbrella source refresh (issue #106)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Replace REPO_ROOT below with the absolute path to your checkout, e.g.
+# /home/data/macro-data-service on the VPS data lane.
+Environment=REPO_ROOT=%h/Desktop/analyst/macro-data-service
+Environment=MACRO_DATA_PROFILE=prod
+ExecStart=%h/Desktop/analyst/macro-data-service/scripts/macro_data_refresh_wrapper.sh
+
+# Catch-all daily refresh across all registered sources. Cold-start
+# can take 30-60 min if many caches are stale; 90 min covers worst
+# case. Anything longer is a stuck upstream and should be killed.
+TimeoutStartSec=5400
+
+Restart=no
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
