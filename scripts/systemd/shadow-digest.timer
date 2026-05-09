@@ -1,0 +1,21 @@
+[Unit]
+Description=6-hour shadow ingestion + digest cycle (issue #106)
+
+[Timer]
+# Four cycles a day at :30 of 00/06/12/18 UTC — staggered off the
+# busy hour-of-day slots so the full ingestion run does not collide
+# with the umbrella refresh (02:00), calendar refresh (04:00),
+# parity (06:00), or data-quality (07:00) timers on the engine DB
+# write lock. The :30 offset also keeps clear of the hourly :15
+# calendar value sweep.
+OnCalendar=*-*-* 00,06,12,18:30:00
+AccuracySec=1m
+
+# Late catch-up is fine — each cycle is idempotent across run_source
+# upserts and the digest is re-computed each fire.
+Persistent=true
+
+Unit=shadow-digest.service
+
+[Install]
+WantedBy=timers.target

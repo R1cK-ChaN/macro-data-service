@@ -1,0 +1,19 @@
+[Unit]
+Description=Daily 07:00 UTC macro data-quality auto-filer (issue #102)
+
+[Timer]
+# Daily at 07:00 UTC — sits one hour after parity-daily (06:00) so
+# the daily DQ rollup picks up today's parity verdict and avoids
+# fighting parity for the engine DB read lock.
+OnCalendar=*-*-* 07:00:00
+AccuracySec=1m
+
+# Late catch-up (e.g. host suspended overnight) is harmless: the
+# script is idempotent and the GH filer's clean-streak logic absorbs
+# repeated clean runs.
+Persistent=true
+
+Unit=data-quality-daily.service
+
+[Install]
+WantedBy=timers.target

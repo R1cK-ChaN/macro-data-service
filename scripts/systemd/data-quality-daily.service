@@ -1,0 +1,32 @@
+[Unit]
+Description=Macro-data daily data-quality auto-filer (issue #102)
+After=network-online.target
+Wants=network-online.target
+
+# Catch-up ordering after a long suspend: data-quality reads results
+# from validation + parity, so wait for parity to land first.
+After=parity-daily.service
+
+[Service]
+Type=oneshot
+# Replace REPO_ROOT below with the absolute path to your checkout, e.g.
+# /home/data/macro-data-service on the VPS data lane. The wrapper
+# resolves .macro-data/, .env, and scripts/ relative to it.
+Environment=REPO_ROOT=%h/Desktop/analyst/macro-data-service
+Environment=MACRO_DATA_PROFILE=prod
+ExecStart=%h/Desktop/analyst/macro-data-service/scripts/data_quality_daily_wrapper.sh
+
+# Validation + digest + gh API calls finish in well under 5 min;
+# 10 min covers anomalies. Beyond that means a stuck gh API call
+# and the job should be killed.
+TimeoutStartSec=600
+
+# Don't restart on failure — daily cadence + the script's own
+# self-monitor on the GH issue thread is the retry mechanism.
+Restart=no
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

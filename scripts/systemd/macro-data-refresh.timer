@@ -1,0 +1,22 @@
+[Unit]
+Description=Daily 02:00 UTC umbrella refresh of all sources (issue #106)
+
+[Timer]
+# Daily at 02:00 UTC — earliest of the day so newly-refreshed source
+# data lands in the engine DB before calendar-schedule-refresh
+# (04:00), parity (06:00), data-quality-daily (07:00), and the
+# shadow-digest cycles consume it. Cleared of the 23:00 ET / 22:00 ET
+# fundamentals + corp-calendar windows (which are 03:00-04:00 UTC
+# depending on DST) by sitting an hour earlier.
+OnCalendar=*-*-* 02:00:00
+AccuracySec=1m
+
+# Persistent catch-up is safe — refresh_all_sources is upsert-shaped
+# and the orchestrator already deduplicates on (source, series_id,
+# content_hash) at the bronze tier (issue #131).
+Persistent=true
+
+Unit=macro-data-refresh.service
+
+[Install]
+WantedBy=timers.target
