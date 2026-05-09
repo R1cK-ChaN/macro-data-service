@@ -30,8 +30,15 @@ LOCK_FILE="${REPO_ROOT}/.macro-data/macro_data_refresh.lock"
 mkdir -p "$(dirname "$LOCK_FILE")"
 
 cd "$REPO_ROOT"
-# PYTHONPATH=src makes the CLI runnable even on hosts without an
-# editable install (`pip install -e .`).
-exec flock --nonblock "$LOCK_FILE" \
-    env PYTHONPATH="${REPO_ROOT}/src" \
-    python3 -m macro_data.cli refresh "$@"
+# Prefer the repo-local venv (VPS install pattern, deps already
+# installed via `pip install -e .`); fall back to system python3 + an
+# explicit PYTHONPATH for dev workstations without an editable install.
+PYTHON_BIN="${REPO_ROOT}/.venv/bin/python"
+if [ -x "$PYTHON_BIN" ]; then
+  exec flock --nonblock "$LOCK_FILE" \
+      "$PYTHON_BIN" -m macro_data.cli refresh "$@"
+else
+  exec flock --nonblock "$LOCK_FILE" \
+      env PYTHONPATH="${REPO_ROOT}/src" \
+      python3 -m macro_data.cli refresh "$@"
+fi

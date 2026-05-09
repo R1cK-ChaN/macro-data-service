@@ -19,5 +19,10 @@ LOCK_FILE="${REPO_ROOT}/.macro-data/data_quality_daily.lock"
 mkdir -p "$(dirname "$LOCK_FILE")"
 
 cd "$REPO_ROOT"
+# Prefer the repo-local venv if present (VPS install pattern); fall back
+# to system python3 for dev workstations that have deps available
+# system-wide.
+PYTHON_BIN="${REPO_ROOT}/.venv/bin/python"
+[ -x "$PYTHON_BIN" ] || PYTHON_BIN="python3"
 exec flock --nonblock "$LOCK_FILE" \
-    python3 scripts/data_quality_daily.py "$@"
+    "$PYTHON_BIN" scripts/data_quality_daily.py "$@"
