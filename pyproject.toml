@@ -12,7 +12,7 @@ dependencies = [
     "clickhouse-connect>=0.7",
     "curl_cffi",
     "feedparser",
-    "fastapi",
+    "fastapi<0.111",  # add_event_handler removed in 0.111; migrate to lifespan as follow-up
     "httpx",
     "markdownify",
     "mmh3>=4.1.0",
