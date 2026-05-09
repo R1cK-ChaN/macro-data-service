@@ -10,7 +10,7 @@ from ~25 free/licensed upstreams instead of BBG's paid feed.
 resolves macro + market + calendar + document data from ~25 upstreams into a
 single SQLite store that downstream services (analyst UI, RAG, agents) read
 through one service interface.
-**Last updated:** 2026-05-09 (branch `dev`: GitHub Actions deploy pipeline wired — push to `master` triggers `rsync -av --delete` to `data@<vps>:/home/data/macro-data-service/`, gated by Environment `prod` with required-reviewer approval and master-only branch policy.)
+**Last updated:** 2026-05-09 (branch `dev`: GitHub Actions deploy pipeline wired and #133 VPS bootstrap landed — push to `master` triggers automated `rsync -av --delete` to `data@<vps>:/home/data/macro-data-service/`, scoped to master via `custom_branch_policies`. Both `dev` and `master` block force-push + deletion with `enforce_admins=true`. No required-reviewer or status-check gates.)
 
 ### Bloomberg-capability coverage (current → 1.0)
 
@@ -80,11 +80,19 @@ Routine work lands on the `dev` branch; `master` is the deploy trigger. On push
 to `master` (or manual `workflow_dispatch`), the workflow runs in GitHub
 Environment `prod`, which:
 
-- requires reviewer approval (R1cK-ChaN) before any job step executes;
 - restricts the deploying ref to `master` via `custom_branch_policies`;
 - holds env-scoped secrets `SSH_PRIVATE_KEY` (ed25519 deploy key, no passphrase),
   `SSH_KNOWN_HOSTS`, `SSH_HOST`, `SSH_USER` — the workflow YAML carries no
   hostnames or credentials.
+
+The deploy is fully automated: no required-reviewer gate, no wait timer.
+The dev → master PR step is the de-facto code-review checkpoint.
+
+Both `dev` and `master` carry GitHub branch protection: `allow_force_pushes`
+and `allow_deletions` are disabled, with `enforce_admins=true` so the rule
+applies to the owner too. No `required_pull_request_reviews` or
+`required_status_checks` — direct push is still allowed; only history-
+destroying ops are blocked.
 
 The deploy step runs `rsync -av --delete` from the runner checkout to
 `data@<host>:/home/data/macro-data-service/`. Excluded from the sync: `.env*`,
