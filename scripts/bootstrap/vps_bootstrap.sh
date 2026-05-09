@@ -31,10 +31,9 @@ F2B_JAIL=/etc/fail2ban/jail.d/sshd.local
 CH_KEYRING=/etc/apt/keyrings/clickhouse-keyring.gpg
 CH_LIST=/etc/apt/sources.list.d/clickhouse.list
 
-if [[ $EUID -eq 0 ]]; then
-  echo "Run as a sudoer, not root. Aborting." >&2
-  exit 1
-fi
+# Works as either: root (via `sudo ./vps_bootstrap.sh`) or sudoer with
+# cached/NOPASSWD sudo (via `sudo -v && ./vps_bootstrap.sh`). Inner sudo
+# calls are no-op passthroughs when EUID is 0.
 if ! sudo -n true 2>/dev/null; then
   echo "Need cached or passwordless sudo. Run 'sudo -v' first." >&2
   exit 1
