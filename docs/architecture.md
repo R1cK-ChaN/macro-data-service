@@ -10,7 +10,7 @@ from ~25 free/licensed upstreams instead of BBG's paid feed.
 resolves macro + market + calendar + document data from ~25 upstreams into a
 single SQLite store that downstream services (analyst UI, RAG, agents) read
 through one service interface.
-**Last updated:** 2026-05-03 (branch `refactor/issue-123-retire-calendar-scrapers`: retired the legacy calendar HTML scraper subtree; TE country mapping now lives in `calendar/te_api`; official calendar APIs, `te_api`, and EODHD are the current calendar ingestion paths.)
+**Last updated:** 2026-05-09 (branch `dev`: GitHub Actions deploy pipeline wired — push to `master` triggers `rsync -av --delete` to `data@<vps>:/home/data/macro-data-service/`, gated by Environment `prod` with required-reviewer approval and master-only branch policy.)
 
 ### Bloomberg-capability coverage (current → 1.0)
 
@@ -72,6 +72,27 @@ override.
 Local tests use temporary DBs and fixtures. VPS systemd writer units set
 `Environment=MACRO_DATA_PROFILE=prod`, which gives ingestion ownership to the
 always-on host and keeps local work in the dev/read-only client lane.
+
+### Deployment pipeline (added 2026-05-09)
+
+Source ships to the VPS via GitHub Actions (`.github/workflows/deploy-prod.yml`).
+Routine work lands on the `dev` branch; `master` is the deploy trigger. On push
+to `master` (or manual `workflow_dispatch`), the workflow runs in GitHub
+Environment `prod`, which:
+
+- requires reviewer approval (R1cK-ChaN) before any job step executes;
+- restricts the deploying ref to `master` via `custom_branch_policies`;
+- holds env-scoped secrets `SSH_PRIVATE_KEY` (ed25519 deploy key, no passphrase),
+  `SSH_KNOWN_HOSTS`, `SSH_HOST`, `SSH_USER` — the workflow YAML carries no
+  hostnames or credentials.
+
+The deploy step runs `rsync -av --delete` from the runner checkout to
+`data@<host>:/home/data/macro-data-service/`. Excluded from the sync: `.env*`,
+`.macro-data/`, `*.db*`, `.venv` / `venv`, `__pycache__/`, `.github/`, and
+dev-local artifacts (`.agents/`, `.claude/`, `.coderabbit.yaml`,
+`.pytest_cache/`, `.codex`). The `data` user owns the tree (uid 1002, in the
+`sudo` group); the ed25519 deploy key is the only credential GitHub Actions
+holds.
 
 ---
 
