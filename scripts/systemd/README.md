@@ -19,6 +19,7 @@ jobs run under the VPS writer profile.
 | `macro-data-refresh.timer` | daily 02:00 UTC | umbrella `refresh_all_sources` — catch-all for sources not on a release-watch loop | #106 |
 | `shadow-digest.timer` | every 6h at :30 (00/06/12/18 UTC) | full ingestion cycle + coverage digest (`shadow_runner.py --once`) | #106 |
 | `data-quality-daily.timer` | daily 07:00 UTC | macro DQ rollup → single GH `data-quality` issue (filer #102, packaging #106) | #106 |
+| `macro-data-api.service` | always-on | uvicorn HTTP reader API on 127.0.0.1:8765 — Caddy / proxy fronts external traffic | #137 (Option A subset, no CF Health Check) |
 
 # Parity tripwire systemd unit
 
@@ -264,6 +265,15 @@ manual `macro-data-service refresh` runs:
   secret-leak signal.
 
 ```bash
+# 1. Enable lingering once per host for the user that owns the units.
+#    Without this, the systemd --user manager exits at logout and the
+#    timers stop firing until next interactive login. Idempotent.
+sudo loginctl enable-linger data
+
+# 2. Copy units. Same Environment= / ExecStart= caveat as the other
+#    units — edit each .service if your checkout is at a path other
+#    than %h/Desktop/analyst/macro-data-service. On the VPS data lane
+#    this is /home/data/macro-data-service.
 mkdir -p ~/.config/systemd/user
 cp scripts/systemd/macro-data-refresh.service ~/.config/systemd/user/
 cp scripts/systemd/macro-data-refresh.timer   ~/.config/systemd/user/
@@ -271,11 +281,6 @@ cp scripts/systemd/shadow-digest.service      ~/.config/systemd/user/
 cp scripts/systemd/shadow-digest.timer        ~/.config/systemd/user/
 cp scripts/systemd/data-quality-daily.service ~/.config/systemd/user/
 cp scripts/systemd/data-quality-daily.timer   ~/.config/systemd/user/
-
-# Same Environment= / ExecStart= caveat as the other units — edit each
-# .service if your checkout is at a path other than
-# %h/Desktop/analyst/macro-data-service. On the VPS data lane this is
-# /home/data/macro-data-service.
 
 systemctl --user daemon-reload
 systemctl --user enable --now macro-data-refresh.timer
@@ -333,3 +338,75 @@ Design notes:
   umbrella `refresh_all_sources` op. Per-family timers
   (US / EU / JP / CN / global) are a future enhancement once each
   family's refresh budget and cadence justify independent scheduling.
+
+## HTTP reader API (Option A subset of issue #137)
+
+`macro-data-api.service` runs uvicorn as a long-running daemon that
+binds **127.0.0.1:8765** only — public traffic comes in via a
+reverse-proxy front-door (currently Caddy on the data VPS).
+
+Install:
+
+```bash
+# 1. Enable lingering for the data user so the systemd --user manager
+#    survives logout (otherwise the API stops the moment the install
+#    SSH session closes, and Caddy proxies to a dead 127.0.0.1:8765).
+#    Idempotent — re-running is a no-op.
+sudo loginctl enable-linger data
+
+# 2. Stamp the unit with the VPS path and copy to the user manager.
+mkdir -p ~/.config/systemd/user
+sed 's|%h/Desktop/analyst/macro-data-service|/home/data/macro-data-service|g' \
+    scripts/systemd/macro-data-api.service \
+    > ~/.config/systemd/user/macro-data-api.service
+
+systemctl --user daemon-reload
+systemctl --user enable --now macro-data-api.service
+```
+
+Verify:
+
+```bash
+systemctl --user status macro-data-api.service --no-pager
+journalctl --user -u macro-data-api.service -n 50 --no-pager
+curl -s http://127.0.0.1:8765/healthz
+```
+
+Caddy front-door (data VPS specific — `/etc/caddy/Caddyfile`):
+
+```
+macro.217-15-165-83.sslip.io {
+    encode gzip
+    reverse_proxy 127.0.0.1:8765 {
+        flush_interval -1
+    }
+}
+```
+
+Then `sudo systemctl reload caddy`. Caddy auto-issues an LE cert for
+the new hostname on first request.
+
+Operations:
+
+* Logs: `journalctl --user -u macro-data-api.service` (structured access
+  log JSON per request: `method`, `path`, `status`, `consumer_id`,
+  `latency_ms`).
+* `/healthz` is unauthenticated; everything else requires `X-API-Key`
+  matching `/etc/macro-data/api_tokens.json`.
+* `MemoryMax=2G` + `CPUQuota=200%` — caps a runaway query at 2GB / two
+  cores. Adjust upward only after observing a real workload squeezing
+  these limits.
+
+Design notes:
+
+* **Bind 127.0.0.1**, not 0.0.0.0 — defense in depth. UFW already
+  blocks public :8765 (only :22 + :443 + bench's pre-existing :80
+  are allowed), and binding to loopback closes the gap if UFW ever
+  has a hole.
+* **EnvironmentFile=-/etc/macro-data/.env** — `-` makes it optional so
+  laptop dev installs without the file don't fail unit start. Production
+  fills the file via the #133 secrets template.
+* **Coexistence with bench's :8000 quanttutor on Caddy** — the
+  Caddyfile addition is a brand-new site block, not a modification of
+  bench's existing block. `caddy reload` is graceful (zero downtime
+  for quanttutor). No coordination needed beyond a heads-up.
