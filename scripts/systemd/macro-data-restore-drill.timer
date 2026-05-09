@@ -1,0 +1,17 @@
+[Unit]
+Description=Monthly 08:00 UTC restore drill (issue #136)
+
+[Timer]
+# Monthly first day at 08:00 UTC — quiet window between the 07:00 DQ
+# rollup and the US market refreshes. Cadence is light (12 fires/year)
+# so collision risk is small either way.
+OnCalendar=*-*-01 08:00:00
+AccuracySec=1m
+
+# Catch-up after suspend or downtime is fine — the drill is read-only.
+Persistent=true
+
+Unit=macro-data-restore-drill.service
+
+[Install]
+WantedBy=timers.target

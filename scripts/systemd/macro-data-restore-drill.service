@@ -1,0 +1,24 @@
+[Unit]
+Description=Macro-data monthly restore drill from B2 (issue #136)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/macro-data/.env
+# Replace REPO_ROOT below with your checkout path. On the data VPS:
+#   /home/data/macro-data-service.
+Environment=REPO_ROOT=%h/Desktop/analyst/macro-data-service
+Environment=MACRO_DATA_PROFILE=prod
+ExecStart=%h/Desktop/analyst/macro-data-service/scripts/backup/restore_drill_wrapper.sh
+
+# Pull + verify usually completes in 5-10 min; 30 min covers cold-start
+# B2 throttling.
+TimeoutStartSec=1800
+
+Restart=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
