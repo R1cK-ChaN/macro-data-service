@@ -6,7 +6,12 @@
 # Environment overrides:
 #   DATA_USER=data              non-root account systemd jobs run as
 #   SSH_ALLOWED_FROM=""         CIDR/IP to lock :22 down to (empty = open)
-#   LOCK_DATA_PASSWORD=1        set 0 to keep password sudo (testing only)
+#   LOCK_DATA_PASSWORD=0        set 1 to also lock data's local password.
+#                               SSH password login is already blocked by the
+#                               sshd drop-in; locking on top closes the local
+#                               sudo + console fallbacks for fully-key-only
+#                               hosts. Default 0 keeps `sudo` usable from
+#                               data's own session.
 #
 # Run as a sudoer (not root). Re-running on a partially-configured host
 # is a no-op. Targets Ubuntu 24.04 LTS.
@@ -16,7 +21,7 @@ IFS=$'\n\t'
 
 DATA_USER="${DATA_USER:-data}"
 SSH_ALLOWED_FROM="${SSH_ALLOWED_FROM:-}"
-LOCK_DATA_PASSWORD="${LOCK_DATA_PASSWORD:-1}"
+LOCK_DATA_PASSWORD="${LOCK_DATA_PASSWORD:-0}"
 
 DATA_DIR=/var/lib/macro-data
 LOG_DIR=/var/log/macro-data

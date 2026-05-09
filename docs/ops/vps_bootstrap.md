@@ -82,7 +82,7 @@ UFW, fail2ban, ClickHouse, directory skeleton. Re-runs are no-ops.
 |---|---|---|
 | `DATA_USER` | `data` | Non-root account systemd jobs run as |
 | `SSH_ALLOWED_FROM` | empty | If set (e.g. `1.2.3.4` or `1.2.3.0/24`), restricts port 22 to that source |
-| `LOCK_DATA_PASSWORD` | `1` | Set `0` to keep password sudo for emergency console access |
+| `LOCK_DATA_PASSWORD` | `0` | Set `1` to also `passwd -l` data's local password. SSH password login is already blocked by the sshd drop-in; locking on top closes local sudo + Contabo KVM console fallbacks. Default keeps `sudo` usable from data's own session. |
 
 After the script completes, verify:
 
