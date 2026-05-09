@@ -1,0 +1,88 @@
+# Mirrors the working tree to /home/data/macro-data-service/ on the data VPS via rsync.
+# Gate: GitHub Environment "prod" requires reviewer approval and is restricted to master.
+# Env-scoped secrets (set with `gh secret set <name> --env prod`):
+#   SSH_PRIVATE_KEY  ed25519 deploy key, no passphrase
+#   SSH_KNOWN_HOSTS  output of `ssh-keyscan -H <host>`
+#   SSH_HOST         VPS IP/hostname reachable from GH runner
+#   SSH_USER         remote user (data)
+
+name: Deploy to prod (data@vl)
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: rsync to data@vl
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: prod
+      url: https://github.com/${{ github.repository }}/deployments
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: rsync source tree
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          rsync -av --delete \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='.macro-data/' \
+            --exclude='__pycache__/' \
+            --exclude='*.pyc' \
+            --exclude='.venv/' \
+            --exclude='venv/' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='*.db' \
+            --exclude='*.db-shm' \
+            --exclude='*.db-wal' \
+            --exclude='.idea/' \
+            --exclude='.vscode/' \
+            --exclude='*.log' \
+            --exclude='node_modules/' \
+            --exclude='.pytest_cache/' \
+            --exclude='.coderabbit.yaml' \
+            --exclude='.codex' \
+            --exclude='.agents/' \
+            --exclude='.claude/' \
+            -e "ssh -i ~/.ssh/id_ed25519" \
+            ./ "${SSH_USER}@${SSH_HOST}:/home/data/macro-data-service/"
+
+      - name: Verify on remote
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 "${SSH_USER}@${SSH_HOST}" \
+            'set -e
+             cd ~/macro-data-service
+             echo "--- size ---"; du -sh .
+             echo "--- file count ---"; find . -type f | wc -l
+             echo "--- top-level ---"; ls -la | head -25
+             echo "--- src/ sanity ---"; ls src/'
