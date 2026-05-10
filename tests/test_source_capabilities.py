@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -12,6 +13,7 @@ from ingestion.source_capabilities import (
     SourceCapabilityAdapter,
     SourceCapabilityManager,
 )
+from ingestion.sources import IngestionOrchestrator
 from storage.sqlite import SQLiteEngineStore
 
 
@@ -168,6 +170,36 @@ def test_default_calendar_capability_is_discovery_only() -> None:
     assert manager.sync_latest("calendar") == {
         "error": "latest sync unavailable for calendar"
     }
+
+
+def test_sentix_capability_is_discovery_only_when_source_is_disabled() -> None:
+    store = _make_store()
+    with patch("ingestion.sources._sentix_credentials_available", return_value=False):
+        orchestrator = IngestionOrchestrator(
+            store,
+            fred=Mock(), fed=Mock(),
+            news=Mock(),
+            rate_probability=Mock(), nyfed=Mock(), gov_report=Mock(),
+            eia=Mock(), treasury_fiscal=Mock(), imf=Mock(),
+            eurostat=Mock(), bis=Mock(), ecb=Mock(), oecd=Mock(),
+            worldbank=Mock(),
+        )
+    manager = SourceCapabilityManager(store, orchestrator=orchestrator)
+
+    capability = store.get_source_capability("sentix")
+    assert capability is not None
+    assert capability["supports_latest_sync"] is False
+    assert capability["is_default_scheduled"] is False
+    assert manager.sync_latest("sentix") == {
+        "error": "latest sync unavailable for sentix"
+    }
+
+    entities = manager.list_entities("sentix", query="sentix", limit=10)["entities"]
+    assert [entity["entity_id"] for entity in entities] == [
+        "SENTIX_US_HEADLINE",
+        "SENTIX_US_CURRENT",
+        "SENTIX_US_EXPECTATIONS",
+    ]
 
 
 def _make_manager_with_fake_adapter() -> SourceCapabilityManager:
