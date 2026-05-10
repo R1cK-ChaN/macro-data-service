@@ -11,5 +11,7 @@ RUN_STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%S+00:00")"
 mkdir -p "$(dirname "$LOCK_FILE")"
 
 cd "$REPO_ROOT"
+PYTHON_BIN="${REPO_ROOT}/.venv/bin/python"
+[ -x "$PYTHON_BIN" ] || PYTHON_BIN="python3"
 exec flock --wait 120 "$LOCK_FILE" \
-    python3 scripts/release_aware_refresh.py --now "$RUN_STARTED_AT" "$@"
+    "$PYTHON_BIN" scripts/release_aware_refresh.py --now "$RUN_STARTED_AT" "$@"
