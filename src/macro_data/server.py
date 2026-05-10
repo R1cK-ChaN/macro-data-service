@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import hashlib
 import json
@@ -11,7 +12,7 @@ from pathlib import Path
 import sqlite3
 import threading
 import time
-from typing import Any, Callable
+from typing import Any, AsyncIterator, Callable
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
@@ -323,6 +324,24 @@ def _is_truthy(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes"}
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    if app.state.service is None:
+        app.state.service = app.state.service_factory()
+    if app.state.token_config is not None:
+        app.state.api_tokens = dict(app.state.token_config)
+    else:
+        path = _api_tokens_path(app.state.token_path)
+        app.state.api_tokens = load_api_tokens(
+            path,
+            inline_api_token=_inline_api_token(),
+            default_rate_limit_per_minute=_default_rate_limit_per_minute(),
+        )
+        if not app.state.api_tokens:
+            logger.warning("macro-data API token config is empty: %s", path)
+    yield
+
+
 def create_app(
     *,
     service: LocalMacroDataService | None = None,
@@ -332,7 +351,7 @@ def create_app(
     rate_limiter: FixedWindowRateLimiter | None = None,
     invoke_in_thread: bool | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="Analyst Macro Data API")
+    app = FastAPI(title="Analyst Macro Data API", lifespan=_lifespan)
     app.state.service = service
     app.state.service_factory = service_factory or _build_read_only_service_from_env
     app.state.token_config = token_config
@@ -351,23 +370,6 @@ def create_app(
         if invoke_in_thread is None
         else invoke_in_thread
     )
-
-    async def _load_tokens_on_startup() -> None:
-        if app.state.service is None:
-            app.state.service = app.state.service_factory()
-        if app.state.token_config is not None:
-            app.state.api_tokens = dict(app.state.token_config)
-            return
-        path = _api_tokens_path(app.state.token_path)
-        app.state.api_tokens = load_api_tokens(
-            path,
-            inline_api_token=_inline_api_token(),
-            default_rate_limit_per_minute=_default_rate_limit_per_minute(),
-        )
-        if not app.state.api_tokens:
-            logger.warning("macro-data API token config is empty: %s", path)
-
-    app.add_event_handler("startup", _load_tokens_on_startup)
 
     @app.middleware("http")
     async def _auth_rate_limit_and_log(request: Request, call_next: Any) -> JSONResponse:
