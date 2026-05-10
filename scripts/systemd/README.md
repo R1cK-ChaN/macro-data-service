@@ -20,6 +20,8 @@ jobs run under the VPS writer profile.
 | `shadow-digest.timer` | every 6h at :30 (00/06/12/18 UTC) | full ingestion cycle + coverage digest (`shadow_runner.py --once`) | #106 |
 | `data-quality-daily.timer` | daily 07:00 UTC | macro DQ rollup → single GH `data-quality` issue (filer #102, packaging #106) | #106 |
 | `macro-data-api.service` | always-on | uvicorn HTTP reader API on 127.0.0.1:8765 — Caddy / proxy fronts external traffic | #137 (Option A subset, no CF Health Check) |
+| `macro-data-backup.timer` | daily 19:00 UTC (= 03:00 SGT) | engine.db + ClickHouse `market` snapshot → encrypted B2 sync | #136 |
+| `macro-data-restore-drill.timer` | monthly 1st 08:00 UTC | pull latest backup → integrity check; failure → `data-quality` filer | #136 |
 
 # Parity tripwire systemd unit
 
@@ -410,3 +412,37 @@ Design notes:
   Caddyfile addition is a brand-new site block, not a modification of
   bench's existing block. `caddy reload` is graceful (zero downtime
   for quanttutor). No coordination needed beyond a heads-up.
+
+## Backup + restore drill (issue #136)
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp scripts/systemd/macro-data-backup.service        ~/.config/systemd/user/
+cp scripts/systemd/macro-data-backup.timer          ~/.config/systemd/user/
+cp scripts/systemd/macro-data-restore-drill.service ~/.config/systemd/user/
+cp scripts/systemd/macro-data-restore-drill.timer   ~/.config/systemd/user/
+
+# Edit Environment=REPO_ROOT= and ExecStart= paths in each .service if
+# the checkout is not at ~/Desktop/analyst/macro-data-service. On the
+# data VPS: /home/data/macro-data-service.
+
+systemctl --user daemon-reload
+systemctl --user enable --now macro-data-backup.timer
+systemctl --user enable --now macro-data-restore-drill.timer
+```
+
+The full setup — B2 bucket + application key, `rclone obscure` for the
+crypt password, ClickHouse backup-disk config, env-file population — is
+in `docs/runbooks/backup_b2.md`.
+
+Operations:
+
+* Daily structured log: `/var/log/macro-data/restore_drill.log` (one JSON
+  per drill: hashes, archive size, freshness).
+* Failure path: `daily_backup_wrapper.sh` and `restore_drill_wrapper.sh`
+  file a GitHub issue under the dedicated `backup-failure` label
+  (auto-created on first failure) so the DQ filer's `data-quality`
+  selector stays out of backup territory.
+* Local snapshots roll over after 7 days; B2 `daily/` rolls over after
+  30 days via bucket lifecycle; B2 `monthly/` is written on day 1 and
+  kept indefinitely.

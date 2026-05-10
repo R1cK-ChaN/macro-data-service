@@ -102,6 +102,33 @@ dev-local artifacts (`.agents/`, `.claude/`, `.coderabbit.yaml`,
 `sudo` group); the ed25519 deploy key is the only credential GitHub Actions
 holds.
 
+### Backup + off-site replication (issue #136)
+
+Two systemd timers cover physical recovery:
+
+- `macro-data-backup.timer` — daily 19:00 UTC. Online SQLite `.backup` of
+  `engine.db` + ClickHouse `BACKUP DATABASE market`, both written under
+  `/var/lib/macro-data/backups/{sqlite,clickhouse}/<date>/`, then pushed to
+  Backblaze B2 via rclone with a client-side crypt remote so plaintext never
+  leaves the host. Local retention 7 days; B2 `daily/` retention 30 days
+  (bucket lifecycle); B2 `monthly/<YYYY-MM>/` written on day 1 and exempt
+  from lifecycle.
+- `macro-data-restore-drill.timer` — monthly 1st 08:00 UTC. Pulls the most
+  recent `daily/` snapshots, validates SQLite via golden queries + sha256
+  hash, validates the ClickHouse archive structurally (tar OK + `metadata/`
+  + `data/` present + size sane), and writes a JSON record to
+  `/var/log/macro-data/restore_drill.log`.
+
+Failure in either pipeline files a `data-quality` + `backup-failure` GitHub
+issue via the wrapper. Setup details (B2 keys, `rclone obscure`,
+`/etc/clickhouse-server/config.d/backups.xml`) live in
+`docs/runbooks/backup_b2.md`.
+
+The legacy `te_calendar_<date>/engine.db` snapshots produced by
+`scripts/parity_daily.py` are unrelated — they're a per-parity-run
+checkpoint kept inside `.macro-data/backups/` and are not part of the
+off-site replication path.
+
 ---
 
 ## Layers

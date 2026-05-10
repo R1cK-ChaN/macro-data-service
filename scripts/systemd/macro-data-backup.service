@@ -1,0 +1,30 @@
+[Unit]
+Description=Macro-data daily full-DB backup → Backblaze B2 (issue #136)
+After=network-online.target
+Wants=network-online.target
+# Run after the heaviest writer (shadow-digest 18:30 UTC) finishes so
+# the snapshot captures the day's freshest state.
+After=shadow-digest.service
+
+[Service]
+Type=oneshot
+# Production secrets (B2 keys, RCLONE_CRYPT_PASSWORD) live here. Same
+# convention as the other writer units in this directory.
+EnvironmentFile=/etc/macro-data/.env
+# Replace REPO_ROOT below with your checkout path. On the data VPS:
+#   /home/data/macro-data-service.
+Environment=REPO_ROOT=%h/Desktop/analyst/macro-data-service
+Environment=MACRO_DATA_PROFILE=prod
+ExecStart=%h/Desktop/analyst/macro-data-service/scripts/backup/daily_backup_wrapper.sh
+
+# SQLite ~1GB + ClickHouse data tar over residential upload usually
+# completes in 10-20 min. 60 min ceiling absorbs cold starts and B2
+# rate-limit backoff.
+TimeoutStartSec=3600
+
+Restart=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

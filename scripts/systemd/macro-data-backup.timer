@@ -1,0 +1,18 @@
+[Unit]
+Description=Daily 19:00 UTC (= 03:00 SGT) full-DB backup (issue #136)
+
+[Timer]
+# 19:00 UTC sits 30 min after the 18:30 shadow-digest fires and well
+# clear of the 22:00 ET market refresh, so the snapshot captures the
+# freshest writer state without contending for the engine DB lock.
+OnCalendar=*-*-* 19:00:00
+AccuracySec=1m
+
+# Catch up after a host suspend — the daily_backup is idempotent so a
+# late catch-up just re-uploads the same per-date snapshot.
+Persistent=true
+
+Unit=macro-data-backup.service
+
+[Install]
+WantedBy=timers.target

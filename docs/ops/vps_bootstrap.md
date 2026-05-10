@@ -133,7 +133,9 @@ take it forward:
 - **#134** *(closed)* — production HTTP stack; the reader unit lands
   in #106.
 - **#135** — Cloudflare front-door + UFW-vs-CF IP whitelist.
-- **#136** — backup + Backblaze B2 off-site replication.
+- **#136** — backup + Backblaze B2 off-site replication. Setup runbook:
+  `docs/runbooks/backup_b2.md` (B2 bucket + key, `rclone obscure`,
+  ClickHouse backup-disk config, systemd install).
 - **#137** — systemd unit hardening + Cloudflare Health Checks.
 - **#140** — cold migration of local `engine.db` + ClickHouse to VPS.
 
