@@ -19,5 +19,7 @@ LOCK_FILE="${REPO_ROOT}/.macro-data/parity_daily.lock"
 mkdir -p "$(dirname "$LOCK_FILE")"
 
 cd "$REPO_ROOT"
+PYTHON_BIN="${REPO_ROOT}/.venv/bin/python"
+[ -x "$PYTHON_BIN" ] || PYTHON_BIN="python3"
 exec flock --nonblock "$LOCK_FILE" \
-    python3 scripts/parity_daily.py "$@"
+    "$PYTHON_BIN" scripts/parity_daily.py "$@"

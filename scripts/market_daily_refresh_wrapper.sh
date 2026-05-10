@@ -6,5 +6,7 @@ LOCK_FILE="${REPO_ROOT}/.macro-data/market_recurring.lock"
 
 mkdir -p "$(dirname "$LOCK_FILE")"
 cd "$REPO_ROOT"
+PYTHON_BIN="${REPO_ROOT}/.venv/bin/python"
+[ -x "$PYTHON_BIN" ] || PYTHON_BIN="python3"
 exec flock --nonblock "$LOCK_FILE" \
-    python3 scripts/market_daily_refresh.py "$@"
+    "$PYTHON_BIN" scripts/market_daily_refresh.py "$@"
