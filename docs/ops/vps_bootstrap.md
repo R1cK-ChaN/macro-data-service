@@ -138,6 +138,8 @@ take it forward:
   ClickHouse backup-disk config, systemd install).
 - **#137** — systemd unit hardening + Cloudflare Health Checks.
 - **#140** — cold migration of local `engine.db` + ClickHouse to VPS.
+  Runbook: `docs/ops/cutover.md` (preflight, execution phases, verify,
+  rollback). Driver script: `scripts/migrate/cutover.sh`.
 
 ## Rollback / re-bootstrap
 
