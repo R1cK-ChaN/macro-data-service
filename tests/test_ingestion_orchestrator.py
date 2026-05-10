@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -129,6 +129,30 @@ class SourceFamilyTaggingTest(unittest.TestCase):
         self.assertEqual(report.stored, 0)
         self.assertEqual(report.fetched, 0)
         self.assertNotIn("calendar", orch._default_refresh_order)
+
+    def test_sentix_source_is_omitted_without_credentials(self) -> None:
+        with patch("ingestion.sources._sentix_credentials_available", return_value=False):
+            orch = self._build_orchestrator()
+
+        names = {row["name"] for row in orch.list_sources()}
+        self.assertNotIn("sentix", names)
+        self.assertNotIn("sentix", orch._default_refresh_order)
+
+    def test_sentix_source_is_registered_for_explicit_client(self) -> None:
+        with patch("ingestion.sources._sentix_credentials_available", return_value=False):
+            orch = IngestionOrchestrator(
+                store=Mock(),
+                fred=Mock(), fed=Mock(),
+                news=Mock(),
+                rate_probability=Mock(), nyfed=Mock(), gov_report=Mock(),
+                eia=Mock(), treasury_fiscal=Mock(), imf=Mock(),
+                eurostat=Mock(), bis=Mock(), ecb=Mock(), oecd=Mock(),
+                worldbank=Mock(), sentix=Mock(),
+            )
+
+        names = {row["name"] for row in orch.list_sources()}
+        self.assertIn("sentix", names)
+        self.assertIn("sentix", orch._default_refresh_order)
 
     def test_registered_definition_picks_up_family_from_registry(self) -> None:
         orch = self._build_orchestrator()

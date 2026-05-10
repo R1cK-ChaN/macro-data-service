@@ -1035,8 +1035,18 @@ def _run_diagnose_sources(args: argparse.Namespace, service) -> int:
         "imf", "eurostat", "bis", "ecb", "bundesbank", "mof_jp", "aisi",
         "ism", "redbook", "sentix", "oecd", "worldbank",
     ]
+    try:
+        available_sources = {
+            row.get("name")
+            for row in orch.list_sources()
+        }
+        probe_sources = [
+            name for name in _PROBE_SOURCES if name in available_sources
+        ]
+    except Exception:
+        probe_sources = list(_PROBE_SOURCES)
     results = []
-    for name in _PROBE_SOURCES:
+    for name in probe_sources:
         t0 = _time.perf_counter()
         try:
             report = orch.run_source(name)

@@ -224,6 +224,13 @@ SOURCE_FAMILIES: dict[str, str] = {
 }
 
 
+def _sentix_credentials_available() -> bool:
+    return bool(
+        get_env_value("SENTIX_CLIENT_ID", "SENTIX_API_CLIENT_ID")
+        and get_env_value("SENTIX_CLIENT_SECRET", "SENTIX_API_CLIENT_SECRET")
+    )
+
+
 @dataclass(frozen=True)
 class IngestionSourceDefinition:
     name: str
@@ -288,6 +295,7 @@ class IngestionOrchestrator:
     ) -> None:
         self.store = store
         self._validation = validation_engine
+        self._sentix_client_provided = sentix is not None
         self.fred = fred or FREDIngestionClient()
         self.fed = fed or FedIngestionClient()
         self.news = news or NewsIngestionClient()
@@ -315,6 +323,9 @@ class IngestionOrchestrator:
         self._last_run_reports: dict[str, IngestionRunReport] = {}
         self._register_default_sources()
         self._ensure_capability_manager()
+
+    def _should_register_sentix_source(self) -> bool:
+        return self._sentix_client_provided or _sentix_credentials_available()
 
     def _ensure_obs_seed(self) -> None:
         """Seed observation sources/families once, then build lookup cache."""
@@ -359,6 +370,7 @@ class IngestionOrchestrator:
 
     # ── Default source registration ───────────────────────────────────
     def _register_default_sources(self) -> None:
+        sentix_enabled = self._should_register_sentix_source()
         definitions = [
             self._build_calendar_source(),
             # Corp calendar forward-window sources (issue #63). Not
@@ -392,12 +404,15 @@ class IngestionOrchestrator:
             self._build_aisi_source(),
             self._build_ism_source(),
             self._build_redbook_source(),
-            self._build_sentix_source(),
+        ]
+        if sentix_enabled:
+            definitions.append(self._build_sentix_source())
+        definitions.extend([
             self._build_oecd_source(),
             self._build_worldbank_source(),
             self._build_worldbank_catalog_source(),
             self._build_bls_source(),
-        ]
+        ])
         for definition in definitions:
             self.register_source(definition)
         self._default_refresh_order = [
@@ -419,13 +434,17 @@ class IngestionOrchestrator:
             "aisi",
             "ism",
             "redbook",
-            "sentix",
             "oecd",
             "worldbank",
             "worldbank_catalog",
             "bls",
             "fred_nondaily",
         ]
+        if sentix_enabled:
+            self._default_refresh_order.insert(
+                self._default_refresh_order.index("oecd"),
+                "sentix",
+            )
 
     @staticmethod
     def _materialize_items(items: Iterable[Any] | None) -> list[Any]:

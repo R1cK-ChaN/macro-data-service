@@ -567,6 +567,23 @@ class SourceCapabilityManager:
                 metadata={"job_name": job_name},
             )
 
+        def _orchestrator_has_source(source_id: str) -> bool:
+            if orchestrator is None:
+                return True
+            try:
+                return any(
+                    row.get("name") == source_id
+                    for row in orchestrator.list_sources()
+                )
+            except Exception:
+                sources = getattr(orchestrator, "_sources", {})
+                return source_id in sources
+
+        def _orchestrator_schedules_source(source_id: str) -> bool:
+            if orchestrator is None:
+                return True
+            return source_id in getattr(orchestrator, "_default_refresh_order", ())
+
         def _configured_entities(source_id: str, entity_type: str, mapping: dict[str, Any]) -> Callable[[str | None, int | None], list[dict[str, Any]]]:
             def _inner(query: str | None, limit: int | None) -> list[dict[str, Any]]:
                 entities: list[dict[str, Any]] = []
@@ -1200,6 +1217,7 @@ class SourceCapabilityManager:
             discover=_nyfed_entities,
             sync_latest=lambda entity_ids, limit: _run_job("nyfed_rates"),
         )
+        sentix_registered = _orchestrator_has_source("sentix")
         adapters["sentix"] = SourceCapabilityAdapter(
             source_id="sentix",
             display_name="sentix Economic Index",
@@ -1207,9 +1225,16 @@ class SourceCapabilityManager:
             entity_type="series",
             description="Configured sentix Economic Index API series",
             notes="Requires sentix Data REST API credentials and SNTE subscription.",
-            is_default_scheduled=True,
+            supports_latest_sync=sentix_registered,
+            is_default_scheduled=(
+                sentix_registered and _orchestrator_schedules_source("sentix")
+            ),
             discover=_configured_entities("sentix", "series", SENTIX_SERIES),
-            sync_latest=lambda entity_ids, limit: _run_job("sentix"),
+            sync_latest=(
+                (lambda entity_ids, limit: _run_job("sentix"))
+                if sentix_registered
+                else None
+            ),
         )
         adapters["gov_reports"] = SourceCapabilityAdapter(
             source_id="gov_reports",
